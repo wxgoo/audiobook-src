@@ -139,8 +139,13 @@ class ReaderGroupService:
 
     @staticmethod
     def save_group(name: str, mode: str = "whitelist",
-                   categories="", tags="") -> tuple:
-        """创建/更新组。mode: whitelist（只可读匹配项）/ blacklist（禁读匹配项）。"""
+                   categories="", tags="", old_name: str = "",
+                   session=None) -> tuple:
+        """创建/更新组。mode: whitelist（只可读匹配项）/ blacklist（禁读匹配项）。
+
+        old_name 非空且与 name 不同时视为「改名」：删除旧组定义，并把原组成员
+        的归属引用迁移到新组名（否则成员还挂在旧名上，看起来像被清空了）。
+        """
         name = (name or "").strip()
         if not name:
             return False, "组名不能为空"
@@ -152,10 +157,39 @@ class ReaderGroupService:
             "categories": _normalize_tags(categories),
             "tags": _normalize_tags(tags),
         }
+        old_name = (old_name or "").strip()
+        renamed = bool(old_name) and old_name != name and old_name in groups
+        if renamed:
+            groups.pop(old_name)
         CONF[GROUPS_KEY] = groups
         _persist(groups)
-        logging.info("[reader-group] saved group %r (%s)", name, mode)
+        if renamed:
+            moved = ReaderGroupService._rename_members(old_name, name, session)
+            logging.info("[reader-group] renamed group %r -> %r, moved %d members",
+                         old_name, name, moved)
+        else:
+            logging.info("[reader-group] saved group %r (%s)", name, mode)
         return True, "ok"
+
+    @staticmethod
+    def _rename_members(old_name: str, new_name: str, session=None) -> int:
+        """改名时同步迁移成员归属。session 由调用方提供；没有 session 就跳过。"""
+        if session is None:
+            return 0
+        try:
+            from webserver.models import Reader
+            n = 0
+            for r in session.query(Reader).all():
+                if (r.extra or {}).get(MEMBER_KEY) == old_name:
+                    extra = dict(r.extra or {})
+                    extra[MEMBER_KEY] = new_name
+                    r.extra = extra
+                    n += 1
+            session.commit()
+            return n
+        except Exception as e:  # pragma: no cover
+            logging.warning("[reader-group] rename members failed: %s", e)
+            return 0
 
     @staticmethod
     def delete_group(name: str, session=None) -> tuple:

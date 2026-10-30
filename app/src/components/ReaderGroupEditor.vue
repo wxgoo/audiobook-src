@@ -117,10 +117,22 @@
           <v-select v-model="assignGroup" :items="groupNames" :label="$t('settings.reader_group_name')" dense hide-details outlined clearable></v-select>
         </v-col>
         <v-col cols="12" sm="5">
-          <v-text-field v-model="assignUsernames" :label="$t('settings.reader_group_usernames')" placeholder="alice,bob" dense hide-details outlined></v-text-field>
+          <v-combobox
+            v-model="assignUsers"
+            :items="userOptions"
+            :label="$t('settings.reader_group_usernames')"
+            :hint="$t('settings.reader_group_usernames_hint')"
+            persistent-hint
+            multiple
+            chips
+            small-chips
+            deletable-chips
+            dense
+            outlined
+          ></v-combobox>
         </v-col>
         <v-col cols="12" sm="2">
-          <v-btn color="primary" block :loading="assigning" :disabled="!assignUsernames.trim()" @click="assign">
+          <v-btn color="primary" block :loading="assigning" :disabled="!assignUsers.length" @click="assign">
             <v-icon left>mdi-account-multiple-check</v-icon>{{ $t("settings.reader_group_assign_btn") }}
           </v-btn>
         </v-col>
@@ -143,7 +155,7 @@ export default {
     saving: false,
     assigning: false,
     groups: {},
-    form: { name: "", mode: "whitelist", categories: "", tags: "" },
+    form: { name: "", mode: "whitelist", categories: "", tags: "", old_name: "" },
     editing: false,
     // 候选值：从系统里实际存在的分类/标签拉取，供 v-combobox 下拉选择。
     // 仍允许自由输入（combo 而非 select），避免新分类还没入库时无法预先填。
@@ -152,7 +164,10 @@ export default {
     optionsLoaded: false,
     presets: [],
     assignGroup: "",
-    assignUsernames: "",
+    assignUsers: [],
+    // 用户名候选：来自 options 接口（数据库里真实存在的读者），
+    // combobox 仍允许自由输入，兼容还没建账号的预分配场景。
+    userOptions: [],
   }),
   computed: {
     modeItems() {
@@ -223,6 +238,7 @@ export default {
         if (rsp.err === "ok") {
           this.categoryOptions = rsp.categories || [];
           this.tagOptions = rsp.tags || [];
+          this.userOptions = rsp.usernames || [];
           this.optionsLoaded = true;
         }
       } catch (err) {
@@ -248,6 +264,7 @@ export default {
         mode: p.mode || "whitelist",
         categories: p.categories || "",
         tags: p.tags || "",
+        old_name: "",
       };
       this.editing = false;
     },
@@ -275,7 +292,7 @@ export default {
       this.loading = false;
     },
     resetForm() {
-      this.form = { name: "", mode: "whitelist", categories: "", tags: "" };
+      this.form = { name: "", mode: "whitelist", categories: "", tags: "", old_name: "" };
       this.editing = false;
     },
     editGroup(name) {
@@ -285,6 +302,9 @@ export default {
         mode: g.mode || "whitelist",
         categories: g.categories || "",
         tags: g.tags || "",
+        // 记住编辑前的组名：管理员改组名时后端按「改名」处理，
+        // 迁移成员归属，否则成员会挂在旧组名下像被清空了一样
+        old_name: name,
       };
       this.editing = true;
     },
@@ -328,8 +348,8 @@ export default {
       }
     },
     async assign() {
-      const usernames = this.assignUsernames
-        .split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+      // chips 数组 + 手输残余项统一清洗：去空、去重
+      const usernames = this.joinList(this.assignUsers).split(",").filter(Boolean);
       if (!usernames.length) return;
       this.assigning = true;
       try {
@@ -344,7 +364,7 @@ export default {
             this.$t("settings.reader_group_assigned", { n: rsp.assigned }) +
               (missing ? " " + this.$t("settings.reader_group_missing", { n: missing }) : "")
           );
-          this.assignUsernames = "";
+          this.assignUsers = [];
           await this.reload();
         } else {
           this.$alert("error", rsp.msg || rsp.err);

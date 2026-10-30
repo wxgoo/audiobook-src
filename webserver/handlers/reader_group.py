@@ -43,6 +43,20 @@ class ReaderGroupOptions(BaseHandler):
     @is_admin
     async def get(self):
         categories, tags = [], []
+        # 用户名候选：给「批量分配用户到组」的下拉多选框用，
+        # 管理员不用再凭记忆手打用户名（打错只会静默 missing）。
+        usernames = []
+        try:
+            from webserver.models import Reader
+            ScopedSession = self.settings["ScopedSession"]
+            session = ScopedSession()
+            try:
+                usernames = [r.username for r in session.query(
+                    Reader.username).order_by(Reader.username).all()]
+            finally:
+                session.close()
+        except Exception as e:
+            logging.warning("[reader-group] load usernames failed: %s", e)
         # 分类：calibre 自定义列 #category，值在 custom_column_<colnum> 表里。
         # 复用 base.py 里已有的非阻塞查询封装，避免自己拼 SQL 踩连接池的坑。
         try:
@@ -69,14 +83,45 @@ class ReaderGroupOptions(BaseHandler):
             tags = sorted({it["name"] for it in (items or []) if it.get("name")})
         except Exception as e:
             logging.warning("[reader-group] load tags failed: %s", e)
-        return {"err": "ok", "categories": categories, "tags": tags}
+        return {"err": "ok", "categories": categories, "tags": tags,
+                "usernames": usernames}
 
 
 class ReaderGroupList(BaseHandler):
     @js
     @is_admin
     def get(self):
+        return {"err": "ok", "groups": self._groups_with_members()}
+
+    @js
+    @is_admin
+    def post(self):
+        """创建/更新组：{name, mode, categories, tags, old_name?}
+
+        old_name 非空且 != name 表示改名，后端会迁移原组成员。
+        响应必须带 members —— 前端保存后用整个 groups 覆盖本地状态，
+        少了 members 表格里的成员列就会全部被置空。"""
+        try:
+            data = json.loads(self.request.body.decode("utf-8"))
+        except ValueError:
+            return {"err": "params", "msg": "请求体不是合法 JSON"}
         ScopedSession = self.settings["ScopedSession"]
+        session = ScopedSession()
+        try:
+            ok, msg = ReaderGroupService.save_group(
+                data.get("name", ""), data.get("mode", "whitelist"),
+                data.get("categories", ""), data.get("tags", ""),
+                old_name=data.get("old_name", ""), session=session)
+        finally:
+            session.close()
+        if not ok:
+            return {"err": "params", "msg": msg}
+        return {"err": "ok", "groups": self._groups_with_members()}
+
+    @staticmethod
+    def _groups_with_members() -> dict:
+        """组定义 + 成员名单合并返回（GET/POST 共用，保证结构一致）。"""
+        ScopedSession = loader.get_settings()["ScopedSession"]
         session = ScopedSession()
         try:
             members = ReaderGroupService.members_of(session)
@@ -85,22 +130,7 @@ class ReaderGroupList(BaseHandler):
         groups = ReaderGroupService.list_groups()
         for name, cfg in groups.items():
             cfg["members"] = members.get(name, [])
-        return {"err": "ok", "groups": groups}
-
-    @js
-    @is_admin
-    def post(self):
-        """创建/更新组：{name, mode, categories, tags}"""
-        try:
-            data = json.loads(self.request.body.decode("utf-8"))
-        except ValueError:
-            return {"err": "params", "msg": "请求体不是合法 JSON"}
-        ok, msg = ReaderGroupService.save_group(
-            data.get("name", ""), data.get("mode", "whitelist"),
-            data.get("categories", ""), data.get("tags", ""))
-        if not ok:
-            return {"err": "params", "msg": msg}
-        return {"err": "ok", "groups": ReaderGroupService.list_groups()}
+        return groups
 
 
 class ReaderGroupDelete(BaseHandler):
