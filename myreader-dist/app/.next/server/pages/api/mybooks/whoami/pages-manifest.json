@@ -1,0 +1,3 @@
+{
+  "/api/mybooks/whoami": "pages/api/mybooks/whoami.js"
+}

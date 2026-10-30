@@ -1,0 +1,3 @@
+module.exports=[73899,a=>a.a(async(b,c)=>{try{var d=a.i(500495),e=a.i(816231),f=b([d,e]);[d,e]=f.then?(await f)():f;let g=async({appService:a,dst:b,url:c,headers:f,credentials:g,singleThreaded:h,skipSslVerification:i,onProgress:j})=>{try{if(!(0,d.isWebAppPlatform)())return await (0,e.tauriDownload)(c,b,j,f,void 0,h,i);{let{headers:d,blob:h}=await (0,e.webDownload)(c,j,f,g);return await a.writeFile(b,"None",await h.arrayBuffer()),d}}catch(a){throw console.error(`File '${b}' download from '${c}' failed:`,a),a}};a.s(["downloadFile",0,g]),c()}catch(a){c(a)}},!1)];
+
+//# sourceMappingURL=app_src_libs_storage_ts_0~.7yz0._.js.map

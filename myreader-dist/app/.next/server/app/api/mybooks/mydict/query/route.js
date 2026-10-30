@@ -1,0 +1,10 @@
+var R=require("../../../../../chunks/[turbopack]_runtime.js")("server/app/api/mybooks/mydict/query/route.js")
+R.c("server/chunks/[root-of-the-server]__0qmf6f.._.js")
+R.c("server/chunks/0avw_next_01veay3._.js")
+R.c("server/chunks/[root-of-the-server]__08kpkfx._.js")
+R.c("server/chunks/_02ffnx8._.js")
+R.c("server/chunks/_0elu659._.js")
+R.c("server/chunks/[root-of-the-server]__0wzm31p._.js")
+R.c("server/chunks/app__next-internal_server_app_api_mybooks_mydict_query_route_actions_061vdvs.js")
+R.m(319870)
+module.exports=R.m(319870).exports

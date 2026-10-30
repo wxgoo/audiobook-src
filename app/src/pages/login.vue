@@ -1,0 +1,270 @@
+<template>
+    <v-row justify="center" class="fill-center">
+        <v-col xs="12" sm="8">
+            <v-card v-if="show_login" class="elevation-12 login-card">
+                <!-- dark/light 是三态：只传 :dark 无法在深色主题下强制浅色前景，浅色品牌色必须显式 light（见 AppHeader 的同类说明） -->
+                <v-toolbar :dark="navIsDark" :light="!navIsDark" :color="navBgColor" class="login-toolbar">
+                    <v-toolbar-title>{{ $t('login.welcome') }}</v-toolbar-title>
+                    <v-spacer></v-spacer>
+                    <v-btn v-if="$store.state.sys && $store.state.sys.allow && $store.state.sys.allow.register" rounded color="green" to="/signup">{{ $t('login.register') }}</v-btn>
+                </v-toolbar>
+                <v-card-text>
+                    <v-form @submit.prevent="do_login">
+                        <v-text-field ref="usernameField" prepend-icon="mdi-account" v-model="username" :label="$t('login.username')" type="text"></v-text-field>
+                        <v-text-field prepend-icon="mdi-lock" v-model="password" :label="$t('login.password')" type="password" id="password"></v-text-field>
+                        <p class="text-right">
+                            <a @click="show_login = !show_login"> {{ $t('login.forgot_password') }} </a>
+                        </p>
+                        <div align="center">
+                            <v-btn type="submit" large rounded color="primary">{{ $t('login.login') }}</v-btn>
+                        </div>
+                    </v-form>
+                </v-card-text>
+
+                <v-card-text v-if="socials.length > 0">
+                    <v-divider></v-divider>
+                    <div align="center">
+                        <br />
+                        <small>{{ $t('login.social_login') }}</small>
+                        <br />
+                        <template v-for="s in socials" :key="s.text">
+                            <v-btn small outlined :href="'/auth/login/' + s.value">{{ s.text }}</v-btn>
+                            &nbsp;
+                        </template>
+                    </div>
+                </v-card-text>
+                <v-alert v-if="alert.msg" :type="alert.type">{{ alert.msg }}</v-alert>
+            </v-card>
+
+            <v-card v-else class="elevation-12">
+                <v-toolbar dark color="red">
+                    <v-toolbar-title>{{ $t('login.reset_password') }}</v-toolbar-title>
+                </v-toolbar>
+                <v-card-text v-if="!show_login">
+                    <v-form @submit.prevent="do_reset">
+                        <v-text-field prepend-icon="mdi-account" v-model="username" :label="$t('login.username')" type="text"></v-text-field>
+                        <v-text-field
+                            prepend-icon="mdi-email"
+                            v-model="email"
+                            :label="$t('login.email')"
+                            type="text"
+                            autocomplete="old-email"
+                        ></v-text-field>
+                    </v-form>
+                    <div align="center">
+                        <v-btn rounded color="" class="mr-5" @click="show_login = !show_login">{{ $t('login.back') }}</v-btn>
+                        <v-btn rounded dark color="red" @click="do_reset">{{ $t('login.reset') }}</v-btn>
+                    </div>
+                </v-card-text>
+                <v-alert v-if="alert.msg" :type="alert.type">{{ alert.msg }}</v-alert>
+            </v-card>
+        </v-col>
+    </v-row>
+</template>
+
+<script>
+import { isLightBackground, resolveBrandColor } from "~/utils/appearance";
+import safeNext from "~/utils/safeNext";
+
+export default {
+    data: () => ({
+        username: "",
+        password: "",
+        email: "",
+        show_login: true,
+        submitting: false,
+        alert: {
+            type: "error",
+            msg: "",
+        },
+    }),
+    asyncData({ store }) {
+        store.commit("navbar", false);
+    },
+    head() {
+        return { title: this.$t('login.login') };
+    },
+    created() {
+        // Clear the username and password fields
+        this.username = "";
+        this.password = "";
+
+        this.$store.commit("navbar", false);
+
+        // 只在客户端执行DOM和localStorage操作
+        if (process.client) {
+            // 为body添加login-page类名，应用背景图样式
+            document.body.classList.add('login-page');
+
+            // 深浅色：外观设置（plugins/appearance.js 已在应用启动时按本地缓存设好）
+            // 优先，只有用户从未保存过外观时才退回站点默认 site_theme。
+            // 走 store 的 mutation 而不是直接改 $vuetify.theme.dark：深浅色的真值在 store，
+            // 直接改 Vuetify 会让两者分裂（面板选中态错位 / 下一次 applyAppearance 又盖回去），
+            // 判据也收敛到 utils/appearance.js 的 siteThemeIsDark，与首帧脚本一致。
+            if (!localStorage.getItem('appearance_settings')) {
+                this.$store.commit('appearance/adoptSiteTheme', localStorage.getItem('site_theme'));
+            }
+
+            // 延迟执行focus，确保DOM已渲染
+            this.$nextTick(() => {
+                if (this.$refs.usernameField) {
+                    this.$refs.usernameField.focus();
+                }
+            });
+        }
+
+        // API调用放在最后，确保状态管理稳定
+        this.$backend("/user/info").then((rsp) => {
+            // 这个响应属于"登录页首屏的匿名快照"：如果用户已经在它返回前登录成功，
+            // 不能再拿它把 store 里的新会话覆盖回匿名。
+            if (!(this.$store.state.user && this.$store.state.user.is_login)) {
+                this.$store.commit("login", rsp);
+            }
+            // 更新页面标题模板
+            if (rsp.sys && rsp.sys.title) {
+                this.$store.state.site_title_template = "%s | " + rsp.sys.title;
+            }
+        });
+    },
+    beforeDestroy() {
+        // 页面销毁时移除login-page类名
+        if (process.client) {
+            document.body.classList.remove('login-page');
+        }
+    },
+    computed: {
+        socials: function () {
+            if (!this.$store.state.sys || !this.$store.state.sys.socials) {
+                return [];
+            }
+            return this.$store.state.sys.socials;
+        },
+        navBgColor() {
+            return resolveBrandColor(this.$store.state.appearance.brandColor);
+        },
+        navIsDark() {
+            return !isLightBackground(this.navBgColor);
+        },
+        // 登录后回跳：safeNext 保证同源站内（挡 //evil.com、/\evil.com 这类），
+        // 再排除登录/退出等"回去没意义或会自我注销"的目标。
+        nextTarget() {
+            const target = safeNext(this.$route.query.next, "/");
+            const path = target.split(/[?#]/)[0].replace(/\/+$/, "");
+            // /api/* 是接口不是页面：整页跳过去只会看到一个 JSON，直接回首页
+            if (/^\/(login|logout|signup|welcome)(\/|$)/.test(path) || path.startsWith("/api/")) {
+                return "/";
+            }
+            return target;
+        },
+    },
+    methods: {
+        // 这些是后端路由（阅读器 / 文件 / OPDS 等），前端没有对应页面，
+        // 用 router.push 会渲染空白或 404，必须整页跳转交给后端。
+        // 注意 /opds 本身（不带子路径）也是后端路由，边界要匹配路径结束。
+        needsFullLoad(target) {
+            return /^\/(read|get|opds|books|podcast)(\/|$|\?)/.test(target);
+        },
+        do_login: function () {
+            // 防双击：两次 sign_in 会连着触发 resetSession/ensureSession/导航
+            if (this.submitting) {
+                return;
+            }
+            this.submitting = true;
+            var data = new URLSearchParams();
+            data.append("username", this.username);
+            data.append("password", this.password);
+            this.$backend("/user/sign_in", {
+                method: "POST",
+                body: data,
+            }).then((rsp) => {
+                if (rsp.err != "ok") {
+                    this.submitting = false;
+                    this.alert.type = "error";
+                    this.alert.msg = rsp.msg;
+                    return;
+                }
+                this.$store.commit("navbar", true);
+                // 登录接口只回 {err:"ok"}，store 里的 user.is_login 还没更新；
+                // 全站守卫靠它判断放行，所以先作废旧的"未登录"快照、重新拉一次会话，
+                // 再跳回被拦下的原页面，否则会刚登录就被守卫弹回 /login。
+                if (this.$resetSession) {
+                    this.$resetSession();
+                }
+                const go = (info) => {
+                    this.submitting = false;
+                    const user = (info && info.user) || this.$store.state.user || {};
+                    if (!user.is_login) {
+                        // cookie 没被接受（禁用 cookie / 反代丢 Set-Cookie）：留在登录页提示，
+                        // 别跳到深链再被守卫弹回来，变成没有提示的死循环。
+                        this.alert.type = "error";
+                        this.alert.msg = "登录状态未生效，请检查浏览器是否允许本站 Cookie 后重试。";
+                        return;
+                    }
+                    const target = this.nextTarget;
+                    if (this.needsFullLoad(target)) {
+                        window.location.assign(target);
+                    } else {
+                        this.$router.push(target).catch(() => {});
+                    }
+                };
+                if (this.$ensureSession) {
+                    this.$ensureSession().then(go, () => go());
+                } else {
+                    go();
+                }
+            }, () => {
+                // $backend 对 5xx/网络错误会 reject，不能让按钮一直"点了没反应"
+                this.submitting = false;
+                this.alert.type = "error";
+                this.alert.msg = "登录请求失败，请稍后重试。";
+            });
+        },
+        do_reset: function () {
+            var data = new URLSearchParams();
+            data.append("username", this.username);
+            data.append("email", this.email);
+            this.$backend("/user/reset", {
+                method: "POST",
+                body: data,
+            }).then((rsp) => {
+                if (rsp.err == "ok") {
+                    this.alert.type = "success";
+                    this.alert.msg = "重置成功！请查阅密码通知邮件。";
+                } else {
+                    this.alert.type = "error";
+                    this.alert.msg = rsp.msg;
+                }
+            });
+        },
+    },
+};
+</script>
+
+<style>
+.fill-center {
+    margin-top: 6%;
+}
+.login-card {
+    max-width: 480px;
+    width: calc(100% - 32px);
+    margin: 0 auto;
+    transition: width 0.3s ease, max-width 0.3s ease;
+}
+@media (max-width: 960px) {
+    .login-card {
+        max-width: 560px;
+    }
+}
+@media (max-width: 600px) {
+    .login-card {
+        max-width: 100%;
+        width: calc(100% - 16px);
+    }
+}
+.v-application .v-toolbar.login-toolbar,
+.v-application .v-toolbar.login-toolbar > .v-toolbar__content {
+    border-bottom-left-radius: 0px !important;
+    border-bottom-right-radius: 0px !important;
+    overflow: hidden;
+}
+</style>

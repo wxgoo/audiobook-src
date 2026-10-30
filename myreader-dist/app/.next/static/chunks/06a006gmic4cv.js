@@ -1,0 +1,21 @@
+__turbopack_load_page_chunks__("/reader/[ids]", [
+  "static/chunks/0_fk~zdk6wmvr.js",
+  "static/chunks/0l3h-prp7dgvt.js",
+  "static/chunks/0ff_684i2s_92.js",
+  "static/chunks/11wcoktza31jx.js",
+  "static/chunks/08ukt78jjd9i0.js",
+  "static/chunks/0jyz8uhakmjvt.js",
+  "static/chunks/05gi4osf-a24t.js",
+  "static/chunks/10j82hzsglo3..js",
+  "static/chunks/0g3mwohdvzajh.js",
+  "static/chunks/04v1vc55jdbc5.js",
+  "static/chunks/15-3aoo3ool23.js",
+  "static/chunks/0.izs4np2fgaz.js",
+  "static/chunks/09m_62e.rgdlv.js",
+  "static/chunks/01xk40bt~cwxg.js",
+  "static/chunks/0r6cflimorjm8.js",
+  "static/chunks/0~6y-~1bm9dze.js",
+  "static/chunks/0gjhw17ytneky.css",
+  "static/chunks/0y2l0xgouorae.css",
+  "static/chunks/turbopack-049ar2hu8qoab.js"
+])

@@ -1,0 +1,134 @@
+export default {
+    dir: {
+        'static': '../public',
+    },
+  srcDir: 'src/',
+
+  // dev/build/generate 启动时自动重新生成 mdi 图标子集（见 scripts/build-mdi-subset.js），
+  // 避免忘记在新增图标后手动跑 `npm run icons:subset` 导致新图标缺字形不显示。
+  hooks: {
+    'build:before': () => require('./scripts/build-mdi-subset')(),
+  },
+  // Global page headers: https://go.nuxtjs.dev/config-head
+  head: {
+    title: "PoxenStudio",
+    titleTemplate: "%s | MyBooks",
+    htmlAttrs: {
+      lang: 'en'
+    },
+    meta: [
+      { charset: 'utf-8' },
+      { name: 'format-detection', content: 'telephone=no' },
+      { name: 'apple-mobile-web-app-capable', content: 'yes' },
+      { name: 'apple-mobile-web-app-status-bar-style', content: 'black' },
+      //{ name: 'viewport', content: 'width=device-width, initial-scale=1' },
+      { name: 'viewport', content: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, minimal-ui' },
+      { name: 'keywords', content: '在线阅读 电子书 推送 kindle epub mobi pdf azw3 poxenstudio mybooks talebook ebook' },
+      {
+        hid: 'description',
+        name: 'description',
+        content: '这是一个基于poxenstudio/mybooks搭建的个人电子书库，管理和阅读Epub/Mobi/Pdf/Azw3等格式的电子书，也支持下载或推送到阅读设备里。',
+      },
+    ],
+    link: [
+      { rel: 'shortcut icon', type: 'image/x-icon', href: '/logo/favicon.ico' }
+    ]
+  },
+
+  // Global CSS: https://go.nuxtjs.dev/config-css
+  css: [
+    '~/assets/css/mdi-subset.css',
+    '~/assets/css/fonts.css',
+    '~/assets/css/background.css',
+    '~/assets/css/scrollbar.css',
+    '~/assets/css/appearance.css'
+  ],
+
+  // Plugins to run before rendering page: https://go.nuxtjs.dev/config-plugins
+  plugins: [
+    "~/plugins/mybooks.js",
+    "~/plugins/session.js",
+    "~/plugins/load-plugins.js",
+    "~/plugins/i18n.js",
+    // 外观设置（顶栏品牌色 / 侧栏图标配色 / 深浅色…）：把 store 状态落到 CSS 变量与 Vuetify 主题
+    { src: "~/plugins/appearance.js", mode: "client" }
+  ],
+
+  // Auto import components: https://go.nuxtjs.dev/config-components
+  components: true,
+
+  // 全站路由守卫：REQUIRE_LOGIN 开启且未登录时把页面跳到 /login。
+  // 页面 HTML 不经后端 BaseHandler（见 handlers/base.py 的门禁注释），只能在前端补这一层。
+  router: {
+    middleware: ["require-login"],
+  },
+
+  // Modules for dev and build (recommended): https://go.nuxtjs.dev/config-modules
+  buildModules: [
+    '@nuxtjs/vuetify',
+    // 说明：@nuxtjs/google-fonts 已移除。项目字体全部走本地子集
+    // （src/assets/fonts/*.woff2 + mdi-subset），从未配置任何 Google 字体，
+    // 该模块只会打印 "WARN No provided fonts." 而没有任何作用。
+    ...(process.env.GOOGLE_ANALYTICS_ID ? ['@nuxtjs/google-analytics'] : []),
+  ],
+
+  // Modules: https://go.nuxtjs.dev/config-modules
+  modules: [
+  ],
+
+  // Vuetify module configuration: https://go.nuxtjs.dev/config-vuetify
+  vuetify: {
+    // treeShake: true,
+    defaultAssets: false,
+    iconfont: 'mdi',
+    lang: {
+      locales: {
+        zhHans: require('vuetify/lib/locale/zh-Hans').default,
+        zhHant: require('vuetify/lib/locale/zh-Hans').default,
+        en: require('vuetify/lib/locale/en').default,
+      },
+      current: 'zhHans',
+    },
+  },
+
+  googleAnalytics: {
+    // Only enable if GA ID is provided via environment variable
+    id: process.env.GOOGLE_ANALYTICS_ID || 'G-NONE',
+    disabled: !process.env.GOOGLE_ANALYTICS_ID,
+  },
+
+  publicRuntimeConfig: {
+    head: {
+        title: process.env.TITLE || "MyBooks",
+        titleTemplate: process.env.TITLE_TEMPLATE || " %s | PoxenStudio/MyBooks",
+    },
+    api_url: process.env.API_URL || "http://127.0.0.1:8000",
+    googleAnalytics: {
+      ...(process.env.GOOGLE_ANALYTICS_ID ? {
+        id: process.env.GOOGLE_ANALYTICS_ID,
+        disabled: false
+      } : {
+        id: 'G-NONE',
+        disabled: true
+      }),
+    }
+  },
+
+  server: {
+    port: 9000, // default: 3000
+    host: '0.0.0.0' // default: localhost
+  },
+
+  // Build Configuration: https://go.nuxtjs.dev/config-build
+  build: {
+    extend(config) {
+      // vue-chartjs@3.x expects a default export from 'chart.js', but chart.js@3.x
+      // only exports named bindings and requires explicit controller/scale registration.
+      // 'chart.js/auto' provides both a default export and auto-registers everything.
+      config.resolve.alias['chart.js'] = 'chart.js/auto';
+    },
+    // CSS(Vuetify 基础样式、mdi 图标字体等)从 JS bundle 里抽成独立 .css 文件，
+    // 不再随最大的 vendor chunk 一起下载/解析执行，见 document 里的构建体积优化记录。
+    extractCSS: true,
+  }
+}

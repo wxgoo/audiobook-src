@@ -1,0 +1,1 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,398154,t=>{"use strict";var e=t.i(882209);t.i(594896),t.s(["getCurrentWindow",()=>e.getCurrentWindow])}]);

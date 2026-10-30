@@ -1,0 +1,1 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,584503,e=>{"use strict";e.s(["NoopDatabaseService",0,class{async execute(){return{rowsAffected:0,lastInsertId:0}}async select(){return[]}async batch(){}async close(){}}])}]);

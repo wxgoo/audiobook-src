@@ -1,0 +1,52 @@
+{
+  "name": "mybooks",
+  "version": "4.8.0",
+  "private": true,
+  "scripts": {
+    "dev": "nuxt",
+    "build": "eslint --ext .js,.vue src && nuxt build",
+    "build-spa": "eslint --ext .js,.vue src && nuxt build --spa",
+    "start": "nuxt start",
+    "generate": "eslint --ext .js,.vue src && nuxt generate",
+    "lint": "eslint --ext .js,.vue src",
+    "lint:fix": "eslint --ext .js,.vue src --fix",
+    "icons:subset": "node scripts/build-mdi-subset.js"
+  },
+  "dependencies": {
+    "chart.js": "^3.9.1",
+    "core-js": "^3.19.3",
+    "cropperjs": "^1.6.2",
+    "dompurify": "^2.5.9",
+    "marked": "^4.3.0",
+    "nuxt": "^2.18.1",
+    "qrcode": "^1.5.4",
+    "vue": "^2.6.14",
+    "vue-chartjs": "^3.5.1",
+    "vue-cookies": "^1.7.4",
+    "vue-cropper": "^0.6.5",
+    "vue-i18n": "^8.28.2",
+    "vue-server-renderer": "^2.6.14",
+    "vue-template-compiler": "^2.6.14",
+    "vuedraggable": "^2.24.3",
+    "vuetify": "^2.6.10",
+    "webpack": "^4.47.0"
+  },
+  "devDependencies": {
+    "@mdi/font": "^6.5.95",
+    "@nuxtjs/google-analytics": "^2.4.0",
+    "@nuxtjs/vuetify": "^1.12.3",
+    "@tailwindcss/postcss": "^4.1.10",
+    "autoprefixer": "^10.4.21",
+    "connect-logger": "^0.0.1",
+    "eslint": "^8.57.1",
+    "eslint-plugin-vue": "^9.33.0",
+    "subset-font": "^2.7.0"
+  },
+  "packageManager": "pnpm@10.12.1+sha512.f0dda8580f0ee9481c5c79a1d927b9164f2c478e90992ad268bbb2465a736984391d6333d2c327913578b2804af33474ca554ba29c04a8b13060a717675ae3ac",
+  "browserslist": [
+    "> 0.5%",
+    "last 2 versions",
+    "not dead",
+    "not op_mini all"
+  ]
+}

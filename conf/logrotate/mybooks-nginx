@@ -1,0 +1,10 @@
+/data/log/nginx/*.log {
+    su mybooks mybooks
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

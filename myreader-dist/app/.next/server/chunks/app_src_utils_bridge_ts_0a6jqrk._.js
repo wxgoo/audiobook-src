@@ -1,0 +1,3 @@
+module.exports=[607355,e=>{"use strict";var t=e.i(806991);async function i(e){return await (0,t.invoke)("plugin:native-bridge|copy_uri_to_path",{payload:e})}async function n(e){return await (0,t.invoke)("plugin:native-bridge|save_image_to_gallery",{payload:e})}async function a(){return await (0,t.invoke)("plugin:native-bridge|select_directory")}async function o(){return await (0,t.invoke)("plugin:native-bridge|get_storefront_region_code")}e.s(["copyURIToPath",0,i,"getStorefrontRegionCode",0,o,"saveImageToGallery",0,n,"selectDirectory",0,a])}];
+
+//# sourceMappingURL=app_src_utils_bridge_ts_0a6jqrk._.js.map

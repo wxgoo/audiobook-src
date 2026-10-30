@@ -1,0 +1,115 @@
+const path = require("path")
+const webpack = require("webpack")
+const CopyPlugin = require("copy-webpack-plugin")
+const TerserPlugin = require("terser-webpack-plugin")
+const pkg = require("./package.json")
+
+const config = {
+	mode: "development",
+	entry: {
+		epubreader: "./src/reader.js"
+	},
+	output: {
+		path: path.resolve(__dirname, "dist"),
+		libraryTarget: "module"
+	},
+	externals: {
+		"epubjs": "epubjs"
+	},
+	optimization: {
+		usedExports: false
+	},
+	devServer: {
+		static: {
+			directory: path.join(__dirname, "dist")
+		},
+		hot: false,
+		liveReload: true,
+		compress: true,
+		port: 8080,
+		proxy: [
+			{
+				context: ['/get'],
+				target: 'http://localhost:8082',
+				changeOrigin: true
+			}
+		]
+	},
+	experiments: {
+		outputModule: true
+	},
+	plugins: [
+		new webpack.BannerPlugin({
+			banner: `/*! ${pkg.name} v${pkg.version} */`,
+			raw: true
+		}),
+		new CopyPlugin({
+			patterns: [
+				{
+					from: "node_modules/jszip/dist/jszip.min.js",
+					to: "js/libs/jszip.min.js",
+					toType: "file",
+					force: true
+				},
+				{
+					from: "node_modules/js-md5/build/md5.min.js",
+					to: "js/libs/md5.min.js",
+					toType: "file",
+					force: true
+				},
+				{
+					from: "node_modules/epubjs/dist/epub.min.js",
+					to: "js/libs/epub.min.js",
+					toType: "file",
+					force: true
+				},
+				{
+					from: "assets",
+					to: "assets",
+					toType: "dir",
+					force: true
+				},
+				{
+					from: "index.html",
+					to: "index.html",
+					toType: "file",
+					force: true,
+					transform: (content, absoluteFrom) => {
+						return content.toString().replace(/dist\//g, "")
+					}
+				}
+			]
+		})
+	],
+	performance: {
+		hints: false
+	}
+}
+
+module.exports = (env, args) => {
+
+	config.devtool = env.WEBPACK_SERVE ? "eval-source-map" : "source-map"
+
+	if (args.optimizationMinimize) {
+		config.output.filename = `js/[name].min-v${pkg.version}.js`
+		config.output.sourceMapFilename = `js/[name].min-v${pkg.version}.js.map`
+		config.optimization.minimize = true
+		config.optimization.minimizer = [
+			new TerserPlugin({
+				extractComments: false,
+				terserOptions: {
+					format: {
+						comments: true
+					}
+				}
+			})
+		]
+	} else {
+		config.output.filename = "js/[name].js"
+		config.output.sourceMapFilename = "js/[name].js.map"
+		config.optimization.minimize = false
+		config.optimization.minimizer = undefined
+	}
+
+	return config;
+}

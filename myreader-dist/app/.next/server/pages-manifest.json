@@ -1,0 +1,10 @@
+{
+  "/_app": "pages/_app.js",
+  "/_document": "pages/_document.js",
+  "/_error": "pages/_error.js",
+  "/api/mybooks/whoami": "pages/api/mybooks/whoami.js",
+  "/api/user/delete": "pages/api/user/delete.js",
+  "/reader/[ids]": "pages/reader/[ids].html",
+  "/readerx/open": "pages/readerx/open.html",
+  "/404": "pages/404.html"
+}

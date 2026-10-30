@@ -1,0 +1,3 @@
+module.exports=[72489,e=>{"use strict";let t=null,s=async()=>{let{configure:s}=await e.A(153919);s({useCompressionStream:!1,useWebWorkers:await (!t&&(t=(async()=>{try{let e=URL.createObjectURL(new Blob(["self.onmessage=e=>self.postMessage(e.data)"],{type:"text/javascript"})),t=new Worker(e);try{return await new Promise(e=>{let s=setTimeout(()=>e(!1),500);t.onmessage=()=>{clearTimeout(s),e(!0)},t.onerror=()=>{clearTimeout(s),e(!1)},t.postMessage(0)})}finally{t.terminate();try{URL.revokeObjectURL(e)}catch{}}}catch{return!1}})()),t)})};e.s(["configureZip",0,s])},153919,e=>{e.v(t=>Promise.all(["server/chunks/[externals]_@zip_js_zip_0u8a~in.js"].map(t=>e.l(t))).then(()=>t(516985)))}];
+
+//# sourceMappingURL=%5Broot-of-the-server%5D__05kxmvk._.js.map

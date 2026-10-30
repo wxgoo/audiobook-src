@@ -1,0 +1,3 @@
+{
+  "/api/mybooks/proxy/[...path]/route": "app/api/mybooks/proxy/[...path]/route.js"
+}

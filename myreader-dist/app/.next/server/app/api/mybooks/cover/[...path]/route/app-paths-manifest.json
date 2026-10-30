@@ -1,0 +1,3 @@
+{
+  "/api/mybooks/cover/[...path]/route": "app/api/mybooks/cover/[...path]/route.js"
+}

@@ -1,0 +1,319 @@
+{
+  "version": 3,
+  "pages404": true,
+  "appType": "hybrid",
+  "caseSensitive": false,
+  "basePath": "",
+  "redirects": [
+    {
+      "source": "/:path+/",
+      "destination": "/:path+",
+      "internal": true,
+      "priority": true,
+      "statusCode": 308,
+      "regex": "^(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))/$"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/.well-known/apple-app-site-association",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "regex": "^/\\.well-known/apple-app-site-association(?:/)?$"
+    },
+    {
+      "source": "/reader/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "private, no-cache, max-age=0, must-revalidate"
+        }
+      ],
+      "regex": "^/reader(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))?(?:/)?$"
+    },
+    {
+      "source": "/readerx/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "private, no-cache, max-age=0, must-revalidate"
+        }
+      ],
+      "regex": "^/readerx(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))?(?:/)?$"
+    },
+    {
+      "source": "/_next/static/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ],
+      "regex": "^/_next/static(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))?(?:/)?$"
+    }
+  ],
+  "onMatchHeaders": [],
+  "rewrites": {
+    "beforeFiles": [],
+    "afterFiles": [
+      {
+        "source": "/reader/:ids",
+        "destination": "/reader?ids=:ids",
+        "regex": "^/reader(?:/([^/]+?))(?:/)?$"
+      },
+      {
+        "source": "/o/book/:hash/annotation/:id",
+        "destination": "/o?book=:hash&note=:id",
+        "regex": "^/o/book(?:/([^/]+?))/annotation(?:/([^/]+?))(?:/)?$"
+      },
+      {
+        "source": "/s/:token",
+        "destination": "/s?token=:token",
+        "regex": "^/s(?:/([^/]+?))(?:/)?$"
+      }
+    ],
+    "fallback": []
+  },
+  "dynamicRoutes": [
+    {
+      "page": "/api/mybooks/avatar/[...path]",
+      "regex": "^/api/mybooks/avatar/(.+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPpath": "nxtPpath"
+      },
+      "namedRegex": "^/api/mybooks/avatar/(?<nxtPpath>.+?)(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/cover/[...path]",
+      "regex": "^/api/mybooks/cover/(.+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPpath": "nxtPpath"
+      },
+      "namedRegex": "^/api/mybooks/cover/(?<nxtPpath>.+?)(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/mydict/res/[...path]",
+      "regex": "^/api/mybooks/mydict/res/(.+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPpath": "nxtPpath"
+      },
+      "namedRegex": "^/api/mybooks/mydict/res/(?<nxtPpath>.+?)(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/proxy/[...path]",
+      "regex": "^/api/mybooks/proxy/(.+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPpath": "nxtPpath"
+      },
+      "namedRegex": "^/api/mybooks/proxy/(?<nxtPpath>.+?)(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/site-dict/[...path]",
+      "regex": "^/api/mybooks/site\\-dict/(.+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPpath": "nxtPpath"
+      },
+      "namedRegex": "^/api/mybooks/site\\-dict/(?<nxtPpath>.+?)(?:/)?$"
+    },
+    {
+      "page": "/reader/[ids]",
+      "regex": "^/reader/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPids": "nxtPids"
+      },
+      "namedRegex": "^/reader/(?<nxtPids>[^/]+?)(?:/)?$"
+    }
+  ],
+  "staticRoutes": [
+    {
+      "page": "/",
+      "regex": "^/(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/(?:/)?$"
+    },
+    {
+      "page": "/_not-found",
+      "regex": "^/_not\\-found(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/_not\\-found(?:/)?$"
+    },
+    {
+      "page": "/api/ai/chat",
+      "regex": "^/api/ai/chat(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/ai/chat(?:/)?$"
+    },
+    {
+      "page": "/api/ai/embed",
+      "regex": "^/api/ai/embed(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/ai/embed(?:/)?$"
+    },
+    {
+      "page": "/api/hardcover/graphql",
+      "regex": "^/api/hardcover/graphql(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/hardcover/graphql(?:/)?$"
+    },
+    {
+      "page": "/api/metadata/search",
+      "regex": "^/api/metadata/search(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/metadata/search(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/baike",
+      "regex": "^/api/mybooks/baike(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mybooks/baike(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/client-log",
+      "regex": "^/api/mybooks/client\\-log(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mybooks/client\\-log(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/download",
+      "regex": "^/api/mybooks/download(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mybooks/download(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/local-file",
+      "regex": "^/api/mybooks/local\\-file(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mybooks/local\\-file(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/mydict/query",
+      "regex": "^/api/mybooks/mydict/query(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mybooks/mydict/query(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/mydict/server-query",
+      "regex": "^/api/mybooks/mydict/server\\-query(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mybooks/mydict/server\\-query(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/mydict/server-vocab",
+      "regex": "^/api/mybooks/mydict/server\\-vocab(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mybooks/mydict/server\\-vocab(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/mydict/user-settings",
+      "regex": "^/api/mybooks/mydict/user\\-settings(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mybooks/mydict/user\\-settings(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/mydict/vocab",
+      "regex": "^/api/mybooks/mydict/vocab(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mybooks/mydict/vocab(?:/)?$"
+    },
+    {
+      "page": "/api/mybooks/whoami",
+      "regex": "^/api/mybooks/whoami(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mybooks/whoami(?:/)?$"
+    },
+    {
+      "page": "/api/opds/proxy",
+      "regex": "^/api/opds/proxy(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/opds/proxy(?:/)?$"
+    },
+    {
+      "page": "/api/tts/edge",
+      "regex": "^/api/tts/edge(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/tts/edge(?:/)?$"
+    },
+    {
+      "page": "/api/user/delete",
+      "regex": "^/api/user/delete(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/user/delete(?:/)?$"
+    },
+    {
+      "page": "/library",
+      "regex": "^/library(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/library(?:/)?$"
+    },
+    {
+      "page": "/mindmap",
+      "regex": "^/mindmap(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/mindmap(?:/)?$"
+    },
+    {
+      "page": "/o",
+      "regex": "^/o(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/o(?:/)?$"
+    },
+    {
+      "page": "/offline",
+      "regex": "^/offline(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/offline(?:/)?$"
+    },
+    {
+      "page": "/opds",
+      "regex": "^/opds(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/opds(?:/)?$"
+    },
+    {
+      "page": "/reader",
+      "regex": "^/reader(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/reader(?:/)?$"
+    },
+    {
+      "page": "/readerx/open",
+      "regex": "^/readerx/open(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/readerx/open(?:/)?$"
+    },
+    {
+      "page": "/runtime-config.js",
+      "regex": "^/runtime\\-config\\.js(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/runtime\\-config\\.js(?:/)?$"
+    },
+    {
+      "page": "/updater",
+      "regex": "^/updater(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/updater(?:/)?$"
+    }
+  ],
+  "dataRoutes": [],
+  "rsc": {
+    "header": "rsc",
+    "varyHeader": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch",
+    "prefetchHeader": "next-router-prefetch",
+    "didPostponeHeader": "x-nextjs-postponed",
+    "contentTypeHeader": "text/x-component",
+    "suffix": ".rsc",
+    "prefetchSegmentHeader": "next-router-segment-prefetch",
+    "prefetchSegmentSuffix": ".segment.rsc",
+    "prefetchSegmentDirSuffix": ".segments",
+    "clientParamParsing": false,
+    "dynamicRSCPrerender": false
+  },
+  "rewriteHeaders": {
+    "pathHeader": "x-nextjs-rewritten-path",
+    "queryHeader": "x-nextjs-rewritten-query"
+  }
+}

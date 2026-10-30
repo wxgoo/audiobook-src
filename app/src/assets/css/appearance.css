@@ -1,0 +1,146 @@
+/* =====================================================
+   Radius Overrides using CSS Variables
+   ===================================================== */
+.v-application .v-card,
+.v-application .v-btn:not(.v-btn--round):not(.v-btn--icon),
+.v-application .v-sheet,
+.v-application .v-dialog,
+.v-application .v-menu__content,
+.v-application .v-text-field__details,
+.v-application .v-input__slot,
+.v-application .v-navigation-drawer {
+    border-radius: var(--app-radius, 4px) !important;
+}
+
+/* 顶栏固定直角，不随圆角设置变化（选择器权重高于上面的 .v-sheet 规则） */
+.v-application .v-sheet.v-app-bar,
+.v-application .v-sheet.v-toolbar.v-app-bar {
+    border-radius: 0 !important;
+}
+
+.v-application .v-text-field--outlined fieldset {
+    border-radius: var(--app-radius, 4px) !important;
+}
+
+/* =====================================================
+   Background Patterns
+   Applied directly to .v-application so they render
+   on top of Vuetify's background-color.
+
+   以下变量由 JS 写（见 app/src/utils/appearance.js 的 applyAppearance）：
+     --dot-color / --primary-color / --app-radius / --app-sidebar-icon
+     --app-nav-bg / --app-nav-fg（顶栏品牌色与前景色）
+   首帧由 app/src/app.html 的内联脚本先落一遍，避免闪烁。
+   ===================================================== */
+:root {
+    --dot-color: rgba(128, 128, 128, 0.18);
+    --primary-color: #1976D2;
+    /* 顶栏/品牌面：默认值与改造前的硬编码 #003153 一致，保证默认外观零变化 */
+    --app-nav-bg: #003153;
+    --app-nav-fg: rgba(255, 255, 255, 0.87);
+    --app-radius: 4px;
+}
+
+/* ── Fundamental ──────────────────────────────────── */
+
+/* Cross */
+html[data-bg-pattern="cross"] .v-application {
+    background-image:
+        radial-gradient(circle, var(--dot-color) 1px, transparent 1px),
+        radial-gradient(circle, var(--dot-color) 1px, transparent 1px);
+    background-size: 24px 24px;
+    background-position: 0 0, 12px 12px;
+}
+
+/* Left Diagonal – 45° stripes */
+html[data-bg-pattern="left-diagonal"] .v-application {
+    background-image: repeating-linear-gradient(
+        45deg,
+        transparent,
+        transparent 12px,
+        color-mix(in srgb, var(--dot-color) 20%, transparent) 12px,
+        color-mix(in srgb, var(--dot-color) 20%, transparent) 24px
+    );
+}
+
+/* Right Diagonal – -45° stripes */
+html[data-bg-pattern="right-diagonal"] .v-application {
+    background-image: repeating-linear-gradient(
+        -45deg,
+        transparent,
+        transparent 12px,
+        color-mix(in srgb, var(--dot-color) 20%, transparent) 12px,
+        color-mix(in srgb, var(--dot-color) 20%, transparent) 24px
+    );
+}
+
+
+/* ── Gradient / Ambient ───────────────────────────── */
+
+/* Aurora – multi-directional radial wash */
+html[data-bg-pattern="aurora"] .v-application {
+    background-image:
+        radial-gradient(ellipse 60% 45% at 0% 50%,
+            color-mix(in srgb, var(--primary-color) 15%, transparent), transparent),
+        radial-gradient(ellipse 50% 40% at 100% 50%,
+            color-mix(in srgb, var(--primary-color) 10%, transparent), transparent),
+        radial-gradient(ellipse 40% 35% at 50% 0%,
+            color-mix(in srgb, var(--primary-color) 8%, transparent), transparent);
+}
+
+/* Horizon – vertical centre gradient */
+html[data-bg-pattern="horizon"] .v-application {
+    background-image: linear-gradient(180deg,
+        transparent 0%,
+        color-mix(in srgb, var(--primary-color) 8%, transparent) 50%,
+        transparent 100%
+    );
+}
+
+/* Glow – radial glow from top */
+html[data-bg-pattern="glow"] .v-application {
+    background-image: radial-gradient(ellipse 80% 50% at 50% -10%,
+        color-mix(in srgb, var(--primary-color) 20%, transparent) 0%,
+        transparent 100%
+    );
+}
+
+/* Mesh – four-corner gradient mesh */
+html[data-bg-pattern="mesh"] .v-application {
+    background-image:
+        radial-gradient(at 0%   0%,   color-mix(in srgb, var(--primary-color) 20%, transparent) 0px, transparent 50%),
+        radial-gradient(at 100% 0%,   color-mix(in srgb, var(--primary-color) 15%, transparent) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, color-mix(in srgb, var(--primary-color) 20%, transparent) 0px, transparent 50%),
+        radial-gradient(at 0%   100%, color-mix(in srgb, var(--primary-color) 15%, transparent) 0px, transparent 50%),
+        radial-gradient(at 50%  50%,  color-mix(in srgb, var(--primary-color) 10%, transparent) 0px, transparent 50%);
+}
+
+/* ── Repeat Images ─────────────────────────────────── */
+
+/* Repeat Image 1 */
+html[data-bg-pattern="repeat-image-1"] .v-application {
+    background-image: url('/static/wallpaper/ba_1.jpg');
+    background-repeat: repeat;
+    background-size: auto;
+}
+
+/* Repeat Image 2 */
+html[data-bg-pattern="repeat-image-2"] .v-application {
+    background-image: url('/static/wallpaper/ba_2.jpg');
+    background-repeat: repeat;
+    background-size: auto;
+}
+
+/* Repeat Image 3 */
+html[data-bg-pattern="repeat-image-3"] .v-application {
+    background-image: url('/static/wallpaper/ba_3.jpg');
+    background-repeat: repeat;
+    background-size: auto;
+}
+
+/* Repeat Image 4 */
+html[data-bg-pattern="repeat-image-4"] .v-application {
+    background-image: url('/static/wallpaper/ba_4.jpg');
+    background-repeat: repeat;
+    background-size: auto;
+}

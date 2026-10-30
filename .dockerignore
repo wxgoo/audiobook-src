@@ -1,0 +1,68 @@
+# ---- 版本控制 / 构建产物（绝不进构建上下文）----
+.git
+.gitmodules
+.gitignore
+**/.git
+**/.github
+
+# ---- 前端依赖与构建缓存（镜像内会重新 npm ci / build）----
+app/node_modules
+app/.nuxt
+app/dist
+app/.env
+**/node_modules
+**/.nuxt
+
+# 唯一的例外：myreader-dist 是 MyReader 的 Next.js standalone 产物，
+# 它的 node_modules 是「产物」而不是「可以重新装的依赖」——里面是 Next
+# 的 output file tracing 按实际 import 图裁剪出来的最小依赖集，且大量
+# 是 .pnpm 里的相对符号链接（app/node_modules/next -> ../../node_modules/.pnpm/...）。
+# 被上面那条 **/node_modules 排除掉的话，容器里只剩 app/server.js 和 .next
+# 而没有依赖，supervisor 启 myreader 会直接 MODULE_NOT_FOUND → 9100 不监听
+# → nginx 对 /readerx/* 一律 502。所以这里必须显式放行。
+!myreader-dist/node_modules
+!myreader-dist/node_modules/**
+# app/node_modules 那层也要放行：Next standalone 把依赖拆成两级——
+# 工作区根级 myreader-dist/node_modules（.pnpm store）和 app 级
+# myreader-dist/app/node_modules（里面是指向 ../../node_modules/.pnpm/... 的
+# 相对符号链接，专门依赖这个两级嵌套结构）。少了任何一级都会运行时报错。
+!myreader-dist/app/node_modules
+!myreader-dist/app/node_modules/**
+# .next 里还有一层：Turbopack 把 SSR 外部化的包（js-md5、clsx、dayjs、dompurify…）
+# 写成 app/.next/node_modules/<name>-<hash> -> ../../../node_modules/.pnpm/... 的符号
+# 链接，供 .next/server 里的 chunk 按 require('<name>-<hash>') 解析。漏掉这层会
+# 在启动后首个请求就抛 Cannot find module 'js-md5-<hash>'，服务看着起来了、
+# 实际每个页面都 500。
+!myreader-dist/app/.next/node_modules
+!myreader-dist/app/.next/node_modules/**
+
+# ---- Python 缓存 ----
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# ---- 编辑器 / 系统垃圾（macOS 的 ._ 文件会拖慢并污染 layer）----
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+*.swp
+*~
+
+# ---- 文档与图片（运行时不需要，只为构建准备）----
+document/
+*.zip
+*.tar.gz
+*.7z
+
+# ---- 音频/书籍等用户数据（如果被误放在项目里）----
+data/
+
+# ---- 前端专用的大体积第三方库（镜像内既不需要也用不到）----
+# epub.js 仅前端打包用；epubreader-js 已在前端 public/static 里有副本
+third-party/epubreader-js/
+third-party/epub.js/
+extensions/

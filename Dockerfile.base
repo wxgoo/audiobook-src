@@ -1,0 +1,51 @@
+# ----------------------------------------
+# 基础环境镜像：ubuntu 系统包 + python 依赖 + calibre 补丁
+# 此镜像变动较少，单独构建以复用 layer，加速主镜像构建。
+# 构建：make build-base-multiarch
+# 镜像：poxenstudio/mybooks_base
+FROM docker.1ms.run/library/ubuntu:24.04
+ARG BUILD_COUNTRY="CN"
+
+# 合并所有 RUN 指令，减少镜像层数
+RUN set -ex; \
+    if [ "x${BUILD_COUNTRY}" = "xCN" ]; then \
+        sed 's@archive.ubuntu.com/ubuntu@mirrors.huaweicloud.com/repository/ubuntu@g' -i /etc/apt/sources.list.d/ubuntu.sources; \
+        sed 's@security.ubuntu.com/ubuntu@mirrors.huaweicloud.com/repository/ubuntu@g' -i /etc/apt/sources.list.d/ubuntu.sources; \
+    fi; \
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
+    echo "Asia/Shanghai" > /etc/timezone; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gnupg2 ca-certificates curl; \
+    curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor | tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null; \
+    echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/ubuntu/ noble nginx" > /etc/apt/sources.list.d/nginx.list; \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        gettext gosu procps logrotate nginx calibre calibre-bin supervisor \
+        fonts-lato fonts-wqy-microhei ffmpeg libzbar0 python3-pip nodejs; \
+    pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/; \
+    useradd -u 990 -U -d /var/www/mybooks -s /bin/false mybooks; \
+    groupmod -g 990 mybooks && usermod -aG users mybooks; \
+    sed -i "s/user  nginx;/user mybooks;/g" /etc/nginx/nginx.conf; \
+    apt-get purge -y --auto-remove gnupg2; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.cache
+
+
+# Install OpenCC based on architecture
+COPY prebuilt/ /tmp/prebuilt/
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "aarch64" ]; then \
+        pip install --no-cache-dir /tmp/prebuilt/opencc-1.1.9-cp312-cp312-manylinux2014_aarch64.whl --break-system-packages; \
+    else \
+        pip install opencc --break-system-packages; \
+    fi && \
+    rm -rf /tmp/prebuilt
+
+# Apply calibre patches
+COPY calibre/7.6/calibre/ /usr/lib/calibre/calibre/
+
+# Install python packages
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --no-compile -r /tmp/requirements.txt --break-system-packages && \
+    rm -rf /root/.cache /root/.config/pip /tmp/requirements.txt /tmp/pip-* /var/tmp/*

@@ -1,0 +1,41 @@
+services:
+
+  # main service
+  mybooks:
+    restart: always
+    # 关键：加 build 才会用本目录源码构建镜像；
+    # image 只是给本地构建出的镜像打的标签，不会再去拉取远程镜像
+    build:
+      context: .
+      args:
+        # CN = 使用国内镜像源（apt/npm/pip），国内构建明显更快
+        BUILD_COUNTRY: CN
+        # 1 = 安装 faster-whisper（音频转写功能），0 = 不装（镜像小约 250MB）
+        # 不想要转写功能就把这行改成 "0"，或整行删掉（默认 1）
+        WITH_WHISPER: "1"
+      # 只构建生产阶段，跳过 test 阶段（省一次完整 pip install）
+      target: production
+      # 复用上一次构建的镜像层：改代码后重建只重跑变化的层
+      cache_from:
+        - mybooks-local:latest
+    image: mybooks-local:latest
+    volumes:
+      # 数据目录：书库、音频、数据库、模型缓存、日志全部在这里。
+      # ★ 与源码目录分离 ★ —— rm -rf audiobook 重装源码不会伤到任何数据。
+      # 目录布局（都在 /volume1/docker 下、站点目录外）：
+      #   audiobook/        源码 + 部署脚本（可随意删了重解压）
+      #   audiobook-data/   ★ 全部运行数据，备份只需盯住它 ★
+      #   audiobook-git/    升级脚本的 git 历史（也在站点外）
+      - /volume1/docker/audiobook-data:/data
+    ports:
+      # 左边是本机端口，浏览器访问 http://<NAS_IP>:9800
+      # 8080 留给官方版 mybooks，避免冲突
+      - "9800:80"
+      # HTTPS（需要自行配置证书，不用可删）
+      - "8443:443"
+    environment:
+      # 群晖：SSH 执行 id 你的用户名 查 UID/GID，通常是 1026/100（administrators 组）
+      # 用错 PUID/PGID 会出现「无法上传书籍/设置保存不了」等权限问题
+      - PUID=1026
+      - PGID=100
+      - TZ=Asia/Shanghai

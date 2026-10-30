@@ -1,0 +1,3 @@
+{
+  "/api/mybooks/site-dict/[...path]/route": "app/api/mybooks/site-dict/[...path]/route.js"
+}

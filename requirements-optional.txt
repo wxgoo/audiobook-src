@@ -1,0 +1,4 @@
+# 可选依赖：音频转写文稿（移植自 audiobook 的 Whisper 功能）
+# 安装后 mybooks 会自动启用「音频转写文稿」管理接口；不装则功能隐藏，不影响其他功能。
+# torch 体积很大，请按服务器 CUDA 情况选择安装方式（见 https://pytorch.org）。
+openai-whisper==20240930
