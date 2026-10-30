@@ -846,6 +846,74 @@ docker exec audiobook-mybooks-1 python3 -c \
 搬迁后：`rm -rf audiobook` 重装源码 = 只是换代码，书、音频、用户、模型缓存全在
 `audiobook-data/` 里毫发无损。备份也只需盯住这一个目录。
 
+### 长期保持源码目录干净：升级时必须"原子替换"
+
+这是最容易踩的坑：**直接在 `audiobook/` 里 `tar -xzf` 新包**，新包会覆盖旧文件，
+但旧包里已被删掉的文件会残留下来。历史上（v4.8.1 及以前）数据也落在源码目录里，
+于是旧 `books/` 残留 + 新包叠加，就出现了"`audiobook` 下冒出 `books`"的现象。
+
+**v4.8.2 起提供 `upgrade.sh`，从根上避免这件事：**
+
+```bash
+cd /volume1/docker
+sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-v4.8.2.tar.gz
+```
+
+它做的事（详见 DEPLOY_README.md 的步骤表）核心只有一句：
+**先把 `audiobook` 整个改名成 `audiobook.old`，再 `mkdir` 一个全新目录解压。**
+全新目录里不可能有任何历史残留，也就谈不上"污染"。
+
+#### 三条铁律
+
+| 铁律 | 说明 |
+|---|---|
+| **1. 不在旧目录上叠加解压** | 永远 `mv` 走旧的 → `mkdir` 新的 → 解压到新目录 |
+| **2. 数据只存在 `audiobook-data/`** | 源码目录里出现 `books/`、`data/`、`library/`、`audios/` 一律视为异常 |
+| **3. compose 挂载只指向 `audiobook-data`** | `grep ":/data" docker-compose.yml` 必须得到 `- /volume1/docker/audiobook-data:/data` |
+
+#### 每次升级后的 30 秒自检
+
+```bash
+cd /volume1/docker
+
+# ① 源码目录应看不到任何数据目录（无输出 = 正常）
+ls -d audiobook/books audiobook/book audiobook/data audiobook/library audiobook/audios 2>/dev/null
+
+# ② 挂载必须指向 audiobook-data
+grep ":/data" audiobook/docker-compose.yml
+
+# ③ 容器实际挂载确认
+docker inspect audiobook-mybooks-1 --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
+
+# ④ 数据仍然在（书数应与升级前一致）
+docker exec audiobook-mybooks-1 python3 -c \
+  "import sqlite3;print('书数:',sqlite3.connect('/data/books/library/metadata.db').execute('select count(*) from books').fetchone()[0])"
+```
+
+`deploy.sh` 与 `upgrade.sh` 已把 ① ② 固化为脚本开头的强制检查，失败即中止，
+不会在"脏目录"上继续构建出镜像。
+
+#### 万一发现源码目录里已有数据目录
+
+不要直接 `rm -rf`，先判断数据是否还在 `audiobook-data` 里：
+
+```bash
+cd /volume1/docker
+docker compose -f audiobook/docker-compose.yml down
+
+# 体积对比：源码目录里的 vs 数据目录里的
+du -sh audiobook/books audiobook-data/books 2>/dev/null
+
+# 若 audiobook/books 里有 audiobook-data/books 没有的东西，先合并（-n 不覆盖已有）
+command -v rsync >/dev/null && rsync -avn audiobook/books/ audiobook-data/books/   # 先 dry-run
+command -v rsync >/dev/null && rsync -av  audiobook/books/ audiobook-data/books/
+
+# 确认数据齐全后，再清掉源码目录里的副本
+rm -rf audiobook/books audiobook/data audiobook/library audiobook/audios
+```
+
+清理完重跑一次 `upgrade.sh`，即可得到完全干净的源码目录。
+
 ## 九、日常使用速览
 
 以下为 mybooks 原有功能，简单列出入口：

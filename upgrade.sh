@@ -1,0 +1,207 @@
+#!/bin/sh
+# ============================================================
+# audiobook（MyBooks 移植版）升级 / 重装脚本 v4.8.2
+#
+# 解决的问题：
+#   直接在 audiobook/ 里 tar -xzf 新包 → 旧目录残留 + 新包叠加，
+#   历史版本还把 books/ 数据落在源码目录里，导致"源码目录不干净"、
+#   "数据目录不唯一"。本脚本用 原子替换 的方式彻底避免。
+#
+# 用法（在 /volume1/docker 下执行，或任意位置带绝对路径）：
+#   sh upgrade.sh /volume1/docker/audiobook-deploy-v4.8.2.tar.gz
+#
+# 可选环境变量：
+#   SKIP_BUILD=1   只解压不构建（先看代码）
+#   SKIP_UP=1      只解压+构建，不启动
+#   KEEP_OLD=1     保留 audiobook.old（默认成功后自动删）
+#   NO_BACKUP=1    不备份数据（不推荐）
+#
+# 布局约定（v4.8.2 起）：
+#   /volume1/docker/audiobook/        源码 + 配置，可随意删了重解压
+#   /volume1/docker/audiobook-data/   唯一数据目录，永不被本脚本触碰
+# ============================================================
+set -e
+
+PKG="$1"
+BASE="${BASE:-/volume1/docker}"
+SRC="$BASE/audiobook"
+DATA="$BASE/audiobook-data"
+OLD="$BASE/audiobook.old"
+CONTAINER="${CONTAINER:-audiobook-mybooks-1}"
+
+# ---------- 参数校验 ----------
+if [ -z "$PKG" ]; then
+    echo "用法: sh upgrade.sh /path/to/audiobook-deploy-vX.Y.Z.tar.gz"
+    exit 1
+fi
+if [ ! -f "$PKG" ]; then
+    echo "!! 找不到压缩包: $PKG"
+    exit 1
+fi
+case "$PKG" in
+    /*) ;;
+    *) PKG="$(cd "$(dirname "$PKG")" && pwd)/$(basename "$PKG")" ;;
+esac
+
+echo "============================================================"
+echo " audiobook 升级 / 重装"
+echo "   包   : $PKG"
+echo "   源码 : $SRC"
+echo "   数据 : $DATA"
+echo "============================================================"
+
+# ---------- 0. 包结构预检：确认包内不含数据目录 ----------
+echo "==> [0/8] 预检压缩包结构"
+PKG_TOP=$(tar -tzf "$PKG" 2>/dev/null | head -1 | sed 's#/.*##' || true)
+echo "    包内顶层: ${PKG_TOP:-<空>}"
+
+# 检查包内是否混入数据目录（正常应为空）
+DIRTY=$(tar -tzf "$PKG" 2>/dev/null | grep -E '(^|/)books/(library|audios|upload|imports)/' | head -5 || true)
+if [ -n "$DIRTY" ]; then
+    echo "    !! 警告：压缩包内疑似含用户数据目录，示例："
+    echo "$DIRTY" | sed 's/^/       /'
+    printf "    继续解压？(数据不会覆盖 audiobook-data，但会进源码目录) [y/N] "
+    read ans
+    [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { echo "    已取消。"; exit 1; }
+else
+    echo "    包内无 books/ 数据目录，干净。"
+fi
+
+# ---------- 1. 数据目录检查 ----------
+echo "==> [1/8] 检查数据目录"
+if [ ! -d "$DATA/books" ]; then
+    echo "    !! 未找到 $DATA/books"
+    echo "    !! 若是首次安装，请改用: cd $SRC && sh deploy.sh"
+    echo "    !! 若是旧布局（数据还在源码目录里），先按 INSTALL_GUIDE.md"
+    echo "       “一次性：把数据目录分离出源码目录” 完成搬迁。"
+    exit 1
+fi
+echo "    OK：$DATA/books 存在"
+du -sh "$DATA" 2>/dev/null | sed 's/^/    数据体积: /'
+
+# ---------- 2. 备份数据（可选，稳妥） ----------
+if [ "$NO_BACKUP" != "1" ]; then
+    echo "==> [2/8] 备份数据库（仅 *.db，不含书/音频，秒级）"
+    BK="$BASE/audiobook-data-dbbackup-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$BK"
+    find "$DATA/books" -maxdepth 1 -name '*.db*' -exec cp -a {} "$BK"/ \; 2>/dev/null || true
+    echo "    已备份到: $BK"
+else
+    echo "==> [2/8] 跳过备份（NO_BACKUP=1）"
+fi
+
+# ---------- 3. 停容器 ----------
+echo "==> [3/8] 停止容器"
+if [ -f "$SRC/docker-compose.yml" ]; then
+    docker compose -f "$SRC/docker-compose.yml" down --remove-orphans 2>/dev/null || \
+    docker stop "$CONTAINER" 2>/dev/null || true
+else
+    docker stop "$CONTAINER" 2>/dev/null || true
+fi
+echo "    已停止。"
+
+# ---------- 4. 旧源码归档 ----------
+echo "==> [4/8] 归档旧源码"
+if [ -d "$SRC" ]; then
+    rm -rf "$OLD"
+    mv "$SRC" "$OLD"
+    echo "    旧源码已移到: $OLD"
+else
+    echo "    无旧源码，跳过。"
+fi
+
+# ---------- 5. 全新解压 ----------
+echo "==> [5/8] 解压新包到全新目录"
+mkdir -p "$SRC"
+
+# 判断包是否带外层目录（如 audiobook-deploy-v4.8.2/）
+if tar -tzf "$PKG" 2>/dev/null | head -1 | grep -q '/'; then
+    echo "    检测到外层目录，使用 --strip-components=1"
+    tar -xzf "$PKG" -C "$SRC" --strip-components=1
+else
+    echo "    无外层目录，直接解压"
+    tar -xzf "$PKG" -C "$SRC"
+fi
+
+# ---------- 6. 污染自检 ----------
+echo "==> [6/8] 源码目录污染自检"
+DIRTY_PATHS=""
+for p in books book data audios library upload imports sync models cache logs log workspace; do
+    [ -e "$SRC/$p" ] && DIRTY_PATHS="$DIRTY_PATHS $p"
+done
+if [ -n "$DIRTY_PATHS" ]; then
+    echo "    !! 源码目录出现数据类目录:$DIRTY_PATHS"
+    echo "    !! 这些不应存在于源码目录。处理方式："
+    echo "       1) 确认其中的数据是否已在 $DATA 里（ls $DATA/books）"
+    echo "       2) 若未搬走，先 mv 到 $DATA/ 下，再删除源码目录中的副本"
+    echo "       3) 若已搬走，直接删除: rm -rf${DIRTY_PATHS// / $SRC/}"
+    echo "    !! 已停止后续步骤，请处理后重新执行本脚本。"
+    exit 1
+fi
+echo "    OK：源码目录干净（无 books/ data/ 等）"
+
+# 校验关键文件
+for f in Dockerfile docker-compose.yml; do
+    [ -e "$SRC/$f" ] || { echo "    !! 缺少关键文件: $f"; exit 1; }
+done
+echo "    OK：关键文件齐全"
+
+# 校验 compose 的数据挂载指向 audiobook-data
+if ! grep -q "audiobook-data:/data" "$SRC/docker-compose.yml"; then
+    echo "    !! docker-compose.yml 里没有 'audiobook-data:/data' 挂载"
+    grep -n ":/data" "$SRC/docker-compose.yml" | sed 's/^/       /'
+    echo "    !! 请手工修正 volumes 行为: - /volume1/docker/audiobook-data:/data"
+    exit 1
+fi
+echo "    OK：数据挂载指向 audiobook-data"
+
+# ---------- 7. 构建 ----------
+if [ "$SKIP_BUILD" = "1" ]; then
+    echo "==> [7/8] 跳过构建（SKIP_BUILD=1）"
+else
+    echo "==> [7/8] 构建镜像（耗时较久，请耐心）"
+    ( cd "$SRC" && docker compose build )
+fi
+
+# ---------- 8. 启动与验证 ----------
+if [ "$SKIP_UP" = "1" ] || [ "$SKIP_BUILD" = "1" ]; then
+    echo "==> [8/8] 跳过启动"
+    echo
+    echo "后续手动执行："
+    echo "  cd $SRC && docker compose up -d"
+    echo "  确认无误后清理旧源码: rm -rf $OLD"
+    exit 0
+fi
+
+echo "==> [8/8] 启动容器"
+( cd "$SRC" && docker compose up -d )
+sleep 20
+echo "    supervisor 状态："
+docker exec -it "$CONTAINER" supervisorctl status || true
+echo
+echo "    数据校验（书数应与你原有的数量一致）："
+docker exec -it "$CONTAINER" python3 -c "
+import sqlite3
+try:
+    c=sqlite3.connect('/data/books/library/metadata.db')
+    print('    书数:', c.execute('select count(*) from books').fetchone()[0])
+except Exception as e:
+    print('    读取失败:', e)
+" 2>/dev/null || true
+
+if [ "$KEEP_OLD" != "1" ]; then
+    echo
+    echo "==> 清理旧源码"
+    rm -rf "$OLD"
+    echo "    已删除 $OLD"
+else
+    echo "    已保留旧源码: $OLD（KEEP_OLD=1）"
+fi
+
+echo
+echo "============================================================"
+echo " 升级完成"
+echo "   源码: $SRC"
+echo "   数据: $DATA   （唯一，未被触碰）"
+echo "   访问: http://<NAS_IP>:9800"
+echo "============================================================"

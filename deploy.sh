@@ -15,6 +15,26 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 CONTAINER="${CONTAINER:-audiobook-mybooks-1}"
 
+echo "==> [0/5] 源码目录污染自检"
+# v4.8.2 起数据外置到 /volume1/docker/audiobook-data，
+# 源码目录里不应出现 books/ data/ 等运行数据目录。
+DIRTY=""
+for p in books book data audios library upload imports sync models cache logs log workspace; do
+    [ -e "$DIR/$p" ] && DIRTY="$DIRTY $p"
+done
+if [ -n "$DIRTY" ]; then
+    echo "    !! 源码目录里出现了数据类目录:$DIRTY"
+    echo "    !! 数据应统一放在 /volume1/docker/audiobook-data/ 下。"
+    echo "    !! 若这些是旧布局遗留的数据，请先搬到 audiobook-data 再删除本目录副本；"
+    echo "    !! 详见 INSTALL_GUIDE.md “一次性：把数据目录分离出源码目录”。"
+    echo "    !! 若确认是误留的空目录，可直接删除后重跑本脚本："
+    delfiles=""
+    for p in $DIRTY; do delfiles="$delfiles $DIR/$p"; done
+    echo "    !!   rm -rf$delfiles"
+    exit 1
+fi
+echo "    OK：源码目录干净"
+
 echo "==> [1/5] 目录与文件校验"
 fail=0
 for f in Dockerfile docker-compose.yml myreader-dist/app/server.js \

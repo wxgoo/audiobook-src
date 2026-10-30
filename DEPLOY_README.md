@@ -1,4 +1,4 @@
-# audiobook（MyBooks 移植版）完整部署包 v4.8.1
+# audiobook（MyBooks 移植版）完整部署包 v4.8.2
 
 这是唯一需要的部署包，解压后的目录名是 `audiobook/`。
 
@@ -8,39 +8,174 @@
 | audiobook/myreader-dist/ | 内嵌阅读器 MyReader 构建产物（Next 16.2.6 standalone，127 个 pnpm 符号链接，封面修复已编译） |
 | audiobook/tools/category_backfill.py | 读者组 #category 分类回填脚本 |
 | audiobook/conf/nginx/mybooks.conf | 已含扫描器 444 屏蔽规则 |
-| audiobook/deploy.sh | 一键部署脚本（校验→构建→启动→验证） |
+| audiobook/deploy.sh | 一键部署脚本（污染自检→校验→构建→启动→验证） |
+| audiobook/upgrade.sh | **升级 / 重装脚本**（原子替换，保证源码干净、数据目录唯一） |
 
-## NAS 一键部署（推荐）
+---
+
+## 目录布局（v4.8.2 起，务必遵守）
+
+```
+/volume1/docker/
+├── audiobook/                 ← 源码 + 配置，可随意删了重解压
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── deploy.sh
+│   ├── upgrade.sh
+│   └── app/ webserver/ conf/ ...
+│
+└── audiobook-data/            ← ★ 唯一数据目录，永不被升级流程触碰 ★
+    ├── books/
+    │   ├── calibre-webserver.db    ← 用户/权限/设置数据库
+    │   ├── library/                ← 电子书书库 + metadata.db
+    │   ├── audios/                 ← 有声书音频
+    │   ├── upload/ imports/ settings/ progress/ ...
+    ├── cache/
+    ├── log/
+    ├── reader/
+    ├── sync/
+    └── toolbox/
+```
+
+**核心原则：源码目录里绝不能出现 `books/`、`data/`、`library/`、`audios/` 这类目录。**
+
+`docker-compose.yml` 里写死了 `- /volume1/docker/audiobook-data:/data`，
+程序内部所有路径都是容器内 `/data/books/...`，所以宿主机上数据只存在于 `audiobook-data/`。
+
+`deploy.sh` 和 `upgrade.sh` 都会在开头做污染自检，发现源码目录里有数据类目录会直接停止并提示。
+
+---
+
+## 首次安装
 
 ```bash
 cd /volume1/docker
-tar -xzf audiobook-deploy-v4.8.1.tar.gz
+mkdir -p audiobook
+tar -xzf audiobook-deploy-v4.8.2.tar.gz -C audiobook --strip-components=1
+mkdir -p audiobook-data          # 数据目录必须先存在
 cd audiobook
 sh deploy.sh
 ```
 
-`deploy.sh` 会依次做：关键文件校验 → 符号链接抽查（防止解压压扁）→
-`docker compose build` → `docker compose up -d` → 启动状态验证。
+> `--strip-components=1` 用于去掉包内的 `audiobook-deploy-v4.8.2/` 外层目录。
+> 若包结构第一层直接是 `app/ webserver/ Dockerfile`，则不加该参数。
+> 用 `tar -tzf 包名 | head -3` 先看一眼即可判断。
+
+`deploy.sh` 依次做：**源码目录污染自检** → 关键文件校验 → 符号链接抽查（防解压压扁）
+→ `docker compose build` → `docker compose up -d` → 启动验证。
 只构建不启动：`sh deploy.sh build-only`。
 
-## 手动部署（等效于脚本内容）
+---
+
+## 升级 / 重装（推荐用 upgrade.sh）
+
+> ⚠️ **不要**直接在 `audiobook/` 里 `tar -xzf` 新包——旧文件残留会和新包叠加，
+> 这正是"源码目录变脏"的根源。
+
+正确做法：
 
 ```bash
 cd /volume1/docker
-tar -xzf audiobook-deploy-v4.8.1.tar.gz   # 务必命令行 tar，图形解压会压扁符号链接
-cd audiobook
-ls myreader-dist/app/server.js            # 确认产物在
-grep -c "myreader" conf/supervisor/mybooks.conf
-docker compose build && docker compose up -d
+sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-v4.8.2.tar.gz
 ```
 
-启动后验证（约等 20 秒）：
+`upgrade.sh` 的执行顺序（每步都有保护）：
+
+| 步骤 | 动作 | 保护点 |
+|---|---|---|
+| 0 | 预检压缩包结构 | 包内若含 `books/library` 等数据目录会警告并要求确认 |
+| 1 | 检查 `audiobook-data/books` 存在 | 不存在则停止，防止数据目录被误建为空 |
+| 2 | 备份 `*.db` 到 `audiobook-data-dbbackup-时间戳/` | 只备份数据库，秒级；`NO_BACKUP=1` 可跳过 |
+| 3 | `docker compose down` | 消除写入中的风险 |
+| 4 | 旧源码 `mv audiobook → audiobook.old` | 不删除，保留回滚可能 |
+| 5 | `mkdir audiobook` 后全新解压 | **全新目录，绝不叠加** |
+| 6 | 污染自检 + 挂载校验 | 有数据类目录则停止；compose 未指向 `audiobook-data` 则停止 |
+| 7 | `docker compose build` | `SKIP_BUILD=1` 可跳过 |
+| 8 | 启动 + 校验书数 + 清理 `.old` | 打印书数供对比；`KEEP_OLD=1` 保留旧源码 |
+
+可选环境变量：
+
+```bash
+SKIP_BUILD=1 sh upgrade.sh 包.tar.gz   # 只解压看代码，不构建
+SKIP_UP=1    sh upgrade.sh 包.tar.gz   # 解压+构建，不启动
+KEEP_OLD=1   sh upgrade.sh 包.tar.gz   # 保留 audiobook.old
+NO_BACKUP=1  sh upgrade.sh 包.tar.gz   # 不备份数据库（不推荐）
+```
+
+升级后验证：
 
 ```bash
 docker exec -it audiobook-mybooks-1 supervisorctl status
-# myreader 应为 RUNNING；浏览器测试：
-# http://<NAS_IP>:9800/read/589?format=epub  应一路跳到 /reader/cloud-589-epub
+# 四个进程均应为 RUNNING（myreader 不能是 FATAL/BACKOFF）
 ```
+
+---
+
+## 手动升级（等效于脚本，便于理解或排查）
+
+```bash
+cd /volume1/docker
+
+# 1. 停服务
+docker compose -f audiobook/docker-compose.yml down
+
+# 2. 旧源码改名（不删）
+mv audiobook audiobook.old
+
+# 3. 全新目录解压
+mkdir audiobook
+tar -xzf audiobook-deploy-v4.8.2.tar.gz -C audiobook --strip-components=1
+
+# 4. 污染自检（应无输出）
+ls -d audiobook/books audiobook/book audiobook/data audiobook/library 2>/dev/null
+
+# 5. 确认数据挂载正确
+grep ":/data" audiobook/docker-compose.yml
+# 期望输出: - /volume1/docker/audiobook-data:/data
+
+# 6. 构建启动
+cd audiobook && docker compose build && docker compose up -d
+sleep 25 && docker exec audiobook-mybooks-1 supervisorctl status
+
+# 7. 确认无误后清掉旧源码
+cd /volume1/docker && rm -rf audiobook.old
+```
+
+**记住一句话：先 `mv` 走旧的，再 `mkdir` 全新的，永远不叠加。**
+
+---
+
+## 如果源码目录已经被污染
+
+症状：`ls audiobook/` 看到 `books/`、`data/`、`library/`、`audios/` 等。
+
+```bash
+cd /volume1/docker
+
+# 1. 先停容器
+docker compose -f audiobook/docker-compose.yml down
+
+# 2. 确认这些目录里有什么（不要急删）
+du -sh audiobook/books audiobook/data 2>/dev/null
+
+# 3. 如果里面的数据比 audiobook-data 里的新/全，先搬过去
+#    （同盘 mv 是 rename，秒级，不占双倍空间）
+mkdir -p audiobook-data
+[ -d audiobook/books ] && mv audiobook/books/* audiobook-data/books/ && rmdir audiobook/books
+
+# 4. 确认数据完整
+ls audiobook-data/books/        # library/ audios/ calibre-webserver.db 都要在
+
+# 5. 起容器验证书数
+docker compose -f audiobook/docker-compose.yml up -d && sleep 25
+docker exec audiobook-mybooks-1 python3 -c \
+  "import sqlite3;print('书数:',sqlite3.connect('/data/books/library/metadata.db').execute('select count(*) from books').fetchone()[0])"
+
+# 6. 一切正常后，跑 upgrade.sh 重装一次源码，得到干净的目录
+sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-v4.8.2.tar.gz
+```
+
+---
 
 ## 日常运维
 
@@ -54,7 +189,27 @@ docker exec -it audiobook-mybooks-1 supervisorctl status myreader
 docker exec -it audiobook-mybooks-1 tail -50 /data/log/myreader.log
 ```
 
+## 备份
+
+**只需备份 `audiobook-data/` 一个目录**，源码随时可从包或 Gitee 重取。
+
+```bash
+# 完整备份（含书和音频，体积大）
+tar -czf /volume1/docker/audiobook-data-$(date +%F).tar.gz \
+  -C /volume1/docker audiobook-data
+
+# 仅备份数据库（体积小，日常够用）
+mkdir -p /volume1/docker/audiobook-dbbackup
+cp -a /volume1/docker/audiobook-data/books/*.db* /volume1/docker/audiobook-dbbackup/
+```
+
 ## 版本记录
+
+- v4.8.2（2026-10-30）
+  - **数据彻底外置**：compose 改挂 `audiobook-data:/data`，源码目录与运行数据分离
+  - **新增 `upgrade.sh`**：原子替换式升级，带包结构预检、数据库备份、污染自检、挂载校验
+  - **`deploy.sh` 新增污染自检**：源码目录出现 `books/`、`data/` 等即停止并给出清理命令
+  - 文档明确"先 mv 再 mkdir 全新解压"的标准流程，杜绝新包叠加旧目录
 
 - v4.8.1（2026-10-30）
   - MyReader 502 三连修复：产物缺失 → supervisor 配置 → 符号链接压扁（详见 PORTING_NOTES.md 四之三）
@@ -62,6 +217,7 @@ docker exec -it audiobook-mybooks-1 tail -50 /data/log/myreader.log
   - nginx 扫描器 444 屏蔽（/api/mcp 是真实端点，刻意未拦）
   - 固化 tools/category_backfill.py 读者组分类回填脚本
   - 固化 deploy.sh 一键部署脚本；文档目录名统一为 audiobook
+
 - 更早版本记录见 audiobook/README.md 与 audiobook/PORTING_NOTES.md
 
 ## 命名说明

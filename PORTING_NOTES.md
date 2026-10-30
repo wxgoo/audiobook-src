@@ -61,6 +61,26 @@
 | `conf/supervisor/mybooks.conf` | 新增 `[program:myreader]`（`directory=/var/www/myreader`） |
 | `README.md` / `INSTALL_GUIDE.md` | 构建排查、加速章节、本移植版说明 |
 
+### 4. 部署工具（与上游无关，本包自有）
+
+| 文件 | 说明 |
+|---|---|
+| `deploy.sh` | 首次安装：源码目录污染自检 → 关键文件校验 → 符号链接抽查 → build → up → 验证 |
+| `upgrade.sh` | 升级/重装：包结构预检 → 数据库备份 → down → 旧源码改名 → **全新目录解压** → 污染自检 → 挂载校验 → build → up → 清理 |
+| `tools/category_backfill.py` | 读者组 `#category` 分类回填 |
+
+`upgrade.sh` 存在的原因（**v4.8.2 新增，解决的实际事故**）：
+
+用户升级时习惯在 `audiobook/` 里直接 `tar -xzf` 新包。tar 是**覆盖式解压，不删除旧文件**，
+于是旧包里已有、新包里没有的文件全部残留。v4.8.1 及以前数据还落在源码目录
+（挂载 `audiobook:/data`），旧 `books/` 于是被一起留在原地，加上新包叠加，
+表现为"源码目录里冒出 `books`，跟 `audiobook-data` 变成两份"。
+
+修法是**原子替换**：`mv audiobook audiobook.old` → `mkdir audiobook` → 解压到新目录。
+新目录天然无残留，从机制上杜绝污染，而不是靠人记得先 `rm -rf`。
+两个脚本都把"源码目录不得出现 books/data/library/audios"写成硬校验，
+命中即 `exit 1`，不会在脏目录上继续构建镜像。
+
 ---
 
 ## 二、上游更新后怎么合
@@ -405,3 +425,83 @@ myreader-dist/app/.next/node_modules/js-md5-<hash> -> ../../../node_modules/.pnp
   反复拉起即崩 → FATAL → 502。
 - 之后一律用 tar.gz（`tar -czf` / `tar -xzf`）传输，解压后用
   `ls -la myreader-dist/app/node_modules/ | head` 验证链接仍在（lrwxrwxrwx + ->）。
+
+---
+
+## 四之四、v4.8.2 增量（源码与数据彻底分离 + 升级防污染）
+
+### 1. 问题：源码目录里的 `books/` 从哪来
+
+两个原因叠加：
+
+1. **历史布局**：v4.8.1 及以前 compose 写的是 `- /volume1/docker/audiobook:/data`，
+   容器把 `/data/books` 直接落在源码目录里。这是设计使然，不是 bug。
+2. **覆盖式解压**：升级时在 `audiobook/` 里执行 `tar -xzf 新包`，tar 只覆盖同名文件、
+   **不删除**旧包有而新包没有的文件。旧 `books/`、`.old` 残留于是留在原地，
+   新包再叠一层，看起来就是"源码目录越来越脏"。
+
+单独看每条都不致命，合起来就是用户遇到的景象：
+`audiobook/` 下冒出 `books`，与 `audiobook-data/` 并存，"数据目录不唯一"。
+
+### 2. 修法一：挂载外置（v4.8.2 已改）
+
+`docker-compose.yml`：
+
+```yaml
+volumes:
+  - /volume1/docker/audiobook-data:/data
+```
+
+程序内所有路径本来就是容器内 `/data/books/...`（`webserver/settings.py`），
+改的只是宿主机这一侧，**代码零改动**。
+
+| 宿主机路径 | 容器内 | 内容 |
+|---|---|---|
+| `/volume1/docker/audiobook/` | —— | 源码、配置、Dockerfile |
+| `/volume1/docker/audiobook-data/` | `/data` | books/cache/log/reader/sync/toolbox |
+
+### 3. 修法二：升级走原子替换（新增 `upgrade.sh`）
+
+```
+mv audiobook audiobook.old      # 旧的不删，留回滚
+mkdir audiobook                 # 全新空目录
+tar -xzf 包 -C audiobook        # 解压到空目录，天然无残留
+```
+
+配套的四道校验（任一失败即 `exit 1`）：
+
+| 校验 | 判据 |
+|---|---|
+| 包结构预检 | `tar -tzf 包 \| grep 'books/library\|books/audios'` 有命中则警告并要求确认 |
+| 数据目录存在 | `[ -d audiobook-data/books ]`，防止首次装误用升级脚本建出空数据中心 |
+| 源码污染 | `audiobook/{books,book,data,audios,library,upload,imports,...}` 任一存在即停止 |
+| 挂载正确 | `grep 'audiobook-data:/data' docker-compose.yml`，不匹配则打印实际 `:/data` 行 |
+
+`deploy.sh` 同样加了第一道反向检查（污染即停止），这样即使有人手工解压弄脏了目录，
+构建阶段也会被拦下，不会产出一个"数据挂在源码目录里"的镜像。
+
+### 4. 迁移已有环境（旧布局 → 新布局）
+
+纯 rename，不复制数据，秒级完成。完整命令见 `INSTALL_GUIDE.md`
+「一次性：把数据目录分离出源码目录」，要点：
+
+```bash
+docker compose down
+mkdir -p audiobook-data
+for d in books sync models cache logs log reader toolbox workspace; do
+    [ -e "audiobook/$d" ] && mv "audiobook/$d" "audiobook-data/$d" || true
+done
+# 确认 audiobook-data/books/ 下 library、audios、calibre-webserver.db 都在，再起容器
+```
+
+### 5. 判断标准（自查清单）
+
+| 检查 | 期望 |
+|---|---|
+| `ls -d audiobook/books audiobook/data 2>/dev/null` | 无输出 |
+| `grep ':/data' audiobook/docker-compose.yml` | `- /volume1/docker/audiobook-data:/data` |
+| `docker inspect audiobook-mybooks-1 --format '{{range .Mounts}}{{.Source}}->{{.Destination}}{{"\n"}}{{end}}'` | `... audiobook-data->/data` |
+| `ls audiobook-data/books/` | `library/ audios/ calibre-webserver.db` 等齐全 |
+| 升级前后书数 | 一致 |
+
+全部通过，才算"源码干净、数据唯一"。
