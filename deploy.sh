@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================
-# MyBooks 移植版（audiobook）NAS 一键部署脚本 v4.8.2
+# MyBooks 移植版（audiobook）NAS 一键部署脚本 4.6.0-1
 #
 # 用法（在解压出来的 audiobook 目录的上一级执行）：
 #   cd /volume1/docker/audiobook
@@ -16,7 +16,7 @@ cd "$DIR"
 CONTAINER="${CONTAINER:-audiobook-mybooks-1}"
 
 echo "==> [0/5] 源码目录污染自检"
-# v4.8.2 起数据外置到 /volume1/docker/audiobook-data，
+# 4.6.0-1 起数据外置到 /volume1/docker/audiobook-data，
 # 源码目录里不应出现 books/ data/ 等运行数据目录。
 DIRTY=""
 for p in books book data audios library upload imports sync models cache logs log workspace; do
@@ -56,7 +56,7 @@ echo "    app/node_modules 首层链接: $app_links（应为 3）；全产物合
 if [ "$app_links" -lt 3 ] || [ "$all_links" -lt 100 ]; then
     echo "    !! 符号链接数量异常，几乎可以确定是被解压工具压扁了。"
     echo "    !! 请删除本目录，改用命令行重新解压："
-    echo "    !!   tar -xzf audiobook-deploy-v4.8.2.tar.gz"
+    echo "    !!   tar -xzf audiobook-deploy-4.6.0-1.tar.gz"
     exit 1
 fi
 

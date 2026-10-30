@@ -1,4 +1,4 @@
-# audiobook（MyBooks 移植版）完整部署包 v4.8.2
+# audiobook（MyBooks 移植版）完整部署包 4.6.0-1
 
 这是唯一需要的部署包，解压后的目录名是 `audiobook/`。
 
@@ -13,7 +13,7 @@
 
 ---
 
-## 目录布局（v4.8.2 起，务必遵守）
+## 目录布局（4.6.0-1 起，务必遵守）
 
 ```
 /volume1/docker/
@@ -51,13 +51,13 @@
 ```bash
 cd /volume1/docker
 mkdir -p audiobook
-tar -xzf audiobook-deploy-v4.8.2.tar.gz -C audiobook --strip-components=1
+tar -xzf audiobook-deploy-4.6.0-1.tar.gz -C audiobook --strip-components=1
 mkdir -p audiobook-data          # 数据目录必须先存在
 cd audiobook
 sh deploy.sh
 ```
 
-> `--strip-components=1` 用于去掉包内的 `audiobook-deploy-v4.8.2/` 外层目录。
+> `--strip-components=1` 用于去掉包内的 `audiobook-deploy-4.6.0-1/` 外层目录。
 > 若包结构第一层直接是 `app/ webserver/ Dockerfile`，则不加该参数。
 > 用 `tar -tzf 包名 | head -3` 先看一眼即可判断。
 
@@ -76,7 +76,7 @@ sh deploy.sh
 
 ```bash
 cd /volume1/docker
-sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-v4.8.2.tar.gz
+sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-1.tar.gz
 ```
 
 `upgrade.sh` 的执行顺序（每步都有保护）：
@@ -124,7 +124,7 @@ mv audiobook audiobook.old
 
 # 3. 全新目录解压
 mkdir audiobook
-tar -xzf audiobook-deploy-v4.8.2.tar.gz -C audiobook --strip-components=1
+tar -xzf audiobook-deploy-4.6.0-1.tar.gz -C audiobook --strip-components=1
 
 # 4. 污染自检（应无输出）
 ls -d audiobook/books audiobook/book audiobook/data audiobook/library 2>/dev/null
@@ -172,7 +172,7 @@ docker exec audiobook-mybooks-1 python3 -c \
   "import sqlite3;print('书数:',sqlite3.connect('/data/books/library/metadata.db').execute('select count(*) from books').fetchone()[0])"
 
 # 6. 一切正常后，跑 upgrade.sh 重装一次源码，得到干净的目录
-sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-v4.8.2.tar.gz
+sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-1.tar.gz
 ```
 
 ---
@@ -205,7 +205,7 @@ cp -a /volume1/docker/audiobook-data/books/*.db* /volume1/docker/audiobook-dbbac
 
 ## 版本记录
 
-- v4.8.2（2026-10-30）
+- 4.6.0-1（2026-10-30）
   - **数据彻底外置**：compose 改挂 `audiobook-data:/data`，源码目录与运行数据分离
   - **新增 `upgrade.sh`**：原子替换式升级，带包结构预检、数据库备份、污染自检、挂载校验
   - **`deploy.sh` 新增污染自检**：源码目录出现 `books/`、`data/` 等即停止并给出清理命令
