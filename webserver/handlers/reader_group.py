@@ -118,10 +118,13 @@ class ReaderGroupList(BaseHandler):
             return {"err": "params", "msg": msg}
         return {"err": "ok", "groups": self._groups_with_members()}
 
-    @staticmethod
-    def _groups_with_members() -> dict:
-        """组定义 + 成员名单合并返回（GET/POST 共用，保证结构一致）。"""
-        ScopedSession = loader.get_settings()["ScopedSession"]
+    def _groups_with_members(self) -> dict:
+        """组定义 + 成员名单合并返回（GET/POST 共用，保证结构一致）。
+
+        必须是实例方法：ScopedSession 在 self.settings 里，
+        全局 loader.get_settings() 拿不到它（会 KeyError）。
+        """
+        ScopedSession = self.settings["ScopedSession"]
         session = ScopedSession()
         try:
             members = ReaderGroupService.members_of(session)
