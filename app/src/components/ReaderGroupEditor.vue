@@ -85,6 +85,21 @@
       <v-divider class="my-4"></v-divider>
 
       <!-- 组列表 -->
+      <!-- 悬空引用：成员还挂着某个已删除的组名，这些人在权限上「读不到任何书」，
+           不显式提示的话管理员完全无从发现（只会觉得"这人怎么啥都看不到"）。 -->
+      <v-alert
+        v-if="orphanNames.length"
+        type="warning"
+        dense
+        outlined
+        class="mb-3"
+      >
+        <div class="font-weight-medium mb-1">{{ $t("settings.reader_group_orphan_title") }}</div>
+        <div v-for="g in orphanNames" :key="g" class="text-caption">
+          「{{ g }}」→ {{ orphans[g].join("、") }}
+        </div>
+        <div class="text-caption mt-1">{{ $t("settings.reader_group_orphan_tips") }}</div>
+      </v-alert>
       <div v-if="!loaded && loading" class="text-center py-4"><v-progress-circular indeterminate></v-progress-circular></div>
       <v-simple-table v-else-if="groupNames.length" dense>
         <thead>
@@ -160,6 +175,9 @@ export default {
     saving: false,
     assigning: false,
     groups: {},
+    // 悬空引用：{组名: [用户名]}，成员的组已被删/改名，导致这些人权限判定为
+    // 「组不存在 → 读不到任何书」，需要在界面上显式提示重新分配。
+    orphans: {},
     form: { name: "", mode: "whitelist", categories: "", tags: "", old_name: "" },
     editing: false,
     // 候选值：从系统里实际存在的分类/标签拉取，供 v-combobox 下拉选择。
@@ -191,6 +209,9 @@ export default {
     },
     groupNames() {
       return Object.keys(this.groups).sort();
+    },
+    orphanNames() {
+      return Object.keys(this.orphans || {}).sort();
     },
     // form.categories / form.tags 后端存的是逗号分隔字符串，v-combobox multiple
     // 需要数组。这里用 getter/setter 做双向转换，提交时再 join 回字符串，
@@ -295,6 +316,7 @@ export default {
         const rsp = await this.$backend("/admin/reader_groups");
         if (rsp.err === "ok") {
           this.groups = rsp.groups || {};
+          this.orphans = rsp.orphans || {};
           this.loaded = true;
         } else {
           this.$alert("error", rsp.msg || rsp.err);
@@ -334,6 +356,7 @@ export default {
         });
         if (rsp.err === "ok") {
           this.groups = rsp.groups || {};
+          this.orphans = rsp.orphans || {};
           this.$alert("success", this.$t("settings.saved"));
           this.resetForm();
         } else {

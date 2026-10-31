@@ -91,7 +91,9 @@ class ReaderGroupList(BaseHandler):
     @js
     @is_admin
     def get(self):
-        return {"err": "ok", "groups": self._groups_with_members()}
+        groups = self._groups_with_members()
+        return {"err": "ok", "groups": groups,
+                "orphans": getattr(self, "_orphan_groups", {})}
 
     @js
     @is_admin
@@ -128,11 +130,32 @@ class ReaderGroupList(BaseHandler):
         session = ScopedSession()
         try:
             members = ReaderGroupService.members_of(session)
+            # 组已不存在但成员还挂着 → 修好数据，别留悬空引用。
+            # 不修的话：组被删了成员却仍被判定为「受限且读不到书」，
+            # 管理员在界面上看不到这些人，只能靠猜。
+            stale = [g for g in members if g not in ReaderGroupService.list_groups()]
+            if stale:
+                fixed = ReaderGroupService.clear_members_of(stale, session)
+                if fixed:
+                    logging.warning("[reader-group] dropped %d stale member refs: %s",
+                                    fixed, stale)
+                for g in stale:
+                    members.pop(g, None)
         finally:
             session.close()
         groups = ReaderGroupService.list_groups()
         for name, cfg in groups.items():
             cfg["members"] = members.get(name, [])
+        # 悬空引用：成员的 extra 里写着某组名，但该组已不存在（删组/改名/导入
+        # 数据没带上设置）。这类用户在权限判定里是「读不到任何书」，
+        # 必须显式暴露出来，否则管理员只看到"这个人不在任何组里"，无从发现。
+        orphan = {}
+        for gname, users in members.items():
+            if gname not in groups:
+                orphan[gname] = users
+        if orphan:
+            logging.warning("[reader-group] orphan group refs: %s", orphan)
+        self._orphan_groups = orphan
         return groups
 
 

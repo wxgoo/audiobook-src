@@ -261,6 +261,35 @@ class ReaderGroupService:
         return True
 
     @staticmethod
+    def clear_members_of(group_names, session=None) -> int:
+        """清掉指向「已不存在的组」的成员引用，返回修复人数。
+
+        场景：管理员删了组（或改名失败/导入数据没带设置），但成员的 extra
+        里仍写着旧组名。这类悬空引用在权限判定里等于「受限且读不到书」，
+        而界面上又看不到这些人——必须在读列表时就顺手修掉，并报出来。
+        """
+        if session is None or not group_names:
+            return 0
+        names = set(group_names)
+        try:
+            from webserver.models import Reader
+            n = 0
+            for r in session.query(Reader).all():
+                g = (r.extra or {}).get(MEMBER_KEY)
+                if g in names:
+                    extra = dict(r.extra or {})
+                    extra.pop(MEMBER_KEY, None)
+                    r.extra = extra
+                    n += 1
+            if n:
+                session.commit()
+            return n
+        except Exception as e:  # pragma: no cover
+            logging.warning("[reader-group] clear stale members failed: %s", e)
+            session.rollback()
+            return 0
+
+    @staticmethod
     def group_of(reader) -> str:
         return str((reader.extra or {}).get(MEMBER_KEY, "") or "")
 
@@ -283,11 +312,20 @@ class ReaderGroupService:
         name = ReaderGroupService.group_of(reader)
         cfg = _groups().get(name)
         if not cfg:
-            # 没进组（或组名早已不存在）：不受限。
-            # 常见误判：管理员删了组又重建同名组，成员引用可能已丢，
-            # 用 /api/admin/reader_groups/debug?username=xxx 可以确认。
-            return {"read_limit": 0, "limit_categories": "", "limit_tags": "",
-                    "source": "none", "group": name}
+            if not name:
+                # 真的没进组：不受限，这是正常状态。
+                return {"read_limit": 0, "limit_categories": "", "limit_tags": "",
+                        "source": "none", "group": ""}
+            # 成员记录里写着某个组，但这个组已经不存在了（删组、改名、
+            # 导入 db 时设置没跟过来）。这时绝对不能当作「不受限」——
+            # 数据一脏权限就静默全开，是最危险的兜底方向。
+            # 一律按「受限且无一本书可读」处理，管理界面会标红提示重新分配。
+            logging.warning("[reader-group] reader points to missing group %r, "
+                            "treating as no-access", name)
+            return {"read_limit": 1,
+                    "limit_categories": "__none__",
+                    "limit_tags": "__none__",
+                    "source": "group-missing", "group": name}
         mode = cfg.get("mode", "whitelist")
         cats = (cfg.get("categories", "") or "").strip()
         tags = (cfg.get("tags", "") or "").strip()
