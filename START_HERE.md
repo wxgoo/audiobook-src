@@ -5,7 +5,22 @@
 
 ---
 
-## 〇、先认清 5 样东西
+## ⚠️ 零、两个操作环境，别搞混
+
+本手册里所有命令分属两个地方，**跑错位置会报 `no such file or directory`**：
+
+| 环境 | 在哪 | 有什么 | 干什么 |
+|---|---|---|---|
+| **开发侧**（沙箱 / 你的 Windows） | `/root/work/audiobook-src`（沙箱路径） | git 仓库、完整源码 | 改代码、git 提交、推 Gitee、打补丁包 |
+| **NAS**（群晖 RS2416P） | `/volume1/docker/` | 现役源码、数据、部署包 | 收包、合并出成品包、upgrade.sh 上线 |
+
+- 文中标注 **【开发侧】** 的步骤 → 在沙箱/电脑上做，**NAS 上执行会失败**
+- 文中标注 **【NAS】** 的步骤 → SSH 登录群晖做
+- 例外：`upgrade-upstream.sh` 虽然在 NAS 上跑，但它会自己在 `/tmp` 里临时 clone 仓库，所以不需要 NAS 预装 git 仓库
+
+---
+
+## 一、先认清 5 样东西
 
 | 名字 | 位置 | 是什么 | 能不能删 |
 |---|---|---|---|
@@ -17,27 +32,32 @@
 
 **一句话铁律**：数据和源码永远分开。`audiobook/` 里一旦出现 `books/`、`data/`、`audios/` 目录，就是出错了。
 
----
-
-## 一、三种场景，对号入座
-
-| 我想做什么 | 看哪节 |
-|---|---|
-| 上游 mybooks 发了新版（比如 4.6.0 → 4.7.0），要跟着升 | **第二章** |
-| 我自己改了点代码（比如修 bug、加功能），要上线 | **第三章** |
-| 只是想把改动存到 Gitee | **第四章** |
-| 系统坏了要重装 / 换新机器 | **第五章** |
-| 出事了要回退 | **第六章** |
 
 ---
 
-## 第二章：跟随上游升级（4.6.0 → 新版本）
+## 二、三种场景，对号入座
 
-### 最省事的方式：一条命令
+| 我想做什么 | 看哪节 | 在哪操作 |
+|---|---|---|
+| 上游 mybooks 发了新版（比如 4.6.0 → 4.7.0），要跟着升 | **第三节** | NAS（一条命令） |
+| 我自己改了点代码（比如修 bug、加功能），要上线 | **第四节** | 开发侧 + NAS |
+| 只是想把改动存到 Gitee | **第五节** | 开发侧 |
+| 系统坏了要重装 / 换新机器 | **第六节** | NAS |
+| 出事了要回退 | **第七节** | NAS 或开发侧 |
+
+---
+
+## 三、跟随上游升级（4.6.0 → 新版本）
+
+### 最省事的方式：一条命令（在 NAS 上执行）
 
 ```sh
 sh /volume1/docker/upgrade-upstream.sh
 ```
+
+> 这个脚本把"开发侧"和"NAS"两边的活全包了：它在 `/tmp/up-upgrade/` 里临时 clone 仓库、合并上游、
+> 出包并上线，全程不碰你 NAS 上现役的 `audiobook/` 目录（直到最后 upgrade.sh）。
+> 唯一前提：**NAS 能访问 GitHub**（要 fetch 上游）。访问不了就在开发侧做，见下方"手动方式"。
 
 脚本会依次问你/自动做：
 
@@ -72,7 +92,7 @@ git commit
 
 **然后重新运行同一条命令**，脚本会自动从断点继续。
 
-### 手动方式（不想用脚本时）
+### 手动方式【开发侧】（NAS 访问不了 GitHub 时用）
 
 ```sh
 # 1. 在开发机/沙箱上
@@ -89,29 +109,44 @@ git add -A && git commit
 # 4. 推送
 git push origin master
 
-# 5. 出包（见第三章"出包"部分）
+# 5. 出包（见第四节"打补丁包"）
 ```
 
 ---
 
-## 第三章：自己改代码后上线（不打上游）
+## 四、自己改代码后上线（不打上游）
+
+### ⚠️ 先搞清在哪操作
+
+| 你要做的事 | 在哪做 | NAS 上能做吗 |
+|---|---|---|
+| 改代码、git 提交、推 Gitee、打补丁包 | **开发侧**（沙箱 `/root/work/audiobook-src`，或你的 Windows 电脑） | ❌ 不能，NAS 上没装 git 仓库 |
+| 解压、合并出成品包、upgrade.sh 升级 | **NAS**（`/volume1/docker/`） | ✅ 只能在这做 |
+
+一句话：**开发侧改代码 + 出包，NAS 只负责收包和上线。**
+下文中标注「开发侧」的步骤在 NAS 上不要执行（会报 `cd: no such file`）。
 
 ### 流程总览
 
 ```
-改代码 → 本地提交 → 推送 Gitee → 打补丁包 → 传 NAS → 合并出成品包 → upgrade.sh → 验证
+【开发侧】改代码 → 提交 → 推 Gitee → 打补丁包
+                    ↓ 传到 NAS
+【NAS】合并出成品包 → upgrade.sh 上线 → 浏览器验证
 ```
 
-### 步骤 1：改代码并提交
+### 步骤 1【开发侧】：改代码并提交
 
 ```sh
-cd /root/work/audiobook-src
+cd /root/work/audiobook-src        # ← 沙箱/开发机路径，NAS 上没有
 git status                     # 看改了哪些
 git add 改动的文件
 git commit -m "说明你改了什么"
 ```
 
-### 步骤 2：推送 Gitee
+> 如果你手上没有这个目录：它是从 Gitee clone 来的，命令是
+> `git clone https://gitee.com/wxgoo/audiobook-src.git`（任意有 git 的机器都能做）。
+
+### 步骤 2【开发侧】：推送 Gitee
 
 ```sh
 git push origin master
@@ -123,7 +158,8 @@ git push origin master
 git push https://wxgoo:df1901c0825241bcc94aa54e6608fc2b@gitee.com/wxgoo/audiobook-src.git master
 ```
 
-### 步骤 3：打补丁包
+
+### 步骤 3【开发侧】：打补丁包
 
 只改了少量文件时用这个（省时间，几秒完成）：
 
@@ -140,11 +176,11 @@ cd /tmp/pt && tar -czf audiobook-patch-$VER.tar.gz audiobook-patch-$VER
 
 > ⚠️ 注意：补丁包内的顶层目录必须和文件名一致（`audiobook-patch-<版本>/`），否则合并脚本找不到文件。
 
-### 步骤 4：传 NAS
+### 步骤 4【手工传文件】：补丁包传 NAS
 
 把 `audiobook-patch-4.6.0-2.tar.gz` 上传到 `/volume1/docker/`
 
-### 步骤 5：合并出成品包
+### 步骤 5【NAS】：合并出成品包
 
 编辑 `/volume1/docker/merge-patch3.sh`，改三行：
 
@@ -163,7 +199,7 @@ sh /volume1/docker/merge-patch3.sh
 
 看到 `符号链接: 127` + `完成` 就成功了。
 
-### 步骤 6：上线
+### 步骤 6【NAS】：上线
 
 ```sh
 sh /volume1/docker/audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-2.tar.gz
@@ -171,13 +207,15 @@ sh /volume1/docker/audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-2
 
 脚本自动：备份数据库 → 停容器 → 旧源码改名 → 解压新源码 → 校验 → 构建 → 启动 → 验证 4 个进程。
 
-### 步骤 7：验证
+### 步骤 7【浏览器】：验证
 
 浏览器打开网页，**Ctrl+F5 强刷**（清缓存），检查改动是否生效。
 
 ---
 
-## 第四章：Gitee 上传（详细版）
+## 五、Gitee 上传（详细版）
+
+> ⚠️ 本章命令在**开发侧**（有 git 仓库的机器）执行，NAS 上没有 git 仓库，不能在这跑。
 
 ### 一次性准备（只做一次）
 
@@ -211,7 +249,7 @@ git push https://wxgoo:df1901c0825241bcc94aa54e6608fc2b@gitee.com/wxgoo/audioboo
 
 ---
 
-## 第五章：重装 / 换新机器
+## 六、重装 / 换新机器
 
 ```sh
 cd /volume1/docker
@@ -231,7 +269,7 @@ sh /tmp/boot/audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-1.tar.g
 
 ---
 
-## 第六章：出事回退
+## 七、出事回退
 
 | 情况 | 命令 |
 |---|---|
@@ -241,7 +279,7 @@ sh /tmp/boot/audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-1.tar.g
 
 ---
 
-## 七、绝对不要做的事
+## 八、绝对不要做的事
 
 | ❌ 禁止 | 原因 |
 |---|---|
@@ -253,7 +291,7 @@ sh /tmp/boot/audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-1.tar.g
 
 ---
 
-## 八、文档索引（细则）
+## 九、文档索引（细则）
 
 | 文档 | 什么时候看 |
 |---|---|
