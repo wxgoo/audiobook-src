@@ -182,6 +182,9 @@ PERSISTABLE_KEYS = frozenset(ADMIN_SETTING_KEYS) | frozenset({
     "scan_hash_workers",
     # 读者组分级权限（移植自 audiobook）：组定义随设置持久化
     "READER_GROUPS",
+    # 白名单组「一个条件都没填」时是否当作「什么都读不到」。
+    # 不放进白名单的话，设置页保存时会把它抹掉，表现为权限突然全放开。
+    "READER_GROUP_STRICT",
 })
 
 

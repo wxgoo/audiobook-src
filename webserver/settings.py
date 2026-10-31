@@ -183,6 +183,9 @@ settings = {
     "READER_DICT_BAIKE_ENABLED": True,
     "READER_MYDICTS": [],
     "READER_GROUPS": {},                   # 读者组：组名 -> {mode, categories, tags},
+    # 严格模式：白名单组一个条件都没填时，成员看不到任何书。
+    # 关掉则退回 mybooks 原版语义（空条件 = 不限权）。默认开启。
+    "READER_GROUP_STRICT": True,
     # 音频转写（faster-whisper）。模型缓存在 /data/models/whisper（可用环境变量
     # WHISPER_MODEL_DIR 覆盖），容器重建后无需重新下载。
     # KEEP_TXT：除了 .srt 字幕，是否同时输出 .txt 纯文本全稿（全文搜索/复制/离线阅读用）。

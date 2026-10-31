@@ -72,6 +72,11 @@
         </v-col>
       </v-row>
       <div class="text-caption grey--text">{{ $t("settings.reader_group_rule_tips") }}</div>
+      <!-- 白名单+空条件会「一本书都看不到」，这是最容易踩的坑，动态提醒一下 -->
+      <div v-if="isEmptyWhitelist" class="text-caption orange--text mt-1">
+        <v-icon x-small color="orange">mdi-alert-outline</v-icon>
+        {{ $t("settings.reader_group_strict_tips") }}
+      </div>
       <v-btn color="primary" class="mt-2" :loading="saving" @click="saveGroup">
         <v-icon left>mdi-content-save</v-icon>{{ editing ? $t("settings.update") : $t("settings.add") }}
       </v-btn>
@@ -170,6 +175,14 @@ export default {
     userOptions: [],
   }),
   computed: {
+    // 白名单 + 分类标签都为空 = 严格模式下成员一本书都看不到，表单里提前警示
+    isEmptyWhitelist() {
+      const f = this.form || {};
+      if (f.mode !== "whitelist") return false;
+      // 后端存的是逗号分隔字符串，这里不能假设是数组
+      return this.splitList(f.categories).length === 0
+        && this.splitList(f.tags).length === 0;
+    },
     modeItems() {
       return [
         { text: this.$t("settings.reader_group_mode_whitelist"), value: "whitelist" },

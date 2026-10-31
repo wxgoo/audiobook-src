@@ -186,6 +186,59 @@ class ReaderGroupAssign(BaseHandler):
         return {"err": "ok", "assigned": n, "missing": missing}
 
 
+class ReaderGroupDebug(BaseHandler):
+    """排障用：看某个用户当前真正生效的阅读限制是什么、从哪来的。
+
+    GET /api/admin/reader_groups/debug?username=anni
+    返回 effective（生效规则）、own（用户自身设置）、group（所属组定义）、
+    global_switch（总开关 ALLOW_READ_RANGE_SETTING）。
+
+    权限失效类问题 90% 是这四种：
+      1. 总开关没开         → global_switch=false
+      2. 用户根本不在组里    → group="" / source="none"
+      3. 白名单一个条件没填  → source="group-strict"（严格模式下应为读不到书）
+      4. 用户自身又设了限制  → source="self"（组配置被自身设置覆盖）
+    """
+
+    @js
+    @is_admin
+    def get(self):
+        from webserver.constants import ALLOW_READ_RANGE_SETTING
+        from webserver.models import Reader
+        from webserver import loader
+        CONF = loader.get_settings()
+        from webserver.services.reader_group import (
+            ReaderGroupService, _groups, strict_mode)
+
+        username = (self.get_argument("username", "") or "").strip()
+        ScopedSession = self.settings["ScopedSession"]
+        session = ScopedSession()
+        try:
+            q = session.query(Reader)
+            if username:
+                q = q.filter(Reader.username == username)
+            readers = q.all()
+            out = []
+            for r in readers:
+                group = ReaderGroupService.group_of(r)
+                out.append({
+                    "username": r.username,
+                    "own": {
+                        "read_limit": int(r.read_limit or 0),
+                        "limit_categories": r.limit_categories or "",
+                        "limit_tags": r.limit_tags or "",
+                    },
+                    "group": group,
+                    "group_def": _groups().get(group),
+                    "effective": ReaderGroupService.effective_limits(r),
+                    "global_switch": bool(CONF.get(ALLOW_READ_RANGE_SETTING, False)),
+                    "strict": strict_mode(),
+                })
+        finally:
+            session.close()
+        return {"err": "ok", "readers": out}
+
+
 def routes():
     return [
         (r"/api/admin/reader_groups", ReaderGroupList),
@@ -193,4 +246,5 @@ def routes():
         (r"/api/admin/reader_groups/presets", ReaderGroupPresets),
         (r"/api/admin/reader_groups/delete", ReaderGroupDelete),
         (r"/api/admin/reader_groups/assign", ReaderGroupAssign),
+        (r"/api/admin/reader_groups/debug", ReaderGroupDebug),
     ]

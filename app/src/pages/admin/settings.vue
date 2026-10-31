@@ -374,10 +374,12 @@
               <div :id="'f-' + grp.key">
               <v-checkbox
                 small
-                hide-details
+                :hide-details="!grp.hint"
                 v-model="settings[grp.key]"
                 :label="$t(grp.label)"
                 :prepend-icon="grp.icon"
+                :hint="grp.hint ? $t(grp.hint) : undefined"
+                :persistent-hint="!!grp.hint"
                 @change="$delete(forceOpen, grp.key)"
               >
               </v-checkbox>
@@ -2160,6 +2162,13 @@ export default {
               { icon: "mdi-tablet-cellphone", key: "ALLOW_NEW_USER_PUSH_BOOK", label: "settings.allow_new_user_push_book", type: "checkbox" },
             ],
             groups: [
+              {
+                icon: "mdi-shield-lock-outline",
+                key: "READER_GROUP_STRICT",
+                label: "settings.reader_group_strict",
+                hint: "settings.reader_group_strict_hint",
+                fields: [],
+              },
               {
                 icon: "mdi-book-lock-outline",
                 key: "ALLOW_READ_RANGE_SETTING",

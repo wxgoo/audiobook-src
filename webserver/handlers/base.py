@@ -1393,7 +1393,9 @@ class BaseHandler(web.RequestHandler):
         if not user:
             # For guests, only show books without categories and tags
             return not book.get("tags") and not book.get(constants.CALIBRE_COLUMN_CATEGORY)
-        # v4.7 读者组：用生效限制判断（自身显式设置优先，否则回退组配置）
+        # v4.7 读者组：用生效限制判断（自身显式设置优先，否则回退组配置）。
+        # 不再拿 read_limit 做前置判断：白名单+空条件的「严格模式」靠一份
+        # 永不匹配的哨兵条件表达，read_limit 虽然有值，也必须走完整判定。
         from webserver.services.reader_group import ReaderGroupService
         if ReaderGroupService.effective_limits(user)["read_limit"] > 0:
             return self.is_book_in_reading_range(book, user)

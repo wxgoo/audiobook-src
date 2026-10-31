@@ -118,6 +118,22 @@ def _persist(groups: dict):
         logging.warning("[reader-group] persist failed: %s", e)
 
 
+def strict_mode() -> bool:
+    """白名单组「一个条件都没填」时，是否当作「什么都读不到」。
+
+    mybooks 原生的阅读范围语义是：白名单空条件 = 不限权（放行全库）。
+    但读者组是管理员手工建的规则，一个只写了组名、没填任何分类/标签的
+    「白名单」组，管理员的本意几乎总是「先限制住、再慢慢配」，
+    放行全库会让整套权限看起来完全失效（实测踩过）。
+
+    所以读者组自己再加一个开关 READER_GROUP_STRICT（默认 true）：
+        严格开：白名单空条件 = 读不到任何书
+        严格关：退回原生语义 = 不限权
+    只影响「白名单 + 空条件」这一种组合，黑名单不受影响。
+    """
+    return bool(CONF.get("READER_GROUP_STRICT", True))
+
+
 class ReaderGroupService:
     """读者组的增删查与成员分配。所有方法都是静态的，与 mybooks 其他 service 一致。"""
 
@@ -262,24 +278,39 @@ class ReaderGroupService:
         if own_limit > 0 or own_cats or own_tags:
             return {"read_limit": own_limit,
                     "limit_categories": own_cats,
-                    "limit_tags": own_tags}
+                    "limit_tags": own_tags,
+                    "source": "self", "group": ""}
         name = ReaderGroupService.group_of(reader)
         cfg = _groups().get(name)
         if not cfg:
-            return {"read_limit": 0, "limit_categories": "", "limit_tags": ""}
+            # 没进组（或组名早已不存在）：不受限。
+            # 常见误判：管理员删了组又重建同名组，成员引用可能已丢，
+            # 用 /api/admin/reader_groups/debug?username=xxx 可以确认。
+            return {"read_limit": 0, "limit_categories": "", "limit_tags": "",
+                    "source": "none", "group": name}
         mode = cfg.get("mode", "whitelist")
         cats = (cfg.get("categories", "") or "").strip()
         tags = (cfg.get("tags", "") or "").strip()
-        # 空规则不等于「什么都不让读」：白名单里一个条件都没填时，
-        # 说明这个组就是用来「不限权」的（例如「成人家属」模板），
-        # 必须当作 read_limit=0 放行。否则空条件会被展开成空集合，
-        # 结果是屏蔽全库 —— 这正是最容易被误认为「系统坏了」的形态。
+        # 白名单里一个条件都没填：按「严格模式」处理（默认开启）。
+        # 注意这里和 mybooks 原生意图相反——原版认为空条件=不限权，
+        # 但读者组是管理员手工建的规则，只写了组名没填条件时，
+        # 本意几乎总是「先限制住、再慢慢配」，放行全库会让权限看起来完全失效。
+        # 想回到原版语义：设置 READER_GROUP_STRICT=false。
         if mode == "whitelist" and not cats and not tags:
-            return {"read_limit": 0, "limit_categories": "", "limit_tags": ""}
+            if strict_mode():
+                # 严格模式：返回一个不可能的哨兵条件，保证 read_limit>0 且
+                # 匹配不到任何书（is_book_in_reading_range 里会判定为不可见）
+                return {"read_limit": 1,
+                        "limit_categories": "__none__",
+                        "limit_tags": "__none__",
+                        "source": "group-strict", "group": name}
+            return {"read_limit": 0, "limit_categories": "", "limit_tags": "",
+                    "source": "group-empty", "group": name}
         return {
             "read_limit": 1 if mode == "whitelist" else 2,
             "limit_categories": cats,
             "limit_tags": tags,
+            "source": "group", "group": name,
         }
 
     @staticmethod

@@ -1199,7 +1199,7 @@
     "reader_group_categories": "分類",
     "reader_group_tags": "標籤",
     "reader_group_members": "成员",
-    "reader_group_rule_tips": "白名单：只能看到匹配分类/标签的书；黑名单：屏蔽匹配的书。",
+    "reader_group_rule_tips": "白名單：只能看到匹配分類/標籤的書（一個條件都不填 = 一本書都看不到，用於先鎖死再放開）；黑名單：屏蔽匹配的書。",
     "reader_group_empty": "还没有读者组，用上面的表单创建第一个",
     "reader_group_name_required": "组名不能为空",
     "reader_group_confirm_delete": "删除读者组「{name}」？成员的组归属会一并清除。",
@@ -1242,7 +1242,10 @@
     "transcribe_keep_txt_hint": "關閉後只產生 .srt 字幕（播放時可高亮跟隨），但無法全文搜尋或複製文字",
     "transcribe_srt_always": ".srt 字幕始終產生",
     "reader_group_from_preset": "從範本建立",
-    "reader_group_preset_tips": "選一套範本填入表單，可修改後再儲存"
+    "reader_group_preset_tips": "選一套範本填入表單，可修改後再儲存",
+    "reader_group_strict_tips": "提示：白名單組若分類和標籤都為空，成員將看不到任何書。請先填好條件再分組。",
+    "reader_group_strict": "嚴格模式：白名單空條件 = 讀不到書",
+    "reader_group_strict_hint": "白名單組未填寫任何分類/標籤時，成員看不到任何書（推薦開啟）；關閉則退回原版行為：不限權。"
   },
   "user": {
     "avatar": "大頭貼",

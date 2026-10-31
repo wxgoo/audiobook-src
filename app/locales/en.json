@@ -956,7 +956,9 @@
     "transcribe_keep_txt_hint": "When off, only .srt subtitles are generated (still enables playback highlighting), but full-text search and copy are unavailable",
     "transcribe_srt_always": ".srt subtitles are always generated",
     "reader_group_from_preset": "Create from template",
-    "reader_group_preset_tips": "Pick a template to fill the form, then edit before saving"
+    "reader_group_preset_tips": "Pick a template to fill the form, then edit before saving",
+    "reader_group_strict": "Strict mode: empty whitelist = no books",
+    "reader_group_strict_hint": "When a whitelist group has no categories/tags, its members cannot see any book. Turn off to fall back to upstream behaviour (no restriction)."
   },
   "book": {
     "readingStats": {
