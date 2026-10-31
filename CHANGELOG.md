@@ -14,9 +14,19 @@
 | **管理员被自己的读者组拦住** | **高** | 用 admin 登录后打开任意书籍详情页，四个按钮全灰（置灰不可点）；书架、分类、标签也少一截 | `is_book_visible()` 漏了 `is_admin()` 豁免——分类列表那边（`book.py::_filter_categories_by_reading_range`）一直有，判定入口这里没有，于是管理员和普通组员走同一套限制。补上后管理员永远全可见 |
 | 标签列表同样漏豁免 | 中 | 管理员侧边栏标签数量比实际少 | `base.py::_filter_tags` 与 `meta.py::_filter_tags` 两处独立实现，都只读 `read_limit`，一并补管理员豁免 |
 | WebDAV 挂载对管理员限流 | 低 | 管理员用 WebDAV 挂载时只能看到组内那几本 | `dav_provider.py::_get_user_reading_range` 新增 `admin` 判定，返回"不受限" |
+| **Podcast 分类页 / 标签页恒 404** | **高** | `/podcast/category/绘本`、`/podcast/tag/少儿` 一律 404，首页菜单点进去全挂 | 两处调用漏传 `user`，provider 把「没传 user」当成「未登录」直接返回空 dict。补上 `self.current_user` |
+| **Podcast 分类过滤直接把 dict 变 list** | **高** | 只要用户受限且点分类页，`'list' object has no attribute 'keys'`，500 | `categories = [c for c in categories …]` 丢掉了值和类型，改为按 key 重建 dict：`{c: v for c, v in …}`。`get_tags` 同病 |
+| **Podcast 单书订阅源无权限校验** | **高** | 知道 book_id 就能拼 `/podcast/book/<id>` 拿到整本音频订阅，读者组形同虚设 | 两个入口（匿名 + token）都补 `filter_book_ids` 校验，不在范围内一律 404（不用 403，避免被拿来枚举书目） |
+| `/podcast/all` 不按用户过滤 | 中 | 全库有声书订阅源对任何登录用户都是全量 | 改为 `filter_book_ids(get_all_audiobook_ids(), current_user)`，未登录返回空 |
+| Podcast 分类/标签/作者只读用户自身设置，不认读者组 | 中 | 用户自己的 `read_limit` 为 0 但在「儿童组」里，Podcast 首页照样列出全部目录 | 统一走 `ReaderGroupService.effective_limits()`，与网页端同一套口径；管理员豁免一并生效 |
 
-> 根因是同一件事在 4 个地方各写了一遍判定，补一处就会漏三处。
-> 这次四处的判定口径统一为：**未登录 → 空条件书；管理员 → 全放行；其余 → 走生效限制。**
+> 根因是同一件事在 5 处各写了一遍判定（网页 / 标签两处 / WebDAV / Podcast），补一处就会漏四处。
+> 这次全部统一为：**未登录 → 空条件书；管理员 → 全放行；其余 → 走生效限制。**
+>
+> Podcast 那套更彻底——它自带一份"读 user.read_limit"的实现，既不看读者组、
+> 也没有管理员豁免，分类页还因为漏传 user 而永久 404。等于读者组管不到播客，
+> 而管理员反而被播客拦住。这次让 Podcast 直接复用 `ReaderGroupService`，
+> 以后调权限规则只需改一处。
 
 ### 新增功能
 
@@ -34,7 +44,7 @@
 
 ### 补丁包
 
-`audiobook-patch-4.6.0-8.tar.gz`
+`audiobook-patch-4.6.0-8.tar.gz`（9 个文件：5 个后端 py + 1 个 vue + 3 个 locale + 2 个脚本）
 **含前端改动，需要重新构建镜像**（约 4 分钟）。
 
 ---
@@ -203,7 +213,7 @@
 
 | 版本 | 主要内容 | 备注 |
 |---|---|---|
-| 4.6.0-8 | **修管理员被读者组拦住（详情页按钮全灰）**；标签/分类/WebDAV 同步补豁免；详情页有声书弹窗加进度记忆与进度条 | 含 -7 全部内容，需重建镜像 |
+| 4.6.0-8 | **修管理员被读者组拦住（详情页按钮全灰）**；标签/分类/WebDAV/Podcast 五处口径统一；**修 Podcast 分类标签页 404 与单书订阅越权**；有声书弹窗加进度记忆 | 含 -7 全部内容，需重建镜像 |
 | 4.6.0-7 | **修悬空组引用静默放行**；悬空引用告警+自动修复 | 含 4.6.0-6 全部内容，需重建镜像 |
 | 4.6.0-6 | 修白名单空条件放行全库；严格模式开关；权限排障接口 | 未独立发布，并入 -7 |
 | 4.6.0-5 | upgrade.sh/deploy.sh 启动验证改轮询；修容器残留导致起不来 | 纯脚本包，不重建镜像 |

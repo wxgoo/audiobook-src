@@ -311,6 +311,70 @@ class PodcastProvider:
         _aggregate_cache["authors"] = authors
         _aggregate_cache["timestamp"] = now
 
+    # ------------------------------------------------------------------
+    # Reading-range helpers（与 base.py is_book_visible 同一套口径）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _limits_of(user):
+        """取用户生效限制（自身显式设置优先，否则回退所属读者组）。
+
+        返回 (read_limit, limit_categories_set, limit_tags_set)。
+        管理员一律不受限——podcast 是"用别的 App 听自己的库"，
+        管理员被组规则拦住时表现和详情页按钮全灰一样莫名其妙。
+        """
+        if not user:
+            return 0, set(), set()
+        if getattr(user, "admin", False):
+            return 0, set(), set()
+        from webserver.services.reader_group import ReaderGroupService
+
+        eff = ReaderGroupService.effective_limits(user)
+        read_limit = eff["read_limit"] or 0
+        if read_limit == 0:
+            return 0, set(), set()
+        cats = set(filter(None, (eff["limit_categories"] or "").split(",")))
+        tags = set(filter(None, (eff["limit_tags"] or "").split(",")))
+        return read_limit, cats, tags
+
+    @staticmethod
+    def _match(read_limit, cats, tags, category, book_tags):
+        """单本书是否落在阅读范围内。分类与标签是「或」关系。"""
+        if read_limit == 0:
+            return True
+        matched = bool(
+            (cats and category and category in cats)
+            or (tags and book_tags and (book_tags & tags))
+        )
+        return matched if read_limit == 1 else not matched
+
+    def filter_book_ids(self, book_ids, user):
+        """按阅读范围过滤一批 book_id。未登录时返回空（podcast 不对外裸奔）。"""
+        if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+            return list(book_ids)
+        if not user:
+            return []
+        read_limit, cats, tags = self._limits_of(user)
+        if read_limit == 0:
+            return list(book_ids)
+        out = []
+        for bid in book_ids:
+            mi = self.cache.get_metadata(bid, get_cover=False, get_user_categories=False)
+            if not mi:
+                continue
+            cat = ""
+            try:
+                cat_val = mi.get("#category")
+                if isinstance(cat_val, (list, tuple)):
+                    cat = str(cat_val[0]) if cat_val else ""
+                elif cat_val:
+                    cat = str(cat_val)
+            except Exception:
+                pass
+            if self._match(read_limit, cats, tags, cat, set(mi.tags or [])):
+                out.append(bid)
+        return out
+
     def get_categories(self, user=None):
         """
         Get categories that contain audiobooks.
@@ -320,19 +384,20 @@ class PodcastProvider:
         """
         self._refresh_aggregations()
 
-        categories = _aggregate_cache["categories"]
-        if CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
-            if not user:
-                return []
-            read_limit = getattr(user, "read_limit", 0) or 0
-            if read_limit > 0:
-                limit_categories = set(filter(None, (user.limit_categories or "").split(",")))
-                if read_limit == 1:
-                    # books = [b for b in books if self.is_book_in_reading_range(b, user)]
-                    categories = [category for category in categories if category in limit_categories]
-                else:
-                    categories = [category for category in categories if category not in limit_categories]
-        return categories
+        categories = dict(_aggregate_cache["categories"])
+        if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+            return categories
+        if not user:
+            return {}
+        read_limit, cats, _ = self._limits_of(user)
+        if read_limit == 0:
+            return categories
+        # 这里以前是整个 dict / list 互换，过滤完变成 list，
+        # 上层 provider.get_categories()[name] 和 .keys() 立刻 AttributeError。
+        # 现在按 key 挑，保持 dict 形状。
+        if read_limit == 1:
+            return {c: v for c, v in categories.items() if c in cats}
+        return {c: v for c, v in categories.items() if c not in cats}
 
     def get_tags(self, user=None):
         """
@@ -342,20 +407,19 @@ class PodcastProvider:
             dict of {tag_name: [book_ids]}
         """
         self._refresh_aggregations()
-        tags = _aggregate_cache["tags"]
-        if CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
-            if not user:
-                return []
-            read_limit = getattr(user, "read_limit", 0) or 0
-            if read_limit > 0:
-                limit_tags = set(filter(None, (user.limit_tags or "").split(",")))
-                if read_limit == 1:
-                    tags = [tag for tag in tags if tag in limit_tags]
-                else:
-                    tags = [tag for tag in tags if tag not in limit_tags]
-        return tags
+        tags = dict(_aggregate_cache["tags"])
+        if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+            return tags
+        if not user:
+            return {}
+        read_limit, _, limit_tags = self._limits_of(user)
+        if read_limit == 0:
+            return tags
+        if read_limit == 1:
+            return {t: v for t, v in tags.items() if t in limit_tags}
+        return {t: v for t, v in tags.items() if t not in limit_tags}
 
-    def get_authors(self):
+    def get_authors(self, user=None):
         """
         Get authors that have audiobooks.
 
@@ -363,7 +427,21 @@ class PodcastProvider:
             dict of {author_name: [book_ids]}
         """
         self._refresh_aggregations()
-        return _aggregate_cache["authors"]
+        authors = dict(_aggregate_cache["authors"])
+        if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+            return authors
+        if not user:
+            return {}
+        read_limit, _, _ = self._limits_of(user)
+        if read_limit == 0:
+            return authors
+        # 作者没有分类/标签属性，只能逐本判定后重建
+        out = {}
+        for name, ids in authors.items():
+            kept = self.filter_book_ids(ids, user)
+            if kept:
+                out[name] = kept
+        return out
 
     # ------------------------------------------------------------------
     # Aggregation: user reading states

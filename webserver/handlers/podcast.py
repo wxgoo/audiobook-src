@@ -216,7 +216,7 @@ class PodcastIndex(PodcastBaseHandler):
 
         categories = provider.get_categories(self.current_user)
         tags = provider.get_tags(self.current_user)
-        authors = provider.get_authors()
+        authors = provider.get_authors(self.current_user)
 
         if token_to_use:
             feed_map = {
@@ -331,7 +331,12 @@ class PodcastAll(PodcastBaseHandler):
         ):
             token = self.current_user.podcast_token
 
-        book_ids = provider.get_all_audiobook_ids()
+        # /podcast/all 是「全库有声书」，必须按当前用户过滤；
+        # 不传 user 时 filter_book_ids 回退到"未登录 → 空"，
+        # 也就是匿名访问拿不到任何一本书的订阅源。
+        book_ids = provider.filter_book_ids(
+            provider.get_all_audiobook_ids(), self.current_user
+        )
         entries = provider.get_catalog_entries(book_ids, site_url, token=token)
 
         title = f"{self._get_site_title()} - 全部有声书"
@@ -358,6 +363,13 @@ class PodcastBook(PodcastBaseHandler):
             book_id = int(book_id)
         except ValueError as exc:
             raise web.HTTPError(400, reason="Invalid book ID") from exc
+
+        # 阅读范围校验：以前这里完全没有权限判断，
+        # 知道 book_id 的人直接拼 /podcast/book/<id> 就能拿到整本音频的订阅源，
+        # 读者组的限制形同虚设。按"看不见就当不存在"返回 404，
+        # 免得拿 403 去枚举库里有几本书。
+        if not provider.filter_book_ids([book_id], self.current_user):
+            raise web.HTTPError(404, reason="Book not found")
 
         book_info = provider.get_book_info(book_id, site_url)
         if not book_info:
@@ -389,7 +401,9 @@ class PodcastCategory(PodcastBaseHandler):
         ):
             token = self.current_user.podcast_token
 
-        categories = provider.get_categories()
+        # 必须带上 current_user：不传时 provider 会把整个过滤分支当成
+        # 「没人登录」直接返回空，于是分类页永远 404 —— 看起来像链接坏了。
+        categories = provider.get_categories(self.current_user)
         book_ids = categories.get(name, [])
         if not book_ids:
             raise web.HTTPError(
@@ -418,7 +432,8 @@ class PodcastTag(PodcastBaseHandler):
         ):
             token = self.current_user.podcast_token
 
-        tags = provider.get_tags()
+        # 同上：不传 user 会静默返回空 dict，标签页恒 404
+        tags = provider.get_tags(self.current_user)
         book_ids = tags.get(name, [])
         if not book_ids:
             raise web.HTTPError(
@@ -447,7 +462,7 @@ class PodcastAuthor(PodcastBaseHandler):
         ):
             token = self.current_user.podcast_token
 
-        authors = provider.get_authors()
+        authors = provider.get_authors(self.current_user)
         book_ids = authors.get(name, [])
         if not book_ids:
             raise web.HTTPError(
@@ -480,6 +495,11 @@ class PodcastTokenBook(PodcastBaseHandler):
             book_id = int(book_id)
         except ValueError:
             raise web.HTTPError(400, reason="Invalid book ID")
+
+        # token 已经证明"你是谁"，但没证明"这本书你能听"：
+        # 读者组限制必须同样生效，否则拿自己的 token 换个 book_id 就能越权。
+        if not provider.filter_book_ids([book_id], user):
+            raise web.HTTPError(404, reason="Book not found")
 
         book_info = provider.get_book_info(book_id, site_url)
         if not book_info:
@@ -554,7 +574,9 @@ class PodcastTokenIndex(PodcastBaseHandler):
         html.append(self.render_feed_url(all_url))
         html.append("</div>")
 
-        categories = provider.get_categories()
+        # token 首页的三块目录同样要按这个用户过滤，
+        # 否则页面菜单干干净净、点进去却被 404，或者反过来泄漏别人的分类名。
+        categories = provider.get_categories(user)
         if categories:
             html.append('<div class="section"><h2>分类</h2><ul>')
             for cat in sorted(categories.keys()):
@@ -563,7 +585,7 @@ class PodcastTokenIndex(PodcastBaseHandler):
                 html.append(f'<li><a href="{url}">{cat}</a> ({count}本)</li>')
             html.append("</ul></div>")
 
-        tags = provider.get_tags()
+        tags = provider.get_tags(user)
         if tags:
             html.append('<div class="section"><h2>标签</h2><ul>')
             for tag in sorted(tags.keys()):
@@ -572,7 +594,7 @@ class PodcastTokenIndex(PodcastBaseHandler):
                 html.append(f'<li><a href="{url}">{tag}</a> ({count}本)</li>')
             html.append("</ul></div>")
 
-        authors = provider.get_authors()
+        authors = provider.get_authors(user)
         if authors:
             html.append('<div class="section"><h2>作者</h2><ul>')
             for author_name in sorted(authors.keys()):
