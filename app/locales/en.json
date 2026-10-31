@@ -960,7 +960,8 @@
     "reader_group_strict": "Strict mode: empty whitelist = no books",
     "reader_group_strict_hint": "When a whitelist group has no categories/tags, its members cannot see any book. Turn off to fall back to upstream behaviour (no restriction).",
     "reader_group_orphan_title": "Members point to a deleted group (they currently cannot see any book)",
-    "reader_group_orphan_tips": "Re-assign them to an existing group to restore access, or clear their group."
+    "reader_group_orphan_tips": "Re-assign them to an existing group to restore access, or clear their group.",
+    "reader_group_logic_tips": "Categories and tags are OR-ed: a book is visible if it matches either one. Filling only one side is enough."
   },
   "book": {
     "readingStats": {

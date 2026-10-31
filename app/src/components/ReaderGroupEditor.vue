@@ -72,6 +72,7 @@
         </v-col>
       </v-row>
       <div class="text-caption grey--text">{{ $t("settings.reader_group_rule_tips") }}</div>
+      <div class="text-caption grey--text">{{ $t("settings.reader_group_logic_tips") }}</div>
       <!-- 白名单+空条件会「一本书都看不到」，这是最容易踩的坑，动态提醒一下 -->
       <div v-if="isEmptyWhitelist" class="text-caption orange--text mt-1">
         <v-icon x-small color="orange">mdi-alert-outline</v-icon>

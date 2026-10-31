@@ -1422,11 +1422,21 @@ class BaseHandler(web.RequestHandler):
         limit_categories = set(filter(None, eff["limit_categories"].split(",")))
         limit_tags = set(filter(None, eff["limit_tags"].split(",")))
 
+        # 白名单的一个条件都没填 → 谁都不给看。
+        # 这里必须显式拦：两组条件都为空时，下面的 matched 永远是 False，
+        # 白名单恰好因此"变得正确"，但黑名单会反过来变成"全部放行"。
+        # 统一在这里判掉，两种模式都不会出现意料外行为。
+        if not limit_categories and not limit_tags:
+            return False
+
         from webserver.constants import CALIBRE_COLUMN_CATEGORY
 
         book_category = book.get(CALIBRE_COLUMN_CATEGORY) or ""
         book_tags = set(book.get("tags") or [])
 
+        # 命中规则：分类和标签是「或」的关系，填了哪个就按哪个放行。
+        # 只填了一边（比如只填标签）时，绝不能要求另一边也匹配——
+        # 那样会导致「明明选了绘本标签，却一本书都看不到」，实测踩过。
         matched = (limit_categories and book_category in limit_categories) or bool(
             limit_tags and book_tags & limit_tags
         )
