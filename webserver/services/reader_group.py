@@ -152,12 +152,17 @@ class ReaderGroupService:
         if mode not in ("whitelist", "blacklist"):
             return False, "mode 必须是 whitelist 或 blacklist"
         groups = dict(_groups())
+        old_name = (old_name or "").strip()
+        # 改名撞上已存在的组名：一旦继续，目标组的定义会被覆盖，两组组员还会
+        # 混在同一个名字下（成员存的是组名字符串，无法区分来源），必须拒绝。
+        if (old_name and old_name != name and old_name in groups
+                and name in groups):
+            return False, "已存在同名组，请换一个组名，或先删除该组"
         groups[name] = {
             "mode": mode,
             "categories": _normalize_tags(categories),
             "tags": _normalize_tags(tags),
         }
-        old_name = (old_name or "").strip()
         renamed = bool(old_name) and old_name != name and old_name in groups
         if renamed:
             groups.pop(old_name)

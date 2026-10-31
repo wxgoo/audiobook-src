@@ -33,7 +33,9 @@
             hide-details
             class="mb-3"
             prepend-inner-icon="mdi-magnify"
+            append-outer-icon="mdi-magnify"
             @keydown.enter.prevent="onEnterSearch"
+            @click:append-outer="search"
             @click:clear="clearSearch"
           />
           <div v-if="limitHint" class="text-caption error--text mb-2">{{ limitHint }}</div>

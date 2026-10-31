@@ -132,7 +132,7 @@
           ></v-combobox>
         </v-col>
         <v-col cols="12" sm="2">
-          <v-btn color="primary" block :loading="assigning" :disabled="!assignUsers.length" @click="assign">
+          <v-btn color="primary" block :loading="assigning" :disabled="!assignUsers || !assignUsers.length" @click="assign">
             <v-icon left>mdi-account-multiple-check</v-icon>{{ $t("settings.reader_group_assign_btn") }}
           </v-btn>
         </v-col>
@@ -348,8 +348,18 @@ export default {
       }
     },
     async assign() {
-      // chips 数组 + 手输残余项统一清洗：去空、去重
-      const usernames = this.joinList(this.assignUsers).split(",").filter(Boolean);
+      // chips 数组 + 手输残余项统一清洗：按逗号/分号/空白切分（手输 "alice bob"
+      // 也要拆成两个用户），再 trim、去空、去重
+      const raw = this.joinList(this.assignUsers);
+      const seen = new Set();
+      const usernames = [];
+      for (const part of raw.split(/[,;\s]+/)) {
+        const s = part.trim();
+        if (s && !seen.has(s)) {
+          seen.add(s);
+          usernames.push(s);
+        }
+      }
       if (!usernames.length) return;
       this.assigning = true;
       try {

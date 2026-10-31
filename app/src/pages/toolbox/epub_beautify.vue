@@ -33,7 +33,9 @@
             :hide-details="true"
             class="mb-3"
             prepend-inner-icon="mdi-magnify"
+            append-outer-icon="mdi-magnify"
             @keyup.enter="search"
+            @click:append-outer="search"
             @click:clear="clearSearch"
           />
 
