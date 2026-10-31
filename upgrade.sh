@@ -92,12 +92,22 @@ fi
 
 # ---------- 3. 停容器 ----------
 echo "==> [3/8] 停止容器"
+# 用 down 而不是 down -v/rm：容器是「停止」不是「删除」，新代码靠 up -d 时
+# 自动 recreate。这里如果留下一个「已标记删除但没删完」的容器，下一步 up 会报
+# "container is marked for removal and cannot be started"。
 if [ -f "$SRC/docker-compose.yml" ]; then
-    docker compose -f "$SRC/docker-compose.yml" down --remove-orphans 2>/dev/null || \
-    docker stop "$CONTAINER" 2>/dev/null || true
+    ( cd "$SRC" && docker compose down --remove-orphans ) >/dev/null 2>&1 || \
+    docker stop "$CONTAINER" >/dev/null 2>&1 || true
 else
-    docker stop "$CONTAINER" 2>/dev/null || true
+    docker stop "$CONTAINER" >/dev/null 2>&1 || true
 fi
+# 等容器真正退出，否则紧接着的 up -d 会和还在收尾的旧容器打架
+i=0
+while [ $i -lt 30 ]; do
+    [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ] || break
+    i=$((i + 1))
+    sleep 1
+done
 echo "    已停止。"
 
 # ---------- 4. 旧源码归档 ----------
@@ -174,6 +184,17 @@ if [ "$SKIP_UP" = "1" ] || [ "$SKIP_BUILD" = "1" ]; then
 fi
 
 echo "==> [8/8] 启动容器"
+# 残留容器清理：上一次 down 如果被打断，会留下 State=removing 的容器，
+# up -d 直接报 "container is marked for removal and cannot be started"。
+# 发现就先把它删干净，再起新的（数据在 /data 里，删容器不影响任何书）。
+if docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null | grep -q 'removing'; then
+    echo "    检测到残留容器（removing），先清理..."
+    i=0
+    while [ $i -lt 20 ] && docker inspect "$CONTAINER" >/dev/null 2>&1; do
+        i=$((i + 1)); sleep 2
+    done
+    docker rm -f "$CONTAINER" 2>/dev/null || true
+fi
 ( cd "$SRC" && docker compose up -d )
 
 # ---------- 等容器真正跑起来再检查 ----------
