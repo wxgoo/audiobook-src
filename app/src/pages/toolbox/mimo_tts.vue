@@ -18,19 +18,60 @@
             {{ $t('mimoTts.hint') }}
           </v-alert>
 
-          <v-text-field
-            v-model="query"
-            :label="$t('mimoTts.selectBook')"
-            :loading="searching"
-            outlined
-            dense
-            clearable
-            hide-details
-            class="mb-3"
-            prepend-inner-icon="mdi-magnify"
-            @keyup.enter="search"
-            @click:clear="clearSearch"
-          />
+          <!-- 使用说明：默认折叠，避免占满首屏 -->
+          <v-expansion-panels flat class="mb-4 mt-help-panels">
+            <v-expansion-panel>
+              <v-expansion-panel-header class="mt-help-header px-2">
+                <span class="text-body-2 font-weight-medium">
+                  <v-icon small left>mdi-help-circle-outline</v-icon>
+                  {{ $t('mimoTts.helpTitle') }}
+                </span>
+              </v-expansion-panel-header>
+              <v-expansion-panel-content>
+                <div class="text-caption grey--text text--darken-2 mt-help-body">
+                  <p class="mb-2">{{ $t('mimoTts.helpIntro') }}</p>
+                  <div class="mb-2"><strong>{{ $t('mimoTts.helpApiType') }}</strong></div>
+                  <ul class="mb-2 pl-5">
+                    <li>{{ $t('mimoTts.helpApiChat') }}</li>
+                    <li>{{ $t('mimoTts.helpApiSpeech') }}</li>
+                    <li>{{ $t('mimoTts.helpApiCustom') }}</li>
+                  </ul>
+                  <div class="mb-2"><strong>{{ $t('mimoTts.helpAuth') }}</strong></div>
+                  <ul class="mb-2 pl-5">
+                    <li>{{ $t('mimoTts.helpAuthApiKey') }}</li>
+                    <li>{{ $t('mimoTts.helpAuthBearer') }}</li>
+                  </ul>
+                  <p class="mb-1">{{ $t('mimoTts.helpKey') }}</p>
+                  <p class="mb-0">{{ $t('mimoTts.helpSave') }}</p>
+                </div>
+              </v-expansion-panel-content>
+            </v-expansion-panel>
+          </v-expansion-panels>
+
+          <!-- 搜索：输入框回车或点右侧按钮都能触发（原来只有回车，图标不可点） -->
+          <div class="d-flex align-center mb-3">
+            <v-text-field
+              v-model="query"
+              :label="$t('mimoTts.selectBook')"
+              :loading="searching"
+              outlined
+              dense
+              clearable
+              hide-details
+              prepend-inner-icon="mdi-book-search"
+              @keyup.enter="search"
+              @click:clear="clearSearch"
+            />
+            <v-btn
+              color="primary"
+              class="ml-2"
+              :loading="searching"
+              :disabled="!query || !query.trim()"
+              @click="search"
+            >
+              <v-icon left small>mdi-magnify</v-icon>{{ $t('mimoTts.searchBtn') }}
+            </v-btn>
+          </div>
 
           <div class="mt-book-list mb-4">
             <div v-if="searching" class="text-center py-6">
@@ -975,6 +1016,21 @@ export default {
 <style scoped>
 .mt-card {
   border: 2px solid #90CAF9;
+}
+
+.mt-help-panels {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+}
+
+.mt-help-header {
+  min-height: 40px !important;
+  background: rgba(144, 202, 249, 0.08);
+}
+
+.mt-help-body {
+  line-height: 1.7;
+  word-break: break-word;
 }
 
 .mt-book-list {
