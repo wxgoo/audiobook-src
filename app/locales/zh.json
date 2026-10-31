@@ -574,6 +574,7 @@
     "convertToAudioNote": "将使用EPUB文件进行有声书转换，需要花费一段时间，请耐心等待。",
     "audioGenerated": "开始转换，请稍后刷新页面查看",
     "audioList": "有声书音频列表",
+    "audioResumeAt": "上次听到",
     "conversionFailed": "前一次转换失败:",
     "audioFilesDeleted": "音频文件已删除",
     "setCover": "设置封面",

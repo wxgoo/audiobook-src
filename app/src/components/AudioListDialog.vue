@@ -41,8 +41,28 @@
                                 <v-icon>{{ playing_audio_index === idx && !audio_paused ? 'mdi-pause' : 'mdi-play' }}</v-icon>
                             </v-btn>
                             <span class="ml-2">{{ audio_item.filename }}</span>
+                            <!-- 上次听到哪：只有存在进度且不是刚从头开始才显示 -->
+                            <span v-if="resumeHint(idx)" class="ml-2 text-caption orange--text">
+                                {{ $t('book.audioResumeAt') }} {{ fmtTime(resumeHint(idx)) }}
+                            </span>
                         </v-col>
                     </v-row>
+                </div>
+            </v-card-text>
+            <!-- 播放进度条：试听也能定位，不用拖整个文件 -->
+            <v-card-text v-if="playing_audio_index !== null" class="pt-0">
+                <v-slider
+                    :value="progressPct"
+                    @input="seekPct"
+                    :min="0" :max="100" :step="0.1"
+                    hide-details
+                    dense
+                    color="primary"
+                ></v-slider>
+                <div class="d-flex text-caption grey--text">
+                    <span>{{ fmtTime(currentTime) }}</span>
+                    <v-spacer></v-spacer>
+                    <span>{{ fmtTime(duration) }}</span>
                 </div>
             </v-card-text>
             <v-card-actions class="justify-center">
@@ -54,7 +74,7 @@
                     {{ $t('book.cancelConversion') }}
                 </v-btn>
                 <v-btn
-                    v-else-if="audios.status === audioStatus.CONVERTED"
+                    v-if="audios.status === audioStatus.CONVERTED"
                     color="error"
                     @click="$emit('clear-conversion')"
                 >
@@ -73,12 +93,19 @@
 </template>
 
 <script>
+// 小弹窗（详情页「有声书」）的定位是「试听/管理」，但试听也会听到一半关掉，
+// 所以也做进度记忆，和正式播放器（/audio/:id）同一套思路：
+//   localStorage 键 = audiobook_preview_<用户>_<书>_<章节url哈希>
+// §为什么按章节而非按书§ 弹窗里每章是独立文件，不同章节时长差异大，
+// 按书存一个进度会导致「听了第 3 章，再点第 1 章却从第 3 章的位置开始」。
 export default {
     name: "AudioListDialog",
     props: {
         open: { type: Boolean, default: false },
         audios: { type: Object, required: true },
         audioStatus: { type: Object, required: true },
+        // 书籍 id 与当前用户 id 用于隔离进度；拿不到就退化为不记忆（不强依赖）
+        bookId: { type: [Number, String], default: null },
     },
     data() {
         return {
@@ -86,36 +113,136 @@ export default {
             audio_loading: false,
             audio_paused: false,
             currentAudioFile: null,
+            currentTime: 0,
+            duration: 0,
+            resumeMap: {},
         };
     },
+    mounted() {
+        this.loadResumeMap();
+        // pagehide 比 beforeunload 在移动端更可靠（iOS Safari 不触发 beforeunload）
+        this._onHide = () => this.saveProgress();
+        if (typeof window !== 'undefined') {
+            window.addEventListener('pagehide', this._onHide);
+        }
+    },
     beforeDestroy() {
+        // 关闭时也要存一次，否则最后几秒的进度会丢
+        this.saveProgress();
+        if (typeof window !== 'undefined' && this._onHide) {
+            window.removeEventListener('pagehide', this._onHide);
+        }
         this.stopAudioFilePlayback();
     },
     methods: {
+        // ---------- 进度存储 ----------
+        _userId() {
+            try {
+                const st = this.$store && this.$store.state && this.$store.state.user;
+                return (st && (st.id || st.username)) || 'guest';
+            } catch (e) {
+                return 'guest';
+            }
+        },
+        _keyOf(index) {
+            const item = (this.audios.audios || [])[index];
+            if (!this.bookId || !item) return null;
+            // 用 url 生成短哈希，避免把整条路径塞进 key
+            const s = String(item.url || item.filename || index);
+            let h = 0;
+            for (let i = 0; i < s.length; i++) {
+                h = (h * 31 + s.charCodeAt(i)) | 0;
+            }
+            return `audiobook_preview_${this._userId()}_${this.bookId}_${Math.abs(h)}`;
+        },
+        loadResumeMap() {
+            const map = {};
+            (this.audios.audios || []).forEach((item, idx) => {
+                const key = this._keyOf(idx);
+                if (!key) return;
+                try {
+                    const raw = localStorage.getItem(key);
+                    if (!raw) return;
+                    const v = JSON.parse(raw);
+                    if (typeof v.t === 'number' && v.t > 1) map[idx] = v.t;
+                } catch (e) { /* 坏数据忽略 */ }
+            });
+            this.resumeMap = map;
+        },
+        saveProgress() {
+            const idx = this.playing_audio_index;
+            if (idx === null || !this.currentAudioFile) return;
+            const key = this._keyOf(idx);
+            if (!key) return;
+            const t = this.currentAudioFile.currentTime || 0;
+            const d = this.currentAudioFile.duration || 0;
+            try {
+                // 听完（相差 3 秒内）就清掉，下次从头听；否则记位置
+                if (d && t >= d - 3) {
+                    localStorage.removeItem(key);
+                } else if (t > 1) {
+                    localStorage.setItem(key, JSON.stringify({ t: t }));
+                }
+            } catch (e) { /* 隐私模式写不进去，忽略 */ }
+        },
+        resumeHint(idx) {
+            return this.resumeMap[idx] || 0;
+        },
+        fmtTime(sec) {
+            const s = Math.max(0, Math.floor(sec || 0));
+            const m = Math.floor(s / 60);
+            const r = s % 60;
+            return `${m}:${String(r).padStart(2, '0')}`;
+        },
+
+        // ---------- 播放 ----------
         playAudioFile(audioItem, index) {
             if (this.playing_audio_index === index && this.currentAudioFile) {
                 if (this.audio_paused) {
                     this.currentAudioFile.play();
                     this.audio_paused = false;
                 } else {
+                    this.saveProgress();
                     this.currentAudioFile.pause();
                     this.audio_paused = true;
                 }
                 return;
             }
+            this.saveProgress();
             this.stopAudioFilePlayback();
             this.$emit('stop-sample-audio');
             this.audio_loading = true;
             this.playing_audio_index = index;
-            this.currentAudioFile = new Audio(audioItem.url);
-            this.currentAudioFile.addEventListener('loadstart', () => { this.audio_loading = true; });
-            this.currentAudioFile.addEventListener('canplay', () => { this.audio_loading = false; });
-            this.currentAudioFile.addEventListener('ended', () => { this.stopAudioFilePlayback(); });
-            this.currentAudioFile.addEventListener('error', () => {
+            this.currentTime = 0;
+            this.duration = 0;
+            const el = new Audio(audioItem.url);
+            this.currentAudioFile = el;
+
+            el.addEventListener('loadstart', () => { this.audio_loading = true; });
+            el.addEventListener('canplay', () => {
+                this.audio_loading = false;
+                // 恢复上次进度：只在真的拿到时长之后再设，否则会被浏览器的
+                // 元数据刷新打回 0（这是 HTMLAudio 常见的坑）
+                const saved = this.resumeMap[index];
+                if (saved && el.duration && saved < el.duration - 3) {
+                    try { el.currentTime = saved; } catch (e) { /* 忽略 */ }
+                }
+            });
+            el.addEventListener('timeupdate', () => {
+                this.currentTime = el.currentTime || 0;
+                this.duration = el.duration || 0;
+            });
+            el.addEventListener('ended', () => {
+                const key = this._keyOf(index);
+                try { if (key) localStorage.removeItem(key); } catch (e) { /* 忽略 */ }
+                delete this.resumeMap[index];
+                this.stopAudioFilePlayback();
+            });
+            el.addEventListener('error', () => {
                 this.stopAudioFilePlayback();
                 this.$alert("error", this.$t('message.audioLoadFailed'));
             });
-            this.currentAudioFile.play().then(() => {
+            el.play().then(() => {
                 this.audio_loading = false;
                 this.audio_paused = false;
             }).catch(() => {
@@ -131,6 +258,17 @@ export default {
             this.playing_audio_index = null;
             this.audio_loading = false;
             this.audio_paused = false;
+            this.currentTime = 0;
+            this.duration = 0;
+        },
+        seekPct(pct) {
+            if (!this.currentAudioFile || !this.duration) return;
+            this.currentAudioFile.currentTime = (pct / 100) * this.duration;
+        },
+    },
+    computed: {
+        progressPct() {
+            return this.duration ? (this.currentTime / this.duration) * 100 : 0;
         },
     },
 };

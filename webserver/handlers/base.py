@@ -1393,6 +1393,12 @@ class BaseHandler(web.RequestHandler):
         if not user:
             # For guests, only show books without categories and tags
             return not book.get("tags") and not book.get(constants.CALIBRE_COLUMN_CATEGORY)
+        # 管理员永远全可见：分类列表那边原本就有 is_admin() 豁免
+        # （见 book.py 的 _filter_categories_by_reading_range），但这里漏了，
+        # 导致管理员自己也被读者组拦下——详情页四个按钮全灰、书架缺书，
+        # 表现出来非常像"权限系统坏了"，实际只是漏了这行。
+        if self.is_admin():
+            return True
         # v4.7 读者组：用生效限制判断（自身显式设置优先，否则回退组配置）。
         # 不再拿 read_limit 做前置判断：白名单+空条件的「严格模式」靠一份
         # 永不匹配的哨兵条件表达，read_limit 虽然有值，也必须走完整判定。
@@ -1459,6 +1465,10 @@ class BaseHandler(web.RequestHandler):
         user = self.current_user
         if not user:
             return {}  # 未登录用户：隐藏所有标签
+        # 管理员不过滤（与 is_book_visible 的豁免保持一致）：
+        # 否则管理员侧边栏少一半标签，看起来像书目丢了。
+        if user.is_admin():
+            return tags
         read_limit = getattr(user, "read_limit", 0) or 0
         if read_limit == 0:
             return tags

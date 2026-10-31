@@ -119,6 +119,9 @@ class MetaList(ListHandler):
     def _filter_tags(self, tag_list):
         if not self.current_user:
             return []
+        # 管理员不过滤（与 is_book_visible 的豁免保持一致）
+        if self.current_user.is_admin():
+            return tag_list
         read_limit = getattr(self.current_user, 'read_limit', 0) or 0
         if read_limit == 0:
             return tag_list

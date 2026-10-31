@@ -728,6 +728,10 @@ class MyBooksDavProvider(DAVProvider):
             user = session.query(Reader).filter(Reader.username == username).first()
             if not user:
                 return 0, set(), set()
+            # 管理员不走阅读范围限制（与 base.py is_book_visible 的豁免保持一致），
+            # 否则管理员用 WebDAV 挂载时只能看到组内那几本，排查问题很费劲。
+            if getattr(user, 'admin', False):
+                return 0, set(), set()
             read_limit = getattr(user, 'read_limit', 0) or 0
             limit_cats = set(filter(None, (user.limit_categories or "").split(',')))
             limit_tags = set(filter(None, (user.limit_tags or "").split(',')))
