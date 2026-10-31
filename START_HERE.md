@@ -11,12 +11,46 @@
 
 | 环境 | 在哪 | 有什么 | 干什么 |
 |---|---|---|---|
-| **开发侧**（沙箱 / 你的 Windows） | `/root/work/audiobook-src`（沙箱路径） | git 仓库、完整源码 | 改代码、git 提交、推 Gitee、打补丁包 |
+| **开发侧**（沙箱 / 你的 Windows） | 见下方"开发侧怎么去" | git 仓库、完整源码 | 改代码、git 提交、推 Gitee、打补丁包 |
 | **NAS**（群晖 RS2416P） | `/volume1/docker/` | 现役源码、数据、部署包 | 收包、合并出成品包、upgrade.sh 上线 |
 
-- 文中标注 **【开发侧】** 的步骤 → 在沙箱/电脑上做，**NAS 上执行会失败**
+- 文中标注 **【开发侧】** 的步骤 → 在开发侧做，**NAS 上执行会失败**
 - 文中标注 **【NAS】** 的步骤 → SSH 登录群晖做
 - 例外：`upgrade-upstream.sh` 虽然在 NAS 上跑，但它会自己在 `/tmp` 里临时 clone 仓库，所以不需要 NAS 预装 git 仓库
+
+### 开发侧怎么去？三种方式，按省事程度排
+
+#### 方式 1：直接对 AI 说（推荐，零门槛）
+
+在对话框里说"把 XX 改成 YY"，AI 在沙箱里改代码 → 提交 → 推 Gitee → 打补丁包 → 给你下载链接。
+**你只需下载包、传 NAS、跑 upgrade.sh，全程不碰命令行。**
+
+适合：99% 的情况。
+
+#### 方式 2：Gitee 网页直接改（适合改文案、小改动）
+
+1. 浏览器打开 https://gitee.com/wxgoo/audiobook-src
+2. 定位到文件（如 `app/locales/zh.json`）
+3. 点右上角**编辑**（铅笔图标），改完点"提交"到 master
+4. 出包仍需回到方式 1（让 AI 帮你打补丁包）
+
+适合：改几个字、改提示语。
+
+#### 方式 3：Windows 装 Git（想自己长期独立维护才用）
+
+```sh
+# 1. 装 Git for Windows：https://git-scm.com/download/win
+# 2. 克隆到本地
+git clone https://gitee.com/wxgoo/audiobook-src.git D:\audiobook-src
+# 3. 用 VS Code 打开 D:\audiobook-src 改代码（有语法高亮、能搜整个项目）
+# 4. 提交推送
+cd D:\audiobook-src
+git add -A
+git commit -m "改了什么"
+git push https://wxgoo:<令牌>@gitee.com/wxgoo/audiobook-src.git master
+```
+
+适合：想自己改核心逻辑、需要改很多文件、要本地跑测试。
 
 ---
 
@@ -126,6 +160,9 @@ git push origin master
 一句话：**开发侧改代码 + 出包，NAS 只负责收包和上线。**
 下文中标注「开发侧」的步骤在 NAS 上不要执行（会报 `cd: no such file`）。
 
+**如果你想走"方式 1（让 AI 改）"，本章你只需要看的步骤是**：
+步骤 1~3 直接跳过（AI 帮你做），你做**步骤 4（下载包传 NAS）→ 步骤 5、6（NAS 上跑）→ 步骤 7（验证）**。
+
 ### 流程总览
 
 ```
@@ -136,15 +173,18 @@ git push origin master
 
 ### 步骤 1【开发侧】：改代码并提交
 
+**走方式 1（AI 改）**：跳过本节，直接在对话框里说需求即可。
+
+**走方式 3（自己改）**：
+
 ```sh
-cd /root/work/audiobook-src        # ← 沙箱/开发机路径，NAS 上没有
+cd /root/work/audiobook-src        # 沙箱路径；Windows 上是 D:\audiobook-src
 git status                     # 看改了哪些
 git add 改动的文件
 git commit -m "说明你改了什么"
 ```
 
-> 如果你手上没有这个目录：它是从 Gitee clone 来的，命令是
-> `git clone https://gitee.com/wxgoo/audiobook-src.git`（任意有 git 的机器都能做）。
+> 没有这个目录就先 clone：`git clone https://gitee.com/wxgoo/audiobook-src.git`
 
 ### 步骤 2【开发侧】：推送 Gitee
 
