@@ -340,6 +340,7 @@ sh /tmp/boot/audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-1.tar.g
 | `INSTALL_GUIDE.md` | 排查具体功能问题（1200+ 行，当字典查） |
 | `DEPLOY_README.md` | 首次部署、目录布局说明 |
 | `PORTING_NOTES.md` | 想知道自己改了上游哪些地方（版本号规则也在这） |
+| `CHANGELOG.md` | 想知道每个版本加了什么功能、修了哪些 Bug |
 
 脚本清单：
 
