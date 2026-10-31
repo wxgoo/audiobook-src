@@ -175,19 +175,91 @@ fi
 
 echo "==> [8/8] 启动容器"
 ( cd "$SRC" && docker compose up -d )
-sleep 20
-echo "    supervisor 状态："
-docker exec -it "$CONTAINER" supervisorctl status || true
+
+# ---------- 等容器真正跑起来再检查 ----------
+# 踩过的坑：这里原来 fixed sleep 20 就直接 supervisorctl status，结果经常报
+# "unix:///var/run/supervisor.sock no such file"。
+# 原因不是升级失败，而是容器还在初始化：start.sh 要先把 /data 下缺的目录补出来，
+# 再跑一次 --syncdb 和 --update-config，这两步在 62 本书的库上就可能超过 20 秒，
+# 这期间 supervisord 根本还没 exec 起来，socket 自然不存在。
+# 所以改成轮询：容器 Running → 等 sock 出现 → 再等 4 个 program 全 RUNNING。
+echo "    等待容器初始化（首次启动要跑 syncdb / update-config，慢一点正常）..."
+i=0
+while [ $i -lt 60 ]; do
+    RUNNING=$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo "false")
+    [ "$RUNNING" = "true" ] && break
+    i=$((i + 1))
+    sleep 2
+done
+if [ "$RUNNING" != "true" ]; then
+    echo " !! 容器没起来，看日志：docker logs --tail 80 $CONTAINER"
+    docker logs --tail 80 "$CONTAINER" 2>&1 | sed 's/^/    /'
+    exit 1
+fi
+
+# 等 supervisord socket 出现（最多约 3 分钟）
+i=0
+while [ $i -lt 90 ]; do
+    if docker exec "$CONTAINER" test -S /var/run/supervisor.sock 2>/dev/null; then
+        break
+    fi
+    # 容器中途死掉就别等了
+    RUNNING=$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo "false")
+    [ "$RUNNING" != "true" ] && break
+    i=$((i + 1))
+    sleep 2
+done
+
+if ! docker exec "$CONTAINER" test -S /var/run/supervisor.sock 2>/dev/null; then
+    echo " !! supervisord 未启动（等了约 $((i * 2)) 秒）"
+    echo "    容器内 start.sh 最后 30 行："
+    docker logs --tail 30 "$CONTAINER" 2>&1 | sed 's/^/    /'
+    exit 1
+fi
+
+# 再等各个 program 从 STARTING 变 RUNNING（tornado 要加载 calibre，通常 10~40 秒）
+i=0
+while [ $i -lt 60 ]; do
+    ST=$(docker exec "$CONTAINER" supervisorctl status 2>/dev/null)
+    # 出现 FATAL/BACKOFF 就没必要再等
+    echo "$ST" | grep -qE 'FATAL|BACKOFF' && break
+    if [ -n "$ST" ] && ! echo "$ST" | grep -qE 'STARTING'; then
+        break
+    fi
+    i=$((i + 1))
+    sleep 2
+done
+
+echo
+echo "    supervisor 状态（应为 4 个 RUNNING）："
+docker exec "$CONTAINER" supervisorctl status 2>&1 | sed 's/^/    /' || true
+if docker exec "$CONTAINER" supervisorctl status 2>/dev/null | grep -qE 'FATAL|BACKOFF'; then
+    echo
+    echo " !! 有进程没起来，日志："
+    docker exec "$CONTAINER" tail -30 /data/log/mybooks.log 2>&1 | sed 's/^/    /' || true
+fi
+
+# 从容器内部请求 nginx，确认真的能出页面（supervisorctl 全绿也可能 502）。
+# 注意 python 那段必须用单引号：里面的 $ 不能被 NAS 的 shell 提前展开。
+CODE=$(docker exec "$CONTAINER" python3 -c 'import urllib.request as u; print(u.urlopen("http://127.0.0.1/", timeout=10).status)' 2>&1 | tail -1)
+case "$CODE" in
+    200) echo
+         echo "    HTTP 自检: 200 页面正常" ;;
+    *)   echo
+         echo "    HTTP 自检异常: $CODE"
+         echo "    （容器内 nginx 没回 200，看：docker logs --tail 50 $CONTAINER）" ;;
+esac
 echo
 echo "    数据校验（书数应与你原有的数量一致）："
-docker exec -it "$CONTAINER" python3 -c "
+# 用 python3 - <<'PY' 从 stdin 传脚本，避免内层双引号把外层 "..." 提前闭合
+docker exec -i "$CONTAINER" python3 - <<'PY' 2>/dev/null || true
 import sqlite3
 try:
-    c=sqlite3.connect('/data/books/library/metadata.db')
+    c = sqlite3.connect('/data/books/library/metadata.db')
     print('    书数:', c.execute('select count(*) from books').fetchone()[0])
 except Exception as e:
     print('    读取失败:', e)
-" 2>/dev/null || true
+PY
 
 if [ "$KEEP_OLD" != "1" ]; then
     echo

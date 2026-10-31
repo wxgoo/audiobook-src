@@ -71,13 +71,40 @@ docker compose build
 echo "==> [4/5] 启动容器"
 docker compose up -d
 
-echo "==> [5/5] 启动验证（等 20 秒让 supervisord 拉起各进程）"
-sleep 20
-echo "    supervisor 状态："
-docker exec -it "$CONTAINER" supervisorctl status || true
+echo "==> [5/5] 启动验证"
+# 不能 fixed sleep 就直接 supervisorctl status：容器里 start.sh 要先补目录、
+# 跑 --syncdb 和 --update-config，这期间 supervisord 还没起来，
+# 会报 "unix:///var/run/supervisor.sock no such file"（不是启动失败）。
+echo "    等待容器初始化（syncdb / update-config 可能较慢）..."
+i=0
+while [ $i -lt 60 ]; do
+    [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ] && break
+    i=$((i + 1)); sleep 2
+done
+i=0
+while [ $i -lt 90 ]; do
+    docker exec "$CONTAINER" test -S /var/run/supervisor.sock 2>/dev/null && break
+    [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ] || break
+    i=$((i + 1)); sleep 2
+done
+if ! docker exec "$CONTAINER" test -S /var/run/supervisor.sock 2>/dev/null; then
+    echo " !! supervisord 未启动，容器日志最后 30 行："
+    docker logs --tail 30 "$CONTAINER" 2>&1 | sed 's/^/    /'
+    exit 1
+fi
+# 等 program 从 STARTING 变 RUNNING
+i=0
+while [ $i -lt 60 ]; do
+    ST=$(docker exec "$CONTAINER" supervisorctl status 2>/dev/null)
+    echo "$ST" | grep -qE 'FATAL|BACKOFF' && break
+    if [ -n "$ST" ] && ! echo "$ST" | grep -qE 'STARTING'; then break; fi
+    i=$((i + 1)); sleep 2
+done
+echo "    supervisor 状态（应为 4 个 RUNNING）："
+docker exec "$CONTAINER" supervisorctl status 2>&1 | sed 's/^/    /' || true
 echo
 echo "    myreader 日志末尾（应看到 Next.js Ready，无 SyntaxError）："
-docker exec -it "$CONTAINER" tail -5 /data/log/myreader.log 2>/dev/null || true
+docker exec "$CONTAINER" tail -5 /data/log/myreader.log 2>/dev/null | sed 's/^/    /' || true
 echo
 echo "==> 部署完成。浏览器打开 http://<NAS_IP>:9800 验证；"
 echo "    阅读链路测试: http://<NAS_IP>:9800/read/1?format=epub"
