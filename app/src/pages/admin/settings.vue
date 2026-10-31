@@ -1163,6 +1163,7 @@
         <v-btn
           color="primary"
           :disabled="dirtyCount === 0"
+          :loading="saving"
           @click="saveSettings"
         >
           <v-icon left>mdi-content-save</v-icon>{{ $t("settings.save") }}
@@ -2771,6 +2772,9 @@ export default {
     saveConfirmDialog: false,
     restartConfirmDialog: false,
     unsavedLeaveDialog: false,
+    // 保存中标记：禁用保存按钮并显示转圈，避免用户重复点击，
+    // 也避免"点了没反应"的错觉（全量设置写盘本身要一两秒）
+    saving: false,
     pendingLeave: null,
     stampPreviewUrl: "",
     stampPositions: [
@@ -3473,6 +3477,9 @@ export default {
       // 快照取提交时刻的值：保存期间的新编辑不会被视为已持久化
       const savedSnapshot = JSON.parse(JSON.stringify(payload));
       const savedNav = JSON.parse(JSON.stringify(this.bookNavList));
+      // 只提交一次：以前这里对同一接口连发两个全量请求（payload + settingsToSave），
+      // 服务端要把整份设置写盘两遍，前端还会弹两次提示，表现为"点保存卡住、像在重启"。
+      this.saving = true;
       this.$backend("/admin/settings", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -3481,18 +3488,7 @@ export default {
           this.$alert("error", rsp.msg || this.$t("settings.save_error"));
           return;
         }
-      });
-      const settingsToSave = { ...this.settings };
-      this.$backend("/admin/settings", {
-        method: "POST",
-        body: JSON.stringify(settingsToSave),
-      }).then((rsp) => {
-        if (rsp.err != "ok") {
-          this.$alert("error", rsp.msg || this.$t("settings.save_error"));
-        } else {
-          this.$alert("success", rsp.msg || this.$t("settings.save_success"));
-          this.$store.commit("refresh_sys");
-        }
+        this.$store.commit("refresh_sys");
         // 服务端确认后才把规范化结果落到本地状态与 localStorage
         this.settings["BOOK_NAV"] = payload["BOOK_NAV"];
         this.settings["READER_MYDICTS"] = payload["READER_MYDICTS"];
@@ -3528,7 +3524,12 @@ export default {
         this.dirtyJumpKey = "";
         this.forceLiteGroups = false;
         this.forceCacheSize = false;
-        this.$alert("success", rsp.msg || this.$t("settings.save_success"));
+        // 只弹一次。服务端在需要重启时返回"可能需要5~10秒钟生效"，
+        // 这种情况提示用户等待，而不是让人误以为卡死。
+        const msg = rsp.msg || this.$t("settings.save_success");
+        this.$alert("success", msg);
+      }).finally(() => {
+        this.saving = false;
       });
     },
     restartServer: function () {
@@ -3542,8 +3543,7 @@ export default {
           this.$alert("success", rsp.msg || this.$t("settings.restart_success"));
         }
       });
-    },
-    confirmLeave() {
+    },    confirmLeave() {
       const pending = this.pendingLeave;
       this.pendingLeave = null;
       if (!pending) return;
