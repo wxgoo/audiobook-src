@@ -12,6 +12,33 @@ CONTAINER="${1:-}"
 
 line() { echo "------------------------------------------------------------"; }
 
+# ---- 先确认 docker 能用（NAS 上普通用户常因不在 docker 组而无权限）----
+if ! command -v docker >/dev/null 2>&1; then
+    echo "!! 找不到 docker 命令。本脚本要在 NAS 上跑。"
+    exit 1
+fi
+err=$(docker ps 2>&1 >/dev/null)
+if [ -n "$err" ]; then
+    case "$err" in
+        *"permission denied"*|*"Permission denied"*)
+            echo "!! 当前用户没有 docker 权限（不在 docker 组）"
+            echo "   两个办法："
+            echo "     a) 在当前目录用 sudo 重跑： sudo sh check-reader.sh"
+            echo "     b) 把用户加进 docker 组（要重新登录才生效）："
+            echo "          sudo synogroup --add docker \$USER"
+            echo "          sudo chown root:docker /var/run/docker.sock"
+            exit 1 ;;
+        *"Cannot connect"*|*"Is the docker daemon running"*)
+            echo "!! docker 服务没在运行"
+            echo "   群晖：套件中心 → Docker → 启动；或 SSH 里 sudo synoservice --start pkgctl-Docker"
+            exit 1 ;;
+        *)
+            echo "!! docker ps 报错："
+            echo "   $err"
+            exit 1 ;;
+    esac
+fi
+
 # 没指定容器名时自动探测：优先叫 audiobook 的，其次任何带 audiobook 的
 if [ -z "$CONTAINER" ]; then
     CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -x 'audiobook' | head -1)
