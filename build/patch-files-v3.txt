@@ -48,3 +48,4 @@ app/src/pages/admin/settings.vue
 app/locales/zh.json
 app/locales/en.json
 app/locales/zh-TW.json
+conf/nginx/mybooks.conf

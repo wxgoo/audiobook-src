@@ -398,21 +398,127 @@ class EpubReader(BaseHandler):
         if not fpath:
             raise web.HTTPError(404)
 
-        with zipfile.ZipFile(fpath, 'r') as zf:
-            if path not in zf.namelist():
-                # 有些epub文件里路径忽略了大小写；还有 Unicode 归一化与 zip 编码问题，
-                # 见 _zip_find 的说明（4.6.0-9：中文文件名插图 404 裂图修复）
-                found = self._zip_find(zf, path)
-                if not found:
-                    raise web.HTTPError(404)
-                path = found
+        # 4.6.0-9 外网翻页卡顿修复（三处，缺一不可）：
+        #
+        # ① 强缓存 + ETag。epub.js 为每个章节/CSS/图片各发一个 XHR，翻一页要 3~8 个
+        #    请求。原来没有任何 Cache-Control，浏览器每次翻回上一页都重新下载一遍，
+        #    局域网（<1ms RTT）感觉不到，外网（30~80ms RTT）就变成两三秒的卡顿。
+        #    这里按「书籍 + 条目」算 ETag，命中 304 时只回一个空响应体。
+        # ② 复用 zip 句柄。原来每请求 open() 一次 zip，要重读并解析整个中央目录；
+        #    图文混排的书中央目录可达上千条，单次就多花几毫秒到几十毫秒。
+        # ③ 按资源类型分缓存策略。图片/字体/CSS 在书不变时永远不变 → 长缓存 + immutable；
+        #    xhtml 章节同理，但目录结构可能随书更新，用较短的强缓存。
 
-            content_type = mimetypes.guess_type(path)[0]
-            if content_type:
-                self.set_header("Content-Type", content_type)
+        ext = os.path.splitext(path)[1].lower()
+        if ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp"):
+            long_lived = True
+        elif ext in (".css", ".woff", ".woff2", ".ttf", ".otf", ".eot"):
+            long_lived = True
+        else:
+            # xhtml/html/ncx/opf/xml 等：章节正文，缓存但保守一点
+            long_lived = False
 
-            with zf.open(path) as f:
-                self.write(f.read())
+        etag = self._epub_etag(fpath, path)
+        self.set_header("ETag", etag)
+        if long_lived:
+            # immutable：书内容不变，翻页来回切也不用再发条件请求
+            self.set_header("Cache-Control", "private, max-age=604800, immutable")
+        else:
+            self.set_header("Cache-Control", "private, max-age=3600")
+
+        # 条件请求命中：直接 304，不读 zip、不传数据体
+        if self._etag_matches(etag):
+            self.set_status(304)
+            return
+
+        try:
+            zf = self._open_zip(fpath)
+        except Exception as err:
+            logging.warning("[EPUB] 打开压缩包失败 %s: %s", fpath, err)
+            raise web.HTTPError(404)
+
+        if path not in zf.namelist():
+            # 有些epub文件里路径忽略了大小写；还有 Unicode 归一化与 zip 编码问题，
+            # 见 _zip_find 的说明（4.6.0-9：中文文件名插图 404 裂图修复）
+            found = self._zip_find(zf, path)
+            if not found:
+                raise web.HTTPError(404)
+            path = found
+
+        content_type = mimetypes.guess_type(path)[0]
+        if content_type:
+            self.set_header("Content-Type", content_type)
+        else:
+            self.set_header("Content-Type", "application/octet-stream")
+
+        with zf.open(path) as f:
+            self.write(f.read())
+
+    # ------------------------------------------------------------------ 辅助
+
+    # zip 句柄缓存：{fpath: (mtime, size, ZipFile)}
+    # 单独一个 zip 只服务一个请求线程是安全的（tornado 单 ioloop，读完即用），
+    # 但为了多进程/多线程下不出岔子，加锁保护字典本身，ZipFile 读取交给
+    # Python 自己的内部锁（zipfile 的 read 对同一 ZipFile 是线程安全的）。
+    _zip_cache = {}
+    _zip_lock = None
+
+    @classmethod
+    def _open_zip(cls, fpath):
+        """带缓存的打开 zip：文件 mtime/size 未变就复用已解析的中央目录。"""
+        import threading
+
+        if cls._zip_lock is None:
+            cls._zip_lock = threading.Lock()
+        try:
+            st = os.stat(fpath)
+            key = (st.st_mtime, st.st_size)
+        except OSError:
+            return zipfile.ZipFile(fpath, "r")
+
+        with cls._zip_lock:
+            cached = cls._zip_cache.get(fpath)
+            if cached and cached[0] == key and cached[1] is not None:
+                return cached[1]
+
+        zf = zipfile.ZipFile(fpath, "r")
+        with cls._zip_lock:
+            # 缓存上限，防止书多了句柄泄漏；超了就丢最旧的一半
+            if len(cls._zip_cache) > 64:
+                for k in list(cls._zip_cache)[:32]:
+                    try:
+                        cls._zip_cache[k][1].close()
+                    except Exception:
+                        pass
+                    cls._zip_cache.pop(k, None)
+            cls._zip_cache[fpath] = (key, zf)
+        return zf
+
+    @staticmethod
+    def _epub_etag(fpath, path):
+        """书籍文件 + 条目路径 → 稳定 ETag。书更新（mtime 变）即失效。"""
+        try:
+            st = os.stat(fpath)
+            base = "%s:%s:%s" % (int(st.st_mtime), st.st_size, path)
+        except OSError:
+            base = "0:0:%s" % path
+        return 'W/"%s"' % hashlib.md5(base.encode("utf-8", "replace")).hexdigest()
+
+    def _etag_matches(self, etag):
+        """If-None-Match 比对（弱校验：去掉 W/ 前缀后比较）。"""
+        inm = self.request.headers.get("If-None-Match", "")
+        if not inm:
+            return False
+        if inm.strip() == "*":
+            return True
+        want = etag[2:] if etag.startswith('W/"') or etag.startswith('W/') else etag
+        for part in inm.split(","):
+            got = part.strip()
+            if got.startswith("W/"):
+                got = got[2:]
+            if got == want:
+                return True
+        return False
 
 
 class ToolIconHandler(BaseHandler):
