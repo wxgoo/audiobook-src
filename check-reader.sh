@@ -97,9 +97,12 @@ printf "    server.js:          "; [ -f app/server.js ] && echo "✔" || echo "�
 printf "    node_modules/:      "; [ -d node_modules ] && echo "✔ $(ls node_modules | wc -l) 项" || echo "✘ 缺失 ← 启动会报 Cannot find module next"
 printf "    app/node_modules/:  "; [ -d app/node_modules ] && echo "✔ $(ls app/node_modules | wc -l) 项" || echo "✘ 缺失"
 printf "    app/.next/:         "; [ -d app/.next ] && echo "✔" || echo "✘ 缺失"
+printf "    app/.next/node_modules/: "; [ -d app/.next/node_modules ] && echo "✔ $(ls app/.next/node_modules | wc -l) 项" || echo "✘ 缺失"
 printf "    符号链接总数:       "; find . -type l 2>/dev/null | wc -l
 printf "    其中有效链接:       "; c=0; for l in $(find . -type l 2>/dev/null); do [ -e "$l" ] && c=$((c+1)); done; echo "$c"
+printf "    文件总数:           "; find . -type f 2>/dev/null | wc -l
 ' 2>&1
+echo "    （node_modules 三个目录是命门；符号链接数只作参考，静态目录常有断链）"
 
 line
 echo "[6] 直接试着加载 server.js（最能说明问题）"
