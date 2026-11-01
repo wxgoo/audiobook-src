@@ -28,7 +28,7 @@
                         <small>{{ $t('login.social_login') }}</small>
                         <br />
                         <template v-for="s in socials">
-                            <v-btn small outlined :key="s.text" :href="'/auth/login/' + s.value">{{ s.text }}</v-btn>
+                            <v-btn :key="s.text" small outlined :href="'/auth/login/' + s.value">{{ s.text }}</v-btn>
                             &nbsp;
                         </template>
                     </div>

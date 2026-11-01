@@ -37,8 +37,7 @@
                                     {{ book.location }}
                                 </v-chip>
                                 <template v-for="(file, index) in book.files?.slice(0, 3)">
-                                    <v-chip rounded x-small class="ma-1"
-                                        :key="'format-' + index"
+                                    <v-chip :key="'format-' + index" rounded x-small class="ma-1"
                                         color="cyan"
                                         text-color="white"
                                         style="padding: 0px 2px; font-weight: bold; margin: 1px !important;"

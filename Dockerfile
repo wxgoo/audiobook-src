@@ -5,8 +5,19 @@
 # Node 16 会在 import 阶段直接 SyntaxError。node:16-alpine 已 EOL，禁止回退。
 FROM docker.1ms.run/library/node:20-alpine AS builder
 ARG BUILD_COUNTRY=""
+ARG APP_VERSION=""
 
 WORKDIR /build
+# 【v3】先判定包内有没有预构建 dist，再决定要不要装 node 依赖。
+# Dockerfile 没法在 COPY 之前判断文件是否存在，所以用 `COPY app/dist*` 通配符
+# 做容错：目录存在就拷进来，不存在也不报错（COPY 通配符无匹配时行为随版本而异，
+# 下一行的 RUN 才是权威判定）。
+COPY app/dist* /build/dist/
+RUN if [ -f /build/dist/index.html ]; then \
+        echo "==> 预构建 dist：有（跳过 npm ci / build-spa）"; \
+    else \
+        echo "==> 预构建 dist：无（将现场 npm ci + build-spa）"; \
+    fi
 # 限定 Node 版本，避免落到旧版本又不报错
 RUN node -e "const m=+process.versions.node.split('.')[0]; if(m<20){console.error('Node >= 20 required, got '+process.version); process.exit(1)}"
 # npm 网络参数：默认超时短、失败即退出，国内/慢盘环境极易在 npm ci 阶段失败。
@@ -17,58 +28,63 @@ RUN node -e "const m=+process.versions.node.split('.')[0]; if(m<20){console.erro
 # 重试会把这个超时反复吃满，一次失败要等 10 分钟才看到错误——这比失败本身更难受。
 # 所以取 120s：正常百兆宽带下一个包远用不到 2 分钟，而真不通时 1~2 分钟就能报出来。
 # 另外先做一次 15 秒的连通性探测，不通就立刻失败并给出明确提示。
-RUN if [ "x${BUILD_COUNTRY}" = "xCN" ]; then \
-        echo "using repo mirrors for ${BUILD_COUNTRY}"; \
-        npm config set registry https://registry.npmmirror.com; \
+# v3：整段只在「没有预构建 dist」时才执行 —— 带 dist 的包不需要 npm。
+RUN if [ ! -f /build/dist/index.html ]; then \
+        if [ "x${BUILD_COUNTRY}" = "xCN" ]; then \
+            echo "using repo mirrors for ${BUILD_COUNTRY}"; \
+            npm config set registry https://registry.npmmirror.com; \
+        else \
+            echo "using default npm registry"; \
+        fi && \
+        npm config set fetch-retries 5 && \
+        npm config set fetch-retry-mintimeout 10000 && \
+        npm config set fetch-retry-maxtimeout 60000 && \
+        npm config set fetch-timeout 120000 && \
+        npm config set maxsockets 8 && \
+        echo "npm registry: $(npm config get registry)" && \
+        if wget -q -T 15 -O /dev/null "$(npm config get registry)"; then \
+            echo "registry reachable"; \
+        else \
+            echo "=================================================================="; \
+            echo "ERROR: npm registry 不可达：$(npm config get registry)"; \
+            echo "这是网络/DNS 问题，不是代码或 package-lock 的问题。排查："; \
+            echo "  1) NAS 能否上网：curl -sI https://www.baidu.com | head -1"; \
+            echo "  2) DNS 是否正常：nslookup registry.npmmirror.com"; \
+            echo "  3) 若 NAS 走代理，给 Docker 配 HTTP_PROXY/HTTPS_PROXY"; \
+            echo "  4) 也可在 docker-compose.yml 的 build.args 里把 BUILD_COUNTRY"; \
+            echo "     改成非 CN 值，改用官方源再试"; \
+            echo "=================================================================="; \
+            exit 1; \
+        fi; \
     else \
-        echo "using default npm registry"; \
-    fi && \
-    npm config set fetch-retries 5 && \
-    npm config set fetch-retry-mintimeout 10000 && \
-    npm config set fetch-retry-maxtimeout 60000 && \
-    npm config set fetch-timeout 120000 && \
-    npm config set maxsockets 8 && \
-    echo "npm registry: $(npm config get registry)" && \
-    if wget -q -T 15 -O /dev/null "$(npm config get registry)"; then \
-        echo "registry reachable"; \
-    else \
-        echo "=================================================================="; \
-        echo "ERROR: npm registry 不可达：$(npm config get registry)"; \
-        echo "这是网络/DNS 问题，不是代码或 package-lock 的问题。排查："; \
-        echo "  1) NAS 能否上网：curl -sI https://www.baidu.com | head -1"; \
-        echo "  2) DNS 是否正常：nslookup registry.npmmirror.com"; \
-        echo "  3) 若 NAS 走代理，给 Docker 配 HTTP_PROXY/HTTPS_PROXY"; \
-        echo "  4) 也可在 docker-compose.yml 的 build.args 里把 BUILD_COUNTRY"; \
-        echo "     改成非 CN 值，改用官方源再试"; \
-        echo "=================================================================="; \
-        exit 1; \
+        echo "==> 包内带预构建 dist，跳过 npm registry 探测"; \
     fi
 
 COPY app/package.json app/package-lock.json* ./
-# 必须用 npm ci：严格按 package-lock.json 安装，避免 ^ 范围重新解析出
-# 不兼容的大版本（例如 nuxt ^4.x 会装成 Nuxt4/Vue3，直接编译不了 Vue2 模板）。
-# 本地已实测 npm ci + npm run build-spa 通过。
-# --no-fund/--no-audit 去掉赞助与审计提示；
-# --loglevel=error 压掉几十条 "npm warn deprecated"（Vue2/Nuxt2 已 EOL 属预期），
-# 让日志里只剩真正的错误，便于排查。
-# 失败重试一次（--prefer-offline 用已下载的缓存，第二次通常能补齐剩下的包）：
-# 慢速网络下单次 npm ci 偶发 ETIMEDOUT/ECONNRESET，重试比整个构建重跑划算。
-RUN npm ci --no-fund --no-audit --loglevel=error \
-    || (echo "npm ci failed, retrying with --prefer-offline ..." && \
-        npm ci --no-fund --no-audit --loglevel=error --prefer-offline)
+# dist 可能不存在（开发场景）；用通配符让 COPY 不因缺文件而失败。
+COPY app/dist* /build/dist/
 
-# spa build mode will clear ssr build data, run it first
+# 【v3 关键】dist 已经在最前面 COPY 过了，这里只补其余源码。
+# 带预构建 dist 时【连 npm ci 都不做】：NAS 上一旦网络抖动，npm ci 重试两次
+# 都失败整个 build 就挂，后面「检测到预构建 dist」的分支根本走不到。而带 dist
+# 的包不需要 node_modules：
+#   - /app-static/dist          已编译好的 SPA 产物 → COPY 进生产镜像
+#   - myreader-dist/            独立的 Next.js standalone 产物 → COPY 进生产镜像
+#   - 后端是 Python，不依赖 node
+# 只有「改了前端但没重新出 dist」的开发场景才需要现场 build，见 else。
 COPY app/ /build/
-# 【v2 新增】若部署包里已带预构建 dist（merge 脚本注入 app/dist/），直接采用，
-# 跳过 NAS 现场构建 —— 消除"同一份源码，NAS 构建产物异常"这个变量。
-# dist 由打包机在同一份源码上跑 npm ci + npm run build-spa 产出并逐项校验。
-RUN if [ -f /build/dist/index.html ] && [ -f /build/dist/200.html ]; then \
-        echo "==> 检测到预构建 dist，跳过现场 build-spa"; \
+RUN if [ -f /build/dist/index.html ] && [ -f /build/dist/200.html ] \
+       && [ -d /build/dist/_nuxt ]; then \
+        echo "==> 检测到预构建 dist，跳过 npm ci 与 build-spa"; \
         mkdir -p /app-static/ && cp -r /build/dist /app-static/dist && \
         cp /build/nuxt.config.js /build/package.json /app-static/ 2>/dev/null || true; \
         cp /build/package-lock.json /app-static/ 2>/dev/null || true; \
+        echo "==> dist 条目：$(find /app-static/dist -type f | wc -l) 个文件"; \
     else \
-        echo "==> 无预构建 dist，现场执行 npm run build-spa"; \
+        echo "==> 无预构建 dist，现场执行 npm ci + build-spa"; \
+        npm ci --no-fund --no-audit --loglevel=error \
+            || (echo "npm ci failed, retrying with --prefer-offline ..." && \
+                npm ci --no-fund --no-audit --loglevel=error --prefer-offline); \
         mkdir -p /app-static/ && npm run build-spa && \
         cp -r dist nuxt.config.js package* /app-static/; \
     fi

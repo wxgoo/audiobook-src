@@ -6,12 +6,14 @@
 **/.github
 
 # ---- 前端依赖与构建缓存（镜像内会重新 npm ci / build）----
+# v3：app/dist 必须进构建上下文 —— 它是"带预构建 dist 就跳过 npm ci"的判定依据。
+# app/node_modules 依然排除：带了 dist 就不需要 node_modules，
+# 排除它能把构建上下文从 ~700MB 压到 ~250MB（NAS 上 build 快 3~5 分钟）。
 app/node_modules
 app/.nuxt
-app/dist
+app/.env
 !app/dist
 !app/dist/**
-app/.env
 **/node_modules
 **/.nuxt
 
@@ -55,10 +57,9 @@ Thumbs.db
 *~
 
 # ---- 文档与图片（运行时不需要，只为构建准备）----
+# 注意：不能排除 *.tar.gz / *.zip —— 测试库 tests/cases 里有需要它们的用例，
+# 且 tests 阶段不是生产构建路径，多几十 MB 无感。
 document/
-*.zip
-*.tar.gz
-*.7z
 
 # ---- 音频/书籍等用户数据（如果被误放在项目里）----
 data/

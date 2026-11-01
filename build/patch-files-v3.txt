@@ -1,0 +1,45 @@
+# ===========================================================================
+# -9 v3 补丁清单：这些文件用工作区（-9）的版本覆盖基准包（4.6.0-8 全量包）
+# 其余文件一律以基准包为准 —— 因为基准包里的 app/src / app/dist 是配套的，
+# 乱覆盖会造成「源码与 dist 不一致」。
+#
+# 注意：app/dist 不在清单里。v3 沿用基准包自带的预构建 dist（含详情页），
+# 不在 NAS 上现场 build —— 现场 build 需要网络拉 npm 包，慢且不可控。
+# 若改了 src 里的页面且需要生效，必须重新出 dist 放进包里，见 build/rebuild-dist.md
+# ===========================================================================
+
+# ---- 前端（-9 功能：作者归一入口 + 作者锁定 UI）----
+app/src/components/AppHeader.vue
+app/src/components/BookCards.vue
+app/src/pages/admin/books.vue
+app/src/pages/login.vue
+app/src/pages/tag.vue
+app/src/pages/toolbox/author_norm.vue
+
+# ---- 后端（-9 功能：作者归一 + 作者锁定）----
+webserver/base/author_norm.py
+webserver/base/formatter.py
+webserver/base/meta_helper.py
+webserver/constants.py
+webserver/handlers/author_norm.py
+webserver/handlers/book.py
+webserver/main.py
+webserver/plugins/meta/baike/api.py
+webserver/plugins/meta/douban_v2/api.py
+webserver/plugins/meta/neodb/api.py
+webserver/plugins/meta/ujxsw/api.py
+webserver/plugins/meta/xhsd/api.py
+webserver/plugins/meta/youshu/api.py
+webserver/services/audios_import.py
+webserver/services/autofill.py
+webserver/services/book_dedup.py
+
+# ---- 测试 ----
+tests/test_author_norm.py
+
+# ---- 部署脚本 ----
+Dockerfile
+.dockerignore
+docker-compose.yml
+upgrade.sh
+rollback-to-8.sh
