@@ -802,6 +802,10 @@
   content: "\F02FC";
 }
 
+.mdi-information-outline::before {
+  content: "\F02FD";
+}
+
 .mdi-key::before {
   content: "\F0306";
 }

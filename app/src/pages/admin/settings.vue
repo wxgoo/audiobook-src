@@ -217,10 +217,13 @@
               <div
                 v-else-if="f.type === 'subtitle'"
                 :key="f.key + '-subtitle'"
-                class="d-flex align-center mt-2 mb-1"
+                class="mt-2 mb-1"
               >
-                <v-icon small class="mr-2" :color="f.color">{{ f.icon }}</v-icon>
-                <span class="text-body-1">{{ $t(f.label) }}</span>
+                <div class="d-flex align-center">
+                  <v-icon small class="mr-2" :color="f.color">{{ f.icon }}</v-icon>
+                  <span class="text-body-1">{{ $t(f.label) }}</span>
+                </div>
+                <div v-if="f.tips" class="text-caption grey--text ml-8">{{ $t(f.tips) }}</div>
               </div>
               <v-textarea
                 outlined
@@ -2060,12 +2063,28 @@ export default {
             title: "settings.sec_users_guest",
             fields: [
               // 私人图书馆标准模式：开启后所有页面与接口都要求登录，下面各项访问权限随之失效
-              { icon: "mdi-login-variant", key: "REQUIRE_LOGIN", label: "settings.require_login", type: "checkbox", al: ["必须登录", "私人图书馆", "需登录", "login required"] },
-              { icon: "mdi-read", key: "ALLOW_GUEST_READ", label: "settings.allow_guest_read", type: "checkbox", lockOn: "REQUIRE_LOGIN" },
-              { icon: "mdi-download", key: "ALLOW_GUEST_DOWNLOAD", label: "settings.allow_guest_download", type: "checkbox", lockOn: "REQUIRE_LOGIN" },
-              { icon: "mdi-upload", key: "ALLOW_GUEST_UPLOAD", label: "settings.allow_guest_upload", type: "checkbox", lockOn: "REQUIRE_LOGIN" },
-              { icon: "mdi-send", key: "ALLOW_GUEST_PUSH", label: "settings.allow_guest_push", type: "checkbox", lockOn: "REQUIRE_LOGIN" },
-              { icon: "mdi-link-variant", key: "ENABLE_SHARE_LINK", label: "settings.allow_share_link", type: "checkbox" },
+              {
+                icon: "mdi-login-variant", key: "REQUIRE_LOGIN", label: "settings.require_login",
+                type: "checkbox", al: ["必须登录", "私人图书馆", "需登录", "login required"],
+                tips: "settings.require_login_tips",
+              },
+              // 以下四项带 lockOn：REQUIRE_LOGIN 开启时置灰不可点（后端 allow_flags 也恒报 False），
+              // 但保存值保留，关掉总开关后原样恢复。见下方 users-guest 区块的关联说明块。
+              { icon: "mdi-read", key: "ALLOW_GUEST_READ", label: "settings.allow_guest_read", type: "checkbox", lockOn: "REQUIRE_LOGIN", tips: "settings.guest_locked_by_login" },
+              { icon: "mdi-download", key: "ALLOW_GUEST_DOWNLOAD", label: "settings.allow_guest_download", type: "checkbox", lockOn: "REQUIRE_LOGIN", tips: "settings.guest_locked_by_login" },
+              { icon: "mdi-upload", key: "ALLOW_GUEST_UPLOAD", label: "settings.allow_guest_upload", type: "checkbox", lockOn: "REQUIRE_LOGIN", tips: "settings.guest_locked_by_login" },
+              { icon: "mdi-send", key: "ALLOW_GUEST_PUSH", label: "settings.allow_guest_push", type: "checkbox", lockOn: "REQUIRE_LOGIN", tips: "settings.guest_locked_by_login" },
+              // 分享链接独立于「必须登录」：持有效分享授权可绕过整站门禁，因此不锁定
+              { icon: "mdi-link-variant", key: "ENABLE_SHARE_LINK", label: "settings.allow_share_link", type: "checkbox", tips: "settings.share_link_tips" },
+              // 关联关系总说明：把三层权限的边界一次讲清，常驻显示
+              {
+                key: "guest_login_relation_note",
+                type: "subtitle",
+                icon: "mdi-information-outline",
+                color: "info",
+                label: "settings.guest_login_relation_note",
+                tips: "settings.guest_login_relation_note_tips",
+              },
             ],
           },
           {

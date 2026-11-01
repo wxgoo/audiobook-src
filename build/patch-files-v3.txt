@@ -44,3 +44,7 @@ docker-compose.yml
 upgrade.sh
 rollback-to-8.sh
 webserver/handlers/static_files.py
+app/src/pages/admin/settings.vue
+app/locales/zh.json
+app/locales/en.json
+app/locales/zh-TW.json

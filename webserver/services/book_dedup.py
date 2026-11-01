@@ -25,8 +25,10 @@
 """
 
 import datetime
+import json
 import logging
 import os
+import re
 import shutil
 
 from webserver.models import (
@@ -79,6 +81,188 @@ def _norm_title(title):
             out.append(ch)
     text = "".join(out)
     return " ".join(text.split()).lower()
+
+
+# --------------------------------------------------------------------------- #
+# 书名宽松归一键（4.6.0-9 修订）
+#
+# 为什么原来的 _norm_title 不够用：它只做全角转半角 + 合并空白 + 小写，
+# 两个书名差一个字就落进不同的桶，重复书永远配不上（用户实测"一直搜不到"）。
+#
+# 现实里同一本书的两种记录，书名常见差异：
+#   三体              / 三体（全集）
+#   活着              / 活着 修订版
+#   斗罗大陆          / 斗罗大陆 第1册
+#   万历十五年        / 万历十五年.txt          ← 导入时把扩展名带进了书名
+#   百年孤独          / 【精校】百年孤独
+#
+# 所以候选桶按「去噪后的书名」聚合，扩大召回。但**这只决定谁和谁摆到一起看**，
+# 是否真是同一本由 _build_group 里的 _same_book 严格判定，绝不靠书名相似就合并。
+# --------------------------------------------------------------------------- #
+
+# 版本/装帧/收录类噪声词：出现在书名末尾（或括号里）都不影响「是不是同一本书」。
+# 注意这些词不能整串去掉就当成新书名，只在边界位置剥离。
+_EDITION_NOISE = (
+    "修订版", "修订本", "增订版", "增订本", "新版", "第2版", "第二版", "第3版", "第三版",
+    "插图版", "插图本", "彩图版", "典藏版", "精装版", "平装版", "珍藏版", "纪念版",
+    "全集", "全本", "足本", "完本", "完整版", "未删节版", "校勘版", "评注版", "注释版",
+    "套装", "盒装", "epub", "mobi", "azw3", "txt", "pdf",
+)
+
+# 卷册标记：第N卷/册/集/部/篇，或「上下」「上中下」这类分卷写法。
+_VOLUME_RE = re.compile(
+    r"(第\s*[0-9一二三四五六七八九十百]+\s*[卷册集部篇辑])"
+    r"|([上下中]{1,3}\s*[册卷])"
+    r"|(\d+\s*/\s*\d+)"
+)
+
+# 书名主体外包裹的装饰符号与括号
+_BRACKET_RE = re.compile(r"[\(\[【〔<《]([^\)\]】〕>》]*)[\)\]】〕>》]")
+_LEADING_JUNK_RE = re.compile(r"^[\s\-_·—…\.、,，:：;；!！?？\'\"“”‘’]+")
+
+
+def _strip_edition_noise(s):
+    """剥掉版本词、卷册标记、文件扩展名。只剥边界，不挖书名中间的字。"""
+    prev = None
+    while prev != s:
+        prev = s
+        # 扩展名（.txt/.epub 这类）
+        s = re.sub(r"\.(txt|epub|mobi|azw3?|pdf|djvu|fb2|cbz)\s*$", "", s, flags=re.I)
+        # 末尾的版本词，可能反复叠加（"全集 修订版"）
+        for w in _EDITION_NOISE:
+            s = re.sub(r"[\s\-_·—]*" + re.escape(w) + r"\s*$", "", s, flags=re.I)
+        # 卷册标记
+        s = _VOLUME_RE.sub("", s)
+    return s
+
+
+def _title_core(title):
+    """宽松归一的书名主体：去装饰、去括号补充、去版本词卷册、去标点空白。
+
+    只用于「把候选书聚到一起」，不用于判定同一性。
+    """
+    if not title:
+        return ""
+    text = str(title)
+    # 全角 → 半角
+    out = []
+    for ch in text:
+        code = ord(ch)
+        if 0xFF01 <= code <= 0xFF5E:
+            out.append(chr(code - 0xFEE0))
+        elif code == 0x3000:
+            out.append(" ")
+        else:
+            out.append(ch)
+    text = "".join(out)
+
+    s = _LEADING_JUNK_RE.sub("", text.strip())
+
+    # 括号补充（"三体（全集）"的括号内容、"【精校】"前缀）先剥离，
+    # 但只在剥离后主体不为空时才采用——否则《(无题)》这类书名会被清空。
+    stripped = _BRACKET_RE.sub("", s).strip()
+    if stripped:
+        s = stripped
+
+    s = _strip_edition_noise(s).strip()
+    # 去掉所有空白与常见分隔标点，中文书名里这些差异纯属录入习惯
+    s = re.sub(r"[\s\-_·—…\.、,，:：;；!！?？\'\"“”‘’]+", "", s)
+    return s.lower()
+
+
+def _isbn_digits(identifiers):
+    """从 calibre identifiers 里取 ISBN（10/13 位纯数字）。
+
+    identifiers 形如 {"isbn": "9787536692930", "isbn13": "...", "douban": "1234567"}；
+    也兼容 amzn/其他源里夹带的 ISBN。返回集合，方便求交。
+    """
+    out = set()
+    if not identifiers:
+        return out
+    if isinstance(identifiers, str):
+        try:
+            identifiers = json.loads(identifiers)
+        except (ValueError, TypeError):
+            return out
+    if not isinstance(identifiers, dict):
+        return out
+    for k, v in identifiers.items():
+        if not v:
+            continue
+        if not re.search(r"isbn", str(k), re.I):
+            continue
+        digits = re.sub(r"[^0-9Xx]", "", str(v)).upper()
+        # ISBN-10（9 位数字 + 校验位 0-9/X）或 ISBN-13
+        if len(digits) == 13 and digits.isdigit():
+            out.add(digits)
+        elif len(digits) == 10 and digits[:9].isdigit():
+            out.add(digits)
+    return out
+
+
+def _translators_of(authors):
+    """从作者字段里剥离出译者名集合。
+
+    中文书库普遍把译者塞进 authors：
+      「陀思妥耶夫斯基，荣如德 译」
+      「[俄] 陀思妥耶夫斯基 著 / 荣如德 译」
+      「译者：荣如德」
+    这里只提取**明确标注为译者**的那部分，不瞎猜——没写"译"就不当译者，
+    否则会把正常的第二作者误判成译者。
+    """
+    out = set()
+    for raw in authors or []:
+        if not raw:
+            continue
+        s = str(raw)
+        # 形式一：「译者：XX」整体标注（名字后面不带"译"字）
+        m = re.match(r"^\s*译者\s*[:：]\s*(.+)$", s)
+        if m:
+            for part in re.split(r"[,，/、;；]", m.group(1)):
+                name = part.strip(" 　,，/、;；:：[]【】()（）")
+                name = re.sub(r"[\(（\[【].*?[\)）\]】]", "", name).strip()
+                if name:
+                    out.add(name.lower())
+            continue
+        # 形式二：「XX 译」「XX译」（译者混在作者列表里）
+        for m in re.finditer(r"(?:译者\s*[:：]\s*)?([^,，/、;；\[\]【】]{1,20}?)\s*译(?:\b|$)", s):
+            name = m.group(1).strip(" 　,，/、;；:：[]【】()（）")
+            # 去掉可能的「著」「作者」残留与括注
+            name = re.sub(r"^(著|作者|编者|主编)\s*[:：]?\s*", "", name).strip()
+            name = re.sub(r"[\(（\[【].*?[\)）\]】]", "", name).strip()
+            if name:
+                out.add(name.lower())
+    return out
+
+
+def _publisher_norm(pub):
+    """出版社名归一：去空格标点、剥掉「出版社/出版公司/集团」这类通用后缀。
+
+    目的是让「人民文学出版社」「人民文学」「人民文学出版公司」判为同一家，
+    避免同一版本因为录入写法不同被当成两个出版社而拒绝合并。
+    """
+    if not pub:
+        return ""
+    s = str(pub).strip()
+    out = []
+    for ch in s:
+        code = ord(ch)
+        if 0xFF01 <= code <= 0xFF5E:
+            out.append(chr(code - 0xFEE0))
+        else:
+            out.append(ch)
+    s = "".join(out)
+    s = re.sub(r"[\s\-_·—…\.、,，:：;；]+", "", s)
+    # 反复剥后缀（"出版集团"、"出版社"可能叠加），直到稳定
+    prev = None
+    while prev != s:
+        prev = s
+        for suf in ("出版集团", "出版公司", "出版社", "书局", "印书馆", "传媒", "集团", "出版"):
+            if s.endswith(suf) and len(s) > len(suf):
+                s = s[: -len(suf)]
+                break
+    return s.lower()
+
 
 
 def _list_audio_files(audio_root, book_id):
@@ -167,10 +351,10 @@ class DuplicateBookMerger(object):
             logging.error("[DEDUP] 读取书库标题失败: %s", err)
             return {"groups": [], "summary": self._empty_summary(), "error": str(err)}
 
-        # 按归一化书名分桶
+        # 按宽松归一的书名分桶（扩大召回；是否同一本由 _build_group 严格判定）
         buckets = {}
         for book_id, title in title_map.items():
-            key = _norm_title(title)
+            key = _title_core(title)
             if not key:
                 continue
             buckets.setdefault(key, []).append(book_id)
@@ -217,27 +401,25 @@ class DuplicateBookMerger(object):
 
         title = briefs[0]["title"] if briefs else key
 
-        # 4.6.0-9：作者冲突检查。分组只按书名，同名不同作者的书也会聚到一起；
-        # 原逻辑只看「电子书/音频分布」，一本《人生》路遥的电子书 + 一本《人生》
-        # 某网络作者的音频，方向"明确"（1 电子书 + 有音频），会被误合并。
-        # 现在要求：每本有音频的书与电子书那本的作者**归一化后必须相交**，
-        # 否则整组跳过。作者解析不出（佚名/脏名）时不冲突，维持原有判定。
-        from webserver.base.author_norm import authors_conflict
-
+        # 4.6.0-9：同一性严格判定。
+        # 候选桶按宽松书名聚合（去了版本词/括号/扩展名），必然会把
+        # 「三体」和「三体（全集）」聚到一起，也可能把同名不同书聚到一起。
+        # 这里逐本与被保留的电子书比对，任何一本判定为"不是同一本"就整组跳过。
+        # 判定口径见 _same_book：ISBN 相同 → 同一本；出版社/译者/作者不同 → 否。
         if with_ebook:
-            ebook_authors = with_ebook[0]["authors"]
-            for b in with_audio:
-                if b["book_id"] == with_ebook[0]["book_id"]:
+            anchor = with_ebook[0]
+            for b in briefs:
+                if b["book_id"] == anchor["book_id"]:
                     continue
-                if authors_conflict(ebook_authors, b["authors"]):
+                same, why = self._same_book(anchor, b)
+                if not same:
                     return {
                         "key": key,
                         "title": title,
                         "books": briefs,
                         "action": "skipped",
-                        "reason": "作者不同（%s vs %s），不是重复书，请人工确认"
-                                  % ("、".join(ebook_authors) or "佚名",
-                                     "、".join(b["authors"]) or "佚名"),
+                        "reason": "#%d 与 #%d 不是同一本书：%s" % (
+                            anchor["book_id"], b["book_id"], why),
                     }
 
         # 方向明确才动手：恰好一本有电子书，且存在有音频的记录
@@ -291,10 +473,65 @@ class DuplicateBookMerger(object):
             "book_id": book_id,
             "title": row.get("title") or "",
             "authors": list(row.get("authors") or []),
+            "publisher": row.get("publisher") or "",
+            "isbn": sorted(_isbn_digits(row.get("identifiers"))),
             "ebook_formats": _row_formats(row),
             "audio_files": audio,
             "audio_count": len(audio),
         }
+
+    @staticmethod
+    def _same_book(a, b):
+        """严格判定两本书是否**同一本**（返回 (bool, 理由)）。
+
+        候选桶已经按宽松书名聚过，这里必须收紧，否则「同名不同书」会被误合并。
+        用户的判定口径（同时也是豆瓣/Goodreads/OpenLibrary 等主流图书馆的通行做法）：
+
+          * **出版社不同 → 不是同一本**。中文书尤其如此，同一书名在不同出版社
+            是不同版本、不同编校、甚至不同内容（公版书重排最典型）。
+          * **译者不同 → 不是同一本**。外文书的译者差异等同不同作品，
+            译者信息一般在作者字段里以「作者，译者」或「XX 译」形式存在。
+          * **作者不同 → 不是同一本**。
+          * **ISBN 相同 → 基本可判定同一本**。ISBN 是按"版本"分配的，
+            同 ISBN 意味着同一出版物的同一版本，这是最强的证据，优先于前三条：
+            出版社名录入不一致（"人民文学出版社" vs "人民文学"）不应推翻它。
+          * **作者（或含译者）归一后相交，且书名主体一致 → 视为同一本**。
+
+        注意：先判 ISBN（最强证据），再判出版社/译者/作者（否决项）。
+        """
+        from webserver.base.author_norm import author_key_set
+
+        # ① ISBN 相同 —— 最强证据，直接认定同一本
+        isbn_a, isbn_b = set(a.get("isbn") or []), set(b.get("isbn") or [])
+        if isbn_a and isbn_b and (isbn_a & isbn_b):
+            return True, "ISBN 相同（%s）" % sorted(isbn_a & isbn_b)[0]
+
+        # ② 出版社不同 —— 否决（中文书分社出版是不同版本，不能并）
+        pub_a, pub_b = _publisher_norm(a.get("publisher")), _publisher_norm(b.get("publisher"))
+        if pub_a and pub_b and pub_a != pub_b:
+            return False, "出版社不同（%s vs %s）" % (a.get("publisher"), b.get("publisher"))
+
+        # ③ 译作：先把作者字段里的「XX 译」剥出来单独比对。
+        #    外文书的作者字段常拼成「陀思妥耶夫斯基，荣如德译」或
+        #    「作者：X / 译者：Y」。原作者一定相同，如果只用"作者键相交"判断，
+        #    译者差异会被原作者掩盖 → 把荣如德译本和朱海观译本当成同一本，
+        #    这正是用户明确说「译者不同是不同书」要防的情况。
+        ta, tb = _translators_of(a.get("authors")), _translators_of(b.get("authors"))
+        if ta and tb and not (ta & tb):
+            return False, "译者不同（%s vs %s）" % ("、".join(sorted(ta)), "、".join(sorted(tb)))
+
+        # ④ 作者键集合：任一边解析不出（佚名/脏名）时不否决，维持原有判定
+        ka, kb = author_key_set(a.get("authors")), author_key_set(b.get("authors"))
+        if ka and kb:
+            if not (ka & kb):
+                return False, "作者不同（%s vs %s）" % (
+                    "、".join(a.get("authors") or []) or "佚名",
+                    "、".join(b.get("authors") or []) or "佚名")
+            return True, "作者相同（%s）" % "、".join(sorted(ka & kb))
+
+        # ⑤ 某一边作者缺失：书名主体已一致，判为同一本（宁可漏修不可误删的
+        #    方向在这里已经由 _build_group 的"恰好一本有电子书"条件把住）
+        return True, "书名主体一致，作者信息不全"
 
     @staticmethod
     def _explain(briefs, keep, drop):
