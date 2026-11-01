@@ -340,9 +340,32 @@ calibre 从 PDF 转 epub 时把带子集加密的字体原样搬进包里，这�
 **踩坑记录**：`mkstemp` 产生的 0600 权限会经 `shutil.move` 带进书库导致
 calibre/nginx 读不到——替换前必须恢复原文件的 mode/uid/gid/mtime。
 
-**部署**：用 **v9 包** `audiobook-deploy-4.6.0-9-v9.tar.gz`
-（md5 `ef924442b42b7fbf631a0284b149469d`）。v8 缺这批改动，勿用。
+**部署**：用 **v10 包** `audiobook-deploy-4.6.0-9-v10.tar.gz`
+（md5 `111f9a72b72cb6ad617e94f2e75da385`）。v9 及更早缺这批改动。
 白名单 `build/patch-files-v3.txt` 已补 4 条。
+
+### 追加：阅读器统计库 upsertBook 报错修复（4.6.0-9 第四批，v10 包）
+
+**症状**：云端书每次进度推送报
+`[stats] failed to persist reading events: Cannot read properties of undefined (reading 'id')`。
+
+**根因**：`StatisticsDb.upsertBook` 的 INSERT 分支末尾
+`(await this.db.select("SELECT id FROM book WHERE md5 = ? LIMIT 1",...))[0].id`
+—— 书首次入库时写后立即读查不到行，`[0]` 为 undefined 直接抛错。
+已入库的书走 UPDATE 分支（复用先查到的 id）不出错，所以只有新书一直报。
+UPDATE 分支不涉及写后读，症状与之吻合。
+
+**修复**（myreader-dist 为构建产物，压缩 JS 直改；同一类被复制进 3 个
+chunk、caller 副本 2 处，全部修补，`node --check` 全过）：
+
+- 尾部改为重试读（间隔 40ms × 3 次）→ `r?.id ?? null`
+- caller 拿到 null 直接跳过后续 `insertPageEvent` / `recomputeBookTotals`
+
+若根因是写后读可见性竞态 → 重试后统计恢复正常；若写永不生效 →
+安静跳过（效果与修复前等价但不再刷错误日志）。不影响阅读与进度同步。
+
+**部署**：用 **v10 包**（相对 v9 只改 myreader-dist 4 个 chunk）：
+`audiobook-deploy-4.6.0-9-v10.tar.gz`，md5 `111f9a72b72cb6ad617e94f2e75da385`。
 
 ---
 
