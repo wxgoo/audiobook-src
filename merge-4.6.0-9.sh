@@ -91,11 +91,83 @@ if ! grep -q "audiobook_preview_" "$D/app/src/components/AudioListDialog.vue" 2>
     exit 1
 fi
 
-# ---- 符号链接数（前端 node_modules 链接，缺了 build 会失败）----
-n=$(find "$D/myreader-dist" -type l 2>/dev/null | wc -l)
-if [ -d "$D/myreader-dist" ]; then
-    echo "==> 符号链接: $n（应127）"
-    [ "$n" -ne 127 ] && { echo "!! 符号链接数不对，中止"; exit 1; }
+# ---- MyReader 产物完整性 ----
+# 教训：原来这里只数 myreader-dist 下符号链接总数是不是 127。
+# 但 myreader-dist/static/ 里有 127 个**断链**（指向不存在的 f1.js…f127.js），
+# 正好把数字凑到 127，检查永远通过；而真正该在的 node_modules 一个都没有，
+# 结果阅读器启动即 Cannot find module 'next'，/readerx 全 502，书页空白。
+#
+# 所以改成查「真东西」：
+#   1) app/server.js 必须在
+#   2) 三层 node_modules 必须都在（缺任何一层，症状不同但都起不来）
+#   3) 有效符号链接（能解析到真实文件）必须够数
+#   4) 断链单独统计——有断链但 node_modules 齐，只是残留垃圾，给警告不中止
+echo "==> 校验 MyReader 产物完整性"
+
+# ---- 若提供了完整的 myreader-dist 产物包，直接用它替换掉基准包里的残缺版 ----
+# 用法： MYREADER=/volume1/docker/myreader-dist.tar.gz sh merge-4.6.0-9.sh
+#       或把 myreader-dist.tar.gz 放在脚本同目录，自动认。
+find_mr() {
+    for dir in "$SELF_DIR" /volume1/docker .; do
+        [ -f "$dir/myreader-dist.tar.gz" ] && { echo "$dir/myreader-dist.tar.gz"; return 0; }
+    done
+    return 1
+}
+MRTAR="${MYREADER:-$(find_mr)}"
+if [ -n "$MRTAR" ] && [ -f "$MRTAR" ]; then
+    echo "==> 用完整产物替换：$MRTAR"
+    rm -rf /tmp/mp9-mr && mkdir -p /tmp/mp9-mr
+    tar -xzf "$MRTAR" -C /tmp/mp9-mr || { echo "!! 产物包解压失败"; exit 1; }
+    # 兼容两种打包层级：myreader-dist/... 或 audiobook/myreader-dist/...
+    if [ -d "/tmp/mp9-mr/audiobook/myreader-dist" ]; then
+        SRC=/tmp/mp9-mr/audiobook/myreader-dist
+    elif [ -d "/tmp/mp9-mr/myreader-dist" ]; then
+        SRC=/tmp/mp9-mr/myreader-dist
+    else
+        SRC=$(find /tmp/mp9-mr -maxdepth 3 -type d -name myreader-dist | head -1)
+    fi
+    [ -n "$SRC" ] && [ -d "$SRC" ] || { echo "!! 产物包里找不到 myreader-dist 目录"; exit 1; }
+    echo "   源: $SRC ($(du -sh "$SRC" | awk '{print $1}'), $(find "$SRC" -type f | wc -l) 个文件)"
+    rm -rf "$D/myreader-dist"
+    cp -a "$SRC" "$D/myreader-dist" || { echo "!! 复制产物失败"; exit 1; }
+fi
+
+MR="$D/myreader-dist"
+if [ -d "$MR" ]; then
+    mr_fail=0
+
+    [ -f "$MR/app/server.js" ] || { echo "   !! 缺 app/server.js"; mr_fail=1; }
+
+    for sub in "node_modules" "app/node_modules" "app/.next/node_modules"; do
+        if [ ! -d "$MR/$sub" ]; then
+            echo "   !! 缺 myreader-dist/$sub"
+            mr_fail=1
+        fi
+    done
+
+    # 有效链接：能 test -e 通才算数（断链一律不计）
+    valid=0
+    broken=0
+    for l in $(find "$MR" -type l 2>/dev/null); do
+        if [ -e "$l" ]; then valid=$((valid + 1)); else broken=$((broken + 1)); fi
+    done
+    echo "   有效符号链接: $valid   断链: $broken"
+
+    if [ "$mr_fail" = "1" ]; then
+        echo "   !! MyReader 产物不完整 —— /readerx 会 502，书页打不开"
+        echo "      补救：从 NAS 取回完整产物后重跑，或执行"
+        echo "            sh export-myreader.sh 后把 myreader-dist.tar.gz 放回本目录"
+        exit 1
+    fi
+
+    if [ "$valid" -lt 100 ]; then
+        echo "   !! 有效链接只有 $valid 个（应 ≥100），产物疑似不完整"
+        exit 1
+    fi
+
+    [ "$broken" -gt 0 ] && \
+        echo "   ! 提示：有 $broken 个断链（多在 myreader-dist/static/），无用残留，不影响运行"
+    echo "   ✓ 产物完整（server.js + 三层 node_modules 齐备）"
 fi
 
 echo "==> 校验补丁文件已落位（23 个：后端 16 + 前端 7）"
