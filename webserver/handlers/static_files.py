@@ -446,13 +446,121 @@ class EpubReader(BaseHandler):
             path = found
 
         content_type = mimetypes.guess_type(path)[0]
-        if content_type:
-            self.set_header("Content-Type", content_type)
-        else:
-            self.set_header("Content-Type", "application/octet-stream")
+        # 4.6.0-9 繁体 epub 卡死修复：
+        # mimetypes 对 .xhtml 只给 application/xhtml+xml（无 charset），.ncx 干脆返回 None
+        # → 退化成 application/octet-stream。繁体书大量使用 Big5/CP950 编码的
+        # xhtml/ncx，浏览器拿不到 charset 声明就用默认编码硬解，简体书（UTF-8）
+        # 恰好蒙对，繁体书则整页乱码、解析失败，表现为"翻页卡死"。
+        # 这里不信任扩展名，直接读文件头嗅探真实编码，并显式写进 Content-Type。
+        text_like = path.lower().endswith(
+            (".xhtml", ".html", ".htm", ".xml", ".ncx", ".opf", ".svg", ".css", ".txt")
+        )
+        if not content_type:
+            # .ncx/.opf 等 mimetypes 不认识的，补上正确的 XML 类型
+            if path.lower().endswith((".ncx", ".opf", ".xml")):
+                content_type = "application/xml"
+            elif path.lower().endswith((".xhtml", ".html", ".htm")):
+                content_type = "application/xhtml+xml"
+            elif path.lower().endswith(".css"):
+                content_type = "text/css"
+            else:
+                content_type = "application/octet-stream"
 
         with zf.open(path) as f:
-            self.write(f.read())
+            data = f.read()
+
+        if text_like:
+            charset = self._sniff_charset(data, content_type)
+            if "charset=" not in content_type.lower():
+                content_type = "%s; charset=%s" % (content_type.split(";")[0], charset)
+        self.set_header("Content-Type", content_type)
+
+        self.write(data)
+
+    @staticmethod
+    def _sniff_charset(data, content_type=""):
+        """嗅探文本资源的真实字符集，返回可直接写进 Content-Type 的名字。
+
+        判定顺序（从最权威到兜底）：
+          1. 文件自带的声明（XML decl / meta charset）—— 书自己说了算；
+          2. BOM；
+          3. UTF-8 强校验：能无错解码就是 UTF-8（简体书几乎都走这条）；
+          4. 解不了 UTF-8 → 繁体/老书常见 Big5/CP950、GBK，按可解码性挑选；
+          5. 全都失败则按 latin-1 兜底（任何字节序列都能解，至少不崩）。
+
+        为什么必须做：繁体 epub 里的 Big5 字节序列，若被当作 UTF-8 解码会抛错，
+        epub.js 拿到解析失败的文档就停在加载态，用户看到的就是"卡死"。
+        """
+        head = data[:4096]
+
+        # ① 文件内声明
+        m = re.search(rb'encoding\s*=\s*["\']([\w\-]+)["\']', head, re.I)
+        if not m:
+            m = re.search(rb'charset\s*=\s*["\']?([\w\-]+)', head, re.I)
+        if m:
+            declared = m.group(1).decode("ascii", "ignore").lower()
+            # 归一化几个常见别名
+            alias = {
+                "big5": "big5", "big-5": "big5", "cp950": "cp950", "x-x-big5": "big5",
+                "gb2312": "gbk", "gb18030": "gb18030", "gbk": "gbk",
+                "utf8": "utf-8", "utf-8": "utf-8",
+            }
+            if declared in alias:
+                return alias[declared]
+
+        # ② BOM
+        if data.startswith(b"\xef\xbb\xbf"):
+            return "utf-8"
+        if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+            return "utf-16"
+
+        # ③④ 可解码性判断。
+        # 注意：GBK 与 Big5 的字节区间有重叠，短文本可能两个都能解。
+        # 对长篇正文，用「解码后是否出现大量私用区/替换字符」来区分；
+        # 简体书优先 UTF-8 命中，繁体书 UTF-8 必失败，落到 Big5。
+        # 两者都能解时（罕见），按"哪边解出的常用汉字更多"择优。
+        try:
+            data.decode("utf-8")
+            return "utf-8"
+        except (UnicodeDecodeError, LookupError):
+            pass
+
+        candidates = []
+        for enc in ("big5", "gb18030"):
+            try:
+                text = data.decode(enc)
+            except (UnicodeDecodeError, LookupError):
+                continue
+            candidates.append((EpubReader._cjk_score(text), enc))
+
+        if candidates:
+            candidates.sort(reverse=True)
+            return candidates[0][1]
+        return "latin-1"
+
+    @staticmethod
+    def _cjk_score(text):
+        """粗略衡量一段解码结果"像不像正常中文"：统计常用汉字占比。
+
+        编码猜错时，解码出来的通常是一堆生僻字、私用区字符或乱码符号，
+        常用汉字（U+4E00~U+9FA5 里 GB2312 一级字范围）占比会明显偏低。
+        """
+        if not text:
+            return 0.0
+        common = 0
+        total = 0
+        for ch in text[:20000]:
+            o = ord(ch)
+            if o < 0x80:
+                if not ch.isprintable():
+                    continue
+                total += 1
+                continue
+            total += 1
+            # GB2312 一级汉字区间近似：U+4E00~U+9FA5 且非私用区非扩展区
+            if 0x4E00 <= o <= 0x9FA5:
+                common += 1
+        return common / total if total else 0.0
 
     # ------------------------------------------------------------------ 辅助
 
