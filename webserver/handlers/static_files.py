@@ -382,6 +382,89 @@ class EpubReader(BaseHandler):
                 return table[v]
         return None
 
+    # 合法 sfnt 头部魔数。字体文件的前 4 字节必须命中其中之一，否则浏览器 OTS
+    # 会拒绝解析。注意 0x00010000 必须按字节比较，别写成字符串。
+    _SFNT_MAGIC = (
+        b"\x00\x01\x00\x00",  # TrueType
+        b"OTTO",              # CFF / OpenType
+        b"true",              # TrueType (Apple)
+        b"ttcf",              # TrueType Collection
+        b"wOFF",              # WOFF
+        b"wOF2",              # WOFF2
+    )
+
+    @classmethod
+    def _font_is_valid(cls, data):
+        """判断内嵌字体是不是真字体。
+
+        4.6.0-9 繁体书卡死修复（后半段）：calibre 从 PDF/DJVU 转 epub 时，若源文件
+        的字体受版权保护不可提取，它会写一个以 ASCII `FONT` 开头的占位文件（不是
+        合法 sfnt，头 4 字节 0x464F4E54 = 1179602516）。浏览器 OTS 直接报
+        `OTS parsing error: invalid sfntVersion: 1179602516` 并放弃该字体，
+        正文回退系统字体；同时每次打开这本书都要白白下载一遍坏字体，
+        弱网下每个字体请求都是一次完整的失败往返。
+
+        这里在服务端先验头，坏字体直接当 404 返回，浏览器立刻标失败、不再重试，
+        也不会把坏字节喂给 OTS。合法字体（含 WOFF/WOFF2/字体集）原样放行。
+        """
+        if data is None or len(data) < 4:
+            return False
+        return data[:4] in cls._SFNT_MAGIC
+
+    # @font-face 块（可能跨行）。非贪婪到第一个右花括号，够用且不会吞掉后面的规则。
+    _FONT_FACE_RE = re.compile(rb"@font-face\s*\{[^}]*\}", re.I)
+    _FONT_URL_RE = re.compile(rb"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)", re.I)
+
+    @classmethod
+    def _strip_broken_font_faces(cls, css_bytes, zf, css_path):
+        """把 CSS 里指向「坏字体」的 @font-face 整段删掉。
+
+        为什么要在 CSS 层做，而不是只靠字体请求返回 404：
+        calibre 从 PDF 转出来的书，常把字体声明成同一族（如 Calibri）的 4 个字重，
+        而 4 个字体文件全是 `FONT` 占位的坏字体（实测一本哈利波特 3.1MB 里
+        1.66MB 即 53% 是这种死数据）。只回 404 的话，浏览器仍会为每个字重
+        发起一次请求、每次白跑一趟；删掉 @font-face 后浏览器根本不会请求，
+        弱网下直接省掉这些往返与等待。
+
+        只删确认是坏字体的那几段，合法字体原样保留，避免破坏正常书的排版。
+        返回 (新字节, 删掉的个数)。
+        """
+        if not css_bytes or b"@font-face" not in css_bytes.lower():
+            return css_bytes, 0
+
+        base = os.path.dirname(css_path)
+        removed = 0
+
+        def repl(m):
+            nonlocal removed
+            block = m.group(0)
+            urls = cls._FONT_URL_RE.findall(block)
+            if not urls:
+                return block
+            # 只要该 @font-face 引用的字体全部不可用，整段删掉
+            for raw in urls:
+                target = raw.decode("utf-8", "replace").split("?")[0].split("#")[0]
+                if target.startswith(("data:", "http://", "https://", "//")):
+                    # 远程/内联字体不归我们管，保守起见保留这段
+                    return block
+                want = os.path.normpath(target)
+                # CSS 里的 url 相对 CSS 自身所在目录
+                full = os.path.normpath(os.path.join(base, want)).replace(os.sep, "/")
+                try:
+                    found = full if full in zf.namelist() else cls._zip_find(zf, full)
+                    if not found:
+                        return block  # 条目不存在，交给浏览器自己 404
+                    head = zf.read(found)[:8]
+                except Exception:
+                    return block
+                if cls._font_is_valid(head):
+                    return block  # 有可用字体，保留
+            removed += 1
+            return b""
+
+        out = cls._FONT_FACE_RE.sub(repl, css_bytes)
+        return out, removed
+
     def get(self, bid, path):
         if not self.current_user and not BookAccessService.guest_read_allowed(self, bid):
             return self.redirect("/login")
@@ -468,6 +551,31 @@ class EpubReader(BaseHandler):
 
         with zf.open(path) as f:
             data = f.read()
+
+        # 坏字体（calibre 的 FONT 占位）直接 404，别把坏字节喂给浏览器 OTS。
+        # 见 _font_is_valid 的说明（4.6.0-9 繁体书字体修复）。
+        if path.lower().endswith((".ttf", ".otf", ".woff", ".woff2", ".ttc")):
+            if not self._font_is_valid(data):
+                logging.info(
+                    "[EPUB] 跳过损坏的内嵌字体 book=%s path=%s head=%r",
+                    bid, path, data[:8],
+                )
+                # 字体默认套了 immutable 长缓存，404 不能跟着缓存 7 天，
+                # 否则用户换掉这本坏字体后浏览器仍记住失败结果。
+                self.set_header("Cache-Control", "no-store")
+                self.clear_header("ETag")
+                raise web.HTTPError(404)
+
+        # CSS：删掉指向坏字体的 @font-face，让浏览器连请求都不发。
+        # 见 _strip_broken_font_faces 的说明（4.6.0-9 繁体书字体修复）。
+        if path.lower().endswith(".css") and data:
+            data2, removed = self._strip_broken_font_faces(data, zf, path)
+            if removed:
+                logging.info(
+                    "[EPUB] 剥离 %d 处坏字体 @font-face book=%s css=%s",
+                    removed, bid, path,
+                )
+                data = data2
 
         if text_like:
             charset = self._sniff_charset(data, content_type)

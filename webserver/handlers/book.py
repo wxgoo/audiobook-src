@@ -2,6 +2,7 @@
 # -*- coding: UTF-8 -*-
 
 import datetime
+import hashlib
 import html
 import json
 import logging
@@ -2444,11 +2445,90 @@ class BookDownload(BaseHandler, web.StaticFileHandler):
     async def get(self, path, include_body=True):
         if accel.enabled(self):
             file_path = self.parse_url_path(path)
+            if not os.path.isfile(file_path):
+                return await super().get(path, include_body)
+
+            # 4.6.0-9 坏字体清理（旧书侧）：下载 epub 时若书里带着 calibre 产出的
+            # `FONT` 加密伪字体，改发「精简副本」。这类死数据实测能占全书一半
+            # （哈利波特那本 3.11MB 里 1.66MB 是它），而浏览器根本加载不了，
+            # 弱网下纯属白等。生成一次后缓存在 CACHE_DIR，后续直接命中。
+            # 详见 webserver/services/epub_font_fix.py。
+            lite_path = self.epub_lite_path(file_path)
+            if lite_path:
+                uri = accel.uri_for(accel.CACHE_PREFIX, CONF.get("CACHE_DIR", "/data/cache"), lite_path)
+                if uri:
+                    self.set_header("X-Accel-Redirect", uri)
+                    return
+
             uri = accel.uri_for(accel.LIBRARY_PREFIX, self.calibre_db_cache.backend.library_path, file_path)
-            if uri and os.path.isfile(file_path):
+            if uri:
                 self.set_header("X-Accel-Redirect", uri)
                 return
         return await super().get(path, include_body)
+
+    # --- epub 坏字体精简副本 ------------------------------------------------
+    _EPUB_LITE_LOCK = threading.Lock()
+    # 已知无需精简的书（key 含 mtime+size，源变了会自动失效）。
+    # 没有它的话，每次下载一本干净的书都要重读一遍 zip 中央目录。
+    _EPUB_LITE_CLEAN = set()
+    _EPUB_LITE_CLEAN_MAX = 2048
+
+    def epub_lite_path(self, file_path):
+        """需要且成功生成精简副本时返回副本路径，否则 None。
+
+        只在 .epub 上生效；生成失败一律回落原文件，绝不影响下载。
+        """
+        if not file_path.lower().endswith(".epub"):
+            return None
+        cache_root = CONF.get("CACHE_DIR", "/data/cache")
+        if not cache_root:
+            return None
+
+        try:
+            st = os.stat(file_path)
+        except OSError:
+            return None
+
+        # 副本按「源文件 mtime+size」命名：源变了自然换新副本，无需额外失效逻辑
+        key = "%s-%d-%d" % (
+            hashlib.md5(os.path.abspath(file_path).encode("utf-8", "replace")).hexdigest()[:16],
+            int(st.st_mtime), st.st_size,
+        )
+        if key in BookDownload._EPUB_LITE_CLEAN:
+            return None
+
+        out_dir = os.path.join(cache_root, "epub-lite")
+        out_path = os.path.join(out_dir, key + ".epub")
+        if os.path.exists(out_path):
+            return out_path
+
+        with BookDownload._EPUB_LITE_LOCK:
+            if os.path.exists(out_path):
+                return out_path
+            if key in BookDownload._EPUB_LITE_CLEAN:
+                return None
+            try:
+                from webserver.services.epub_font_fix import build_stripped_epub
+
+                os.makedirs(out_dir, exist_ok=True)
+                tmp_path = out_path + ".tmp-%d" % os.getpid()
+                ok = build_stripped_epub(file_path, tmp_path)
+                if not ok:
+                    # 这本书没有坏字体：记进负缓存，后续请求直接返回
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                    clean = BookDownload._EPUB_LITE_CLEAN
+                    if len(clean) >= BookDownload._EPUB_LITE_CLEAN_MAX:
+                        clean.clear()
+                    clean.add(key)
+                    logging.debug("[EPUB-LITE] 无需精简: %s", os.path.basename(file_path))
+                    return None
+                os.replace(tmp_path, out_path)
+                return out_path
+            except Exception as err:
+                logging.warning("[EPUB-LITE] 生成精简副本失败，回落原文件: %s", err)
+                logging.warning(traceback.format_exc())
+                return None
 
     @classmethod
     def get_absolute_path(cls, root: str, path: str) -> str:

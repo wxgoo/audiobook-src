@@ -34,6 +34,13 @@ webserver/services/audios_import.py
 webserver/services/autofill.py
 webserver/services/book_dedup.py
 
+# ---- -9 坏字体剥离（繁体 epub 打开慢/卡死）----
+# epub_font_fix.py 是三处调用共用的核心：转换流程、下载链路、命令行工具
+webserver/services/epub_font_fix.py
+webserver/services/converter.py
+webserver/services/batch_convert.py
+tools/fix_broken_fonts.py
+
 # ---- 测试 ----
 tests/test_author_norm.py
 

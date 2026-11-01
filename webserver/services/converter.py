@@ -181,6 +181,28 @@ class ConverterService(AsyncService):
             self.add_msg(user_id, "danger", "[%s]文件格式转换失败！请在设置中调整转换超时时间后重试" % service_item)
             return
 
+        # 4.6.0-9 坏字体清理（新书侧）：
+        # calibre 从 PDF/DJVU 转 epub 时，若源字体带子集加密保护，会产出一批以
+        # ASCII `FONT` 开头的伪字体（不是合法 sfnt）。浏览器 OTS 直接拒绝并报
+        # `invalid sfntVersion: 1179602516`，正文回退系统字体；而这些死数据
+        # 往往占全书一半以上体积（实测一本 3.11MB 的书里 1.66MB 是它），
+        # 弱网下白白拖慢整本下载。转换刚结束就地清掉，后续下载即精简版。
+        # 详见 webserver/services/epub_font_fix.py。
+        if new_fmt == "epub":
+            try:
+                from webserver.services.epub_font_fix import strip_from_epub_file
+
+                fix = strip_from_epub_file(new_path, backup_suffix=None)
+                if fix.get("changed"):
+                    logging.info(
+                        "[CONVERT] 已清理 %d 个坏字体: %s -> %s 字节",
+                        len(fix.get("fonts") or []), fix.get("before"), fix.get("after"),
+                    )
+            except Exception:
+                # 清理失败不能影响转换结果本身，照常入库
+                logging.warning("[CONVERT] 坏字体清理失败，跳过 book=%s", book["id"])
+                logging.warning(traceback.format_exc())
+
         with open(new_path, "rb") as f:
             self.db.add_format(book["id"], new_fmt, f, index_is_id=True)
             logging.info("added new book: %s", new_path)

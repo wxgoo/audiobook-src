@@ -100,6 +100,20 @@ class BatchConvertService(AsyncService):
                 logging.error("[BatchConvert] Failed to convert book id=%d", book_id)
                 return False
 
+            # 与单本转换一致：清掉 calibre 产出的 `FONT` 加密伪字体（4.6.0-9）
+            try:
+                from webserver.services.epub_font_fix import strip_from_epub_file
+
+                fix = strip_from_epub_file(new_path, backup_suffix=None)
+                if fix.get("changed"):
+                    logging.info(
+                        "[BatchConvert] book id=%d 清理 %d 个坏字体 %s -> %s 字节",
+                        book_id, len(fix.get("fonts") or []),
+                        fix.get("before"), fix.get("after"),
+                    )
+            except Exception:
+                logging.warning("[BatchConvert] book id=%d 坏字体清理失败，跳过", book_id)
+
             with open(new_path, "rb") as f:
                 self.db.add_format(book_id, "EPUB", f, index_is_id=True)
 
