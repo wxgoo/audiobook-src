@@ -75,7 +75,19 @@ echo "    ✔ 容器在运行（$CONTAINER）"
 
 line
 echo "[2] myreader 进程状态（supervisord）"
-docker exec "$CONTAINER" supervisorctl status myreader 2>&1 | sed 's/^/    /'
+# 进程全名是 组名:进程名，即 mybooks:myreader。
+# 只写 myreader 会得到 "ERROR (no such process)"，是假警报——只要 [3] 里
+# 9100 在监听，就说明进程活着。
+docker exec "$CONTAINER" supervisorctl status 2>/dev/null \
+    | grep -E 'myreader' | sed 's/^/    /'
+docker exec "$CONTAINER" sh -c '
+    s=$(supervisorctl status mybooks:myreader 2>/dev/null)
+    case "$s" in
+        *RUNNING*) echo "    ✔ 运行中" ;;
+        *BACKOFF*|*FATAL*) echo "    ✘ 起不来：$s" ;;
+        "") echo "    ! 取不到状态" ;;
+        *) echo "    $s" ;;
+    esac'
 
 line
 echo "[3] 9100 端口有没有在听"
@@ -104,7 +116,20 @@ done
 
 line
 echo "[4] myreader 日志最后 25 行（关键）"
-docker exec "$CONTAINER" sh -c 'tail -25 /data/log/myreader.log 2>/dev/null || tail -25 /var/log/supervisor/myreader*.log 2>/dev/null' 2>&1 | sed 's/^/    /'
+# 日志是追加写入的，历史报错会留在文件里。这里只取「最后一次启动之后」的部分：
+# 找到最后一个 Next.js 启动标记，从那里往后打，才是当前这次的真实状况。
+docker exec "$CONTAINER" sh -c '
+F=/data/log/myreader.log
+[ -f "$F" ] || F=$(ls /var/log/supervisor/myreader*.log 2>/dev/null | head -1)
+[ -f "$F" ] || { echo "（找不到 myreader 日志）"; exit 0; }
+n=$(grep -n "Next.js" "$F" 2>/dev/null | tail -1 | cut -d: -f1)
+if [ -n "$n" ] && [ "$n" -gt 1 ]; then
+    echo "（以下为最后一次启动之后的内容；之前的历史报错已省略）"
+    tail -n +"$n" "$F" | head -25
+else
+    tail -25 "$F"
+fi
+' 2>&1 | sed 's/^/    /'
 
 line
 echo "[5] 产物目录是否完整"
@@ -149,12 +174,19 @@ echo "    /readerx/ 经 nginx → HTTP ${c2:-（无响应）}"
 
 line
 echo "【怎么读结果】"
-echo "  9100 未监听 + 日志里有 Cannot find module 'next'"
+echo "  先看 [3]：9100 在监听 = 服务活着，其余大多是假象"
+echo "      · [2] 报 no such process  → 进程全名是 mybooks:myreader，已修"
+echo "      · [4] 里老的 Cannot find module → 追加日志的历史残留，看最后一段即可"
+echo ""
+echo "  9100 未监听 + 日志最后一段是 Cannot find module 'next'"
 echo "      → node_modules 缺失。要么从旧机器/备份取回，要么重新构建产物。"
 echo ""
 echo "  9100 在听但 /readerx 502"
 echo "      → nginx 侧问题，看 conf/nginx/mybooks.conf 的 upstream。"
 echo ""
+echo "  /readerx 返回 301/308"
+echo "      → 正常。尾斜杠重定向，浏览器会自动跟随。"
+echo ""
 echo "  都正常但书页空白"
-echo "      → 可能是 /api/mybooks/* 取不到数据，看 [4] 日志里的 whoami 报错。"
+echo "      → 前端问题。F12 看 Console 报错和 Network 里失败的 /api/mybooks/* 请求。"
 line
