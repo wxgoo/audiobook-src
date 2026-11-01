@@ -47,18 +47,37 @@ done
 [ "$fail" = "1" ] && { echo "==> 校验失败，包不完整，停止。"; exit 1; }
 echo "    OK：关键文件齐全"
 
-echo "==> [2/5] 符号链接抽查（之前 502 事故的教训：解压压扁链接会导致 MyReader 崩溃）"
-# 正确形态：app/node_modules 第一层恰好 3 个链接（next/react/react-dom），
-# 大头在 myreader-dist/node_modules/ 根层，全产物合计应为 127 个。
-app_links=$(find myreader-dist/app/node_modules -maxdepth 1 -type l 2>/dev/null | wc -l)
-all_links=$(find myreader-dist -type l 2>/dev/null | wc -l)
-echo "    app/node_modules 首层链接: $app_links（应为 3）；全产物合计: $all_links（应为 127）"
-if [ "$app_links" -lt 3 ] || [ "$all_links" -lt 100 ]; then
-    echo "    !! 符号链接数量异常，几乎可以确定是被解压工具压扁了。"
-    echo "    !! 请删除本目录，改用命令行重新解压："
-    echo "    !!   tar -xzf audiobook-deploy-4.6.0-1.tar.gz"
+echo "==> [2/5] MyReader 产物完整性（之前 502 事故的教训：产物不全 → 书页空白）"
+# 原来这里只数符号链接总数（<100 就报错）。问题：myreader-dist/static/ 里有
+# 127 个断链（指向不存在的 f1.js…），正好把总数凑够，检查永远通过；
+# 而真正该在的三层 node_modules 一个都没有时，阅读器启动即
+# Cannot find module 'next' → 9100 不监听 → /readerx 全 502 → 打开书什么都没有。
+#
+# 现在改成查真东西：目录在不在、有效链接够不够（断链不计）。
+mr_fail=0
+[ -f myreader-dist/app/server.js ] || { echo "    !! 缺 myreader-dist/app/server.js"; mr_fail=1; }
+for sub in "node_modules" "app/node_modules" "app/.next/node_modules"; do
+    [ -d "myreader-dist/$sub" ] || { echo "    !! 缺 myreader-dist/$sub"; mr_fail=1; }
+done
+
+valid=0; broken=0
+for l in $(find myreader-dist -type l 2>/dev/null); do
+    if [ -e "$l" ]; then valid=$((valid + 1)); else broken=$((broken + 1)); fi
+done
+echo "    有效符号链接: $valid   断链: $broken"
+
+if [ "$mr_fail" = "1" ]; then
+    echo "    !! MyReader 产物不完整 —— 部署后 /readerx 会 502，书页打不开。"
+    echo "       补救：从旧机器/备份取回完整 myreader-dist 后重试。"
     exit 1
 fi
+if [ "$valid" -lt 100 ]; then
+    echo "    !! 有效链接只有 $valid 个（应 ≥100）。"
+    echo "       如果远少于这个数，多半是被解压工具压扁了，请用命令行解压："
+    echo "         tar -xzf <包名>.tar.gz"
+    exit 1
+fi
+[ "$broken" -gt 0 ] && echo "    ! 提示：$broken 个断链（多在 myreader-dist/static/），无用残留，不影响运行"
 
 echo "==> [3/5] Docker 构建镜像"
 if [ "$1" = "build-only" ]; then
