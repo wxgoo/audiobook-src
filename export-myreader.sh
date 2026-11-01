@@ -12,15 +12,21 @@
 #
 # 产出：myreader-dist.tar.gz（约 40-60MB），传回沙箱即可。
 # ============================================================
-CONTAINER="${1:-audiobook}"
+CONTAINER="${1:-}"
 OUT="myreader-dist.tar.gz"
 
-echo "==> 容器: $CONTAINER"
+if [ -z "$CONTAINER" ]; then
+    CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -x 'audiobook' | head -1)
+    [ -z "$CONTAINER" ] && CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i 'audiobook' | head -1)
+fi
+
+echo "==> 容器: ${CONTAINER:-（未找到）}"
 
 if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"; then
-    echo "!! 容器 $CONTAINER 没在运行"
+    echo "!! 容器 ${CONTAINER:-（空）} 没在运行"
     echo "   当前容器名列表："
-    docker ps --format '   {{.Names}}' 2>/dev/null
+    docker ps --format '       {{.Names}}' 2>/dev/null
+    echo "   名字不一样的话，带上名字重跑： sh export-myreader.sh <容器名>"
     exit 1
 fi
 

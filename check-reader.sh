@@ -8,23 +8,43 @@
 #
 # 只读，不改任何东西。
 # ============================================================
-CONTAINER="${1:-audiobook}"
+CONTAINER="${1:-}"
 
 line() { echo "------------------------------------------------------------"; }
 
+# 没指定容器名时自动探测：优先叫 audiobook 的，其次任何带 audiobook 的
+if [ -z "$CONTAINER" ]; then
+    CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -x 'audiobook' | head -1)
+    [ -z "$CONTAINER" ] && CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i 'audiobook' | head -1)
+fi
+
 echo "============================================================"
 echo " MyReader 阅读器诊断"
-echo " 容器: $CONTAINER"
+echo " 容器: ${CONTAINER:-（未找到）}"
 echo "============================================================"
 
 line
 echo "[1] 容器在跑吗"
-if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"; then
-    echo "    ✘ 容器 $CONTAINER 没在运行"
-    echo "    先确认容器名： docker ps --format '{{.Names}}'"
+if ! command -v docker >/dev/null 2>&1; then
+    echo "    ✘ 找不到 docker 命令"
+    echo "    本脚本要在 NAS 上跑（装了 docker 的机器），不是在你的电脑上跑。"
     exit 1
 fi
-echo "    ✔ 容器在运行"
+if [ -z "$CONTAINER" ]; then
+    echo "    ✘ 没找到 name 里带 audiobook 的运行中容器"
+    echo "    当前在跑的容器："
+    docker ps --format '       {{.Names}}' 2>/dev/null
+    echo "    如果名字不一样，带上名字重跑："
+    echo "       sh check-reader.sh <容器名>"
+    exit 1
+fi
+if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"; then
+    echo "    ✘ 容器 $CONTAINER 没在运行"
+    echo "    当前在跑的容器："
+    docker ps --format '       {{.Names}}' 2>/dev/null
+    exit 1
+fi
+echo "    ✔ 容器在运行（$CONTAINER）"
 
 line
 echo "[2] myreader 进程状态（supervisord）"
@@ -32,7 +52,11 @@ docker exec "$CONTAINER" supervisorctl status myreader 2>&1 | sed 's/^/    /'
 
 line
 echo "[3] 9100 端口有没有在听"
-docker exec "$CONTAINER" sh -c 'ss -ltn 2>/dev/null | grep -q ":9100" && echo "    ✔ 9100 在监听" || echo "    ✘ 9100 未监听 → nginx 转发 /readerx 必然 502"' 2>&1
+if docker exec "$CONTAINER" sh -c 'ss -ltn 2>/dev/null | grep -q ":9100"' 2>/dev/null; then
+    echo "    ✔ 9100 在监听"
+else
+    echo "    ✘ 9100 未监听 → nginx 转发 /readerx 必然 502"
+fi
 
 line
 echo "[4] myreader 日志最后 25 行（关键）"
@@ -56,8 +80,10 @@ docker exec "$CONTAINER" sh -c 'cd /var/www/myreader && timeout 15 node -e "requ
 
 line
 echo "[7] 从容器内部访问阅读器"
-docker exec "$CONTAINER" sh -c 'code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1:9100/ 2>/dev/null); echo "    /  → HTTP $code"' 2>&1
-docker exec "$CONTAINER" sh -c 'code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1/readerx/ 2>/dev/null); echo "    /readerx/ → HTTP $code"' 2>&1
+c1=$(docker exec "$CONTAINER" sh -c 'curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1:9100/ 2>/dev/null' 2>/dev/null)
+c2=$(docker exec "$CONTAINER" sh -c 'curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1/readerx/ 2>/dev/null' 2>/dev/null)
+echo "    9100 根路径      → HTTP ${c1:-（无响应）}"
+echo "    /readerx/ 经 nginx → HTTP ${c2:-（无响应）}"
 
 line
 echo "【怎么读结果】"
