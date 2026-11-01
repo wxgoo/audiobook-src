@@ -100,10 +100,28 @@ sh /volume1/docker/upgrade-upstream.sh
 | 1 | 拉取 Gitee 上的代码 | 等着 |
 | 2 | 查询上游最新版本号 | 等着（或手动输入，如 `4.7.0`） |
 | 3 | 合并上游代码 | **可能有冲突**，见下方 |
-| 4 | 检查代码完整性 | 暂停 → 你测试确认后回车 |
+| 3.1 | 合并前给 `BOOK_NAV` 和三语文案拍快照 | 等着 |
+| 3.2 | 合并后回灌 + 校验自定义内容 | 若有改动会列出来，你确认后回车 |
+| 4 | 检查代码完整性（含自定义内容再校验一次） | 暂停 → 你测试确认后回车 |
 | 5 | 推送 Gitee | 等着 |
 | 6 | 出成品包 `audiobook-deploy-4.7.0-1.tar.gz` | 等着 |
 | 7 | 执行 upgrade.sh 上线 | 等着，最后验证网页 |
+
+> **3.1 / 3.2 是干什么的**：`webserver/settings.py` 里的 `BOOK_NAV`（默认分类导航，上游 9 组、我们 13 组）
+> 和 `app/locales/*.json` 三语文案，是上游升级时**必然被整段覆盖**的两处。
+> 覆盖后不报错、不崩，只是分类导航悄悄变回上游版、界面开始显示 `settings.xxx` 这种原始键名——
+> 最难发现的那种坏法。所以合并前自动存快照，合并后自动补回去并校验。
+>
+> 这套逻辑在 `protect-custom.sh`，也可以单独用：
+>
+> ```sh
+> sh protect-custom.sh save  <源码目录>   # 存快照
+> sh protect-custom.sh apply <源码目录>   # 回灌
+> sh protect-custom.sh check <源码目录>   # 校验（缺什么报什么，不通过返回 1）
+> ```
+>
+> 注意：`upgrade-upstream.sh`、`merge-4.6.0-N.sh`、`protect-custom.sh` 三个要放在**同一个目录**，
+> 否则脚本会提示"找不到 protect-custom.sh"，校验被跳过。
 
 ### 第 3 步遇到冲突怎么办
 
@@ -340,7 +358,6 @@ sh /tmp/boot/audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-1.tar.g
 | `INSTALL_GUIDE.md` | 排查具体功能问题（1200+ 行，当字典查） |
 | `DEPLOY_README.md` | 首次部署、目录布局说明 |
 | `PORTING_NOTES.md` | 想知道自己改了上游哪些地方（版本号规则也在这） |
-| `CHANGELOG.md` | 想知道每个版本加了什么功能、修了哪些 Bug |
 
 脚本清单：
 
