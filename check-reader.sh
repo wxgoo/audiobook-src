@@ -79,11 +79,28 @@ docker exec "$CONTAINER" supervisorctl status myreader 2>&1 | sed 's/^/    /'
 
 line
 echo "[3] 9100 端口有没有在听"
-if docker exec "$CONTAINER" sh -c 'ss -ltn 2>/dev/null | grep -q ":9100"' 2>/dev/null; then
-    echo "    ✔ 9100 在监听"
-else
-    echo "    ✘ 9100 未监听 → nginx 转发 /readerx 必然 502"
-fi
+# 精简镜像里 ss / netstat 常常都没有，直接读 /proc/net/tcp 最可靠。
+# 9100 = 0x238C；80 = 0x0050；8000 = 0x1F40。
+# 第 4 列是状态，0A = LISTEN。
+docker exec "$CONTAINER" sh -c '
+listen() {
+    hex=$1
+    awk -v h=":"$hex "\$0 ~ h && \$4 == \"0A\" {found=1} END{exit !found}" \
+        /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+listen 238C && echo "LISTEN_9100" || echo "NO_9100"
+listen 0050 && echo "LISTEN_80"   || echo "NO_80"
+listen 1F40 && echo "LISTEN_8000" || echo "NO_8000"
+' 2>/dev/null | while read -r r; do
+    case "$r" in
+        LISTEN_9100) echo "    ✔ 9100 在监听（myreader）" ;;
+        NO_9100)     echo "    ✘ 9100 未监听 → nginx 转发 /readerx 必然 502" ;;
+        LISTEN_80)   echo "    ✔ 80 在监听（nginx）" ;;
+        NO_80)       echo "    ✘ 80 未监听（nginx 没起来）" ;;
+        LISTEN_8000) echo "    ✔ 8000 在监听（tornado）" ;;
+        NO_8000)     echo "    ✘ 8000 未监听（后端没起来）" ;;
+    esac
+done
 
 line
 echo "[4] myreader 日志最后 25 行（关键）"
@@ -110,8 +127,23 @@ docker exec "$CONTAINER" sh -c 'cd /var/www/myreader && timeout 15 node -e "requ
 
 line
 echo "[7] 从容器内部访问阅读器"
-c1=$(docker exec "$CONTAINER" sh -c 'curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1:9100/ 2>/dev/null' 2>/dev/null)
-c2=$(docker exec "$CONTAINER" sh -c 'curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1/readerx/ 2>/dev/null' 2>/dev/null)
+# 优先 curl，没有就退回 wget，两个都没有就只报端口层面结论
+c1=$(docker exec "$CONTAINER" sh -c '
+  if command -v curl >/dev/null 2>&1; then
+      curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1:9100/
+  elif command -v wget >/dev/null 2>&1; then
+      wget -q -O /dev/null -T 8 http://127.0.0.1:9100/ && echo 200 || echo "非200"
+  else
+      echo "无curl/wget"
+  fi' 2>/dev/null)
+c2=$(docker exec "$CONTAINER" sh -c '
+  if command -v curl >/dev/null 2>&1; then
+      curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1/readerx/
+  elif command -v wget >/dev/null 2>&1; then
+      wget -q -O /dev/null -T 8 http://127.0.0.1/readerx/ && echo 200 || echo "非200"
+  else
+      echo "无curl/wget"
+  fi' 2>/dev/null)
 echo "    9100 根路径      → HTTP ${c1:-（无响应）}"
 echo "    /readerx/ 经 nginx → HTTP ${c2:-（无响应）}"
 
