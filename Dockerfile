@@ -266,6 +266,21 @@ COPY --from=builder /app-static/dist/avatar/ /data/books/avatar/
 # 所以 .dockerignore 里对 myreader-dist 下的 node_modules 做了显式放行，
 # 少一层都会启动即 MODULE_NOT_FOUND。
 COPY myreader-dist/ /var/www/myreader/
+
+# ── 权限归一：必须在 COPY 之后 ──
+# 坑：上面第 191 行有 `chmod a+w -R /var/www`，但那是在 COPY 之前跑的。
+# 产物是谁在哪台机器打包的，就带着谁的权限位进来。实测从 NAS 以 root
+# 打包的产物是 drwx------ / -rwx------，COPY 后原样保留，于是：
+#   supervisor 用 `gosu mybooks:mybooks node app/server.js` 启动
+#   → mybooks 用户 Permission denied
+#   → Node 把「读不到」报成 Error: Cannot find module '.../app/server.js'
+#   → 进程 FATAL → 9100 不监听 → /readerx 全 502 → 书页空白
+# 以 root 身份手动跑 `node -e require(...)` 却是好的，极具迷惑性。
+# 所以这里补一刀，不依赖产物自带的权限位。
+RUN chown -R mybooks:mybooks /var/www/myreader && \
+    chmod -R u+rwX,go+rX /var/www/myreader && \
+    echo "myreader 权限已归一" && \
+    ls -ld /var/www/myreader/app /var/www/myreader/app/server.js
 COPY release_notes.txt /var/www/mybooks/app/dist/static/
 COPY thanks_to.txt /var/www/mybooks/app/dist/static/
 

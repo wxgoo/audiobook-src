@@ -130,6 +130,14 @@ if [ -n "$MRTAR" ] && [ -f "$MRTAR" ]; then
     echo "   源: $SRC ($(du -sh "$SRC" | awk '{print $1}'), $(find "$SRC" -type f | wc -l) 个文件)"
     rm -rf "$D/myreader-dist"
     cp -a "$SRC" "$D/myreader-dist" || { echo "!! 复制产物失败"; exit 1; }
+
+    # 权限归一：产物是谁在哪台机器打的，就带着谁的权限位。
+    # 实测从 NAS 以 root 打包的产物是 0700，进镜像后 mybooks 用户读不到，
+    # supervisor 的 `gosu mybooks:mybooks node app/server.js` 会报
+    # Cannot find module '.../app/server.js'（其实是 Permission denied）。
+    chown -R root:root "$D/myreader-dist" 2>/dev/null
+    chmod -R u+rwX,go+rX "$D/myreader-dist"
+    echo "   权限已归一: $(ls -ld "$D/myreader-dist/app" | awk '{print $1}') (app)"
 fi
 
 MR="$D/myreader-dist"
