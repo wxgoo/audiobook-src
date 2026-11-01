@@ -21,6 +21,8 @@ from urllib.parse import urlparse
 import requests
 from html.parser import HTMLParser
 
+from webserver.base.meta_helper import guess_authors  # 4.6.0-9 作者清洗
+
 KEY = "douban_v2"
 
 UA_LIST = [
@@ -388,6 +390,13 @@ def build_metadata(item, search_url, isbn=None, copy_image=False, get_detail=Fal
         authors = detail["authors"]
     else:
         authors = [parsed["author"] or "佚名"]
+
+    # 4.6.0-9：豆瓣 V2 没有 V1 那套 REMOVES 清洗，且上面会把译者拼成
+    # "姓名(译)" 塞进作者列表。这里只补清洗，**保留译者拼接行为**——
+    # 那是书页展示需要的，拆开会让人看不到译者。
+    # 清洗后若为空（全部被识别成译者），退回原始值，不能丢成佚名。
+    _clean_authors, _trans = guess_authors(authors)
+    authors = _clean_authors or [a for a in authors if a] or ["佚名"]
 
     mi = Metadata(title)
     mi.authors = authors

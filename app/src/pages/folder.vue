@@ -5,9 +5,10 @@
         <v-chip :color="path ? '#003153' : 'amber darken-3'" dark class="mr-1" @click="goTo('')">
           <v-icon>mdi-home</v-icon>
         </v-chip>
-        <template v-for="(crumb, idx) in crumbs" :key="'crumb-' + idx + '-' + crumb.path">
-          <v-icon small>mdi-chevron-right</v-icon>
+        <template v-for="(crumb, idx) in crumbs">
+          <v-icon :key="'sep' + idx" small>mdi-chevron-right</v-icon>
           <v-chip
+            :key="crumb.path"
             :color="idx === crumbs.length - 1 ? 'amber darken-3' : '#003153'"
             dark
             class="mx-1"

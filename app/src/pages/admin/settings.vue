@@ -163,8 +163,8 @@
             </template>
 
             <div class="pl-6" v-if="s.fields && s.fields.length" :class="{ 'settings-fields-2col': s.fields.some((x) => x.half) }">
-            <template v-for="f in s.fields" :key="'w-' + f.key">
-              <div :id="'f-' + f.key" :class="f.half ? 'settings-field-half' : 'settings-field-full'">
+            <template v-for="f in s.fields">
+              <div :key="'w-' + f.key" :id="'f-' + f.key" :class="f.half ? 'settings-field-half' : 'settings-field-full'">
               <template v-if="f.type === 'checkbox'">
                 <v-checkbox
                   small
@@ -361,17 +361,17 @@
             </template>
             </div>
 
-            <template v-for="b in (s.actions || [])" :key="b.label">
-              <v-btn @click="run(b.action)" color="primary"
+            <template v-for="b in (s.actions || [])">
+              <v-btn :key="b.label" @click="run(b.action)" color="primary"
                 ><v-icon>{{ b.icon }}</v-icon
                 >{{ $t(b.label) }}</v-btn
               >
             </template>
 
             <div class="pl-6" v-if="s.groups && s.groups.length">
-            <template v-for="grp in s.groups" :key="'w-' + grp.key">
+            <template v-for="grp in s.groups">
               <!-- 父开关本身也能改脏，必须给出 f-<key> 锚点，否则逐项跳转会退回整张卡片 -->
-              <div :id="'f-' + grp.key">
+              <div :key="'w-' + grp.key" :id="'f-' + grp.key">
               <v-checkbox
                 small
                 :hide-details="!grp.hint"
@@ -386,8 +386,8 @@
               </div>
               <template v-if="settings[grp.key] || forceOpen[grp.key]">
                 <div class="pl-6" :key="grp.key + '-fields'">
-                <template v-for="f in grp.fields" :key="'w-' + f.key">
-                  <div :id="'f-' + f.key">
+                <template v-for="f in grp.fields">
+                  <div :key="'w-' + f.key" :id="'f-' + f.key">
                   <v-checkbox
                     small
                     hide-details
@@ -506,8 +506,8 @@
 
             <template v-if="s.special === 'devices'">
               <div id="f-DEVICES" class="pl-6">
-              <template v-for="(device, idx) in settings.DEVICES" :key="'device-' + idx">
-                <div class="device-item mb-3">
+              <template v-for="(device, idx) in settings.DEVICES">
+                <div :key="'device-' + idx" class="device-item mb-3">
                   <v-row>
                     <v-col class="py-1" cols="3">
                       <v-text-field
@@ -1206,7 +1206,7 @@ const SPECIAL_BLOCKS = [
   { key: "READER_DICT_BAIKE_ENABLED", label: "settings.reader_dict_baike", icon: "mdi-book-alphabet", gid: "reading", sid: "reader-dict" },
   { key: "READER_MYDICTS", label: "settings.sec_reader_dict", icon: "mdi-book-alphabet", gid: "reading", sid: "reader-dict", al: ["翻译"] },
   { key: "ENABLE_STAMP_FEATURE", label: "settings.enable_stamp_feature", icon: "mdi-picture-in-picture-bottom-right-outline", gid: "reading", sid: "reader-extended" },
-  { key: "AUDIO_LINK_TO_EXISTING_BOOK", label: "settings.audio_link_to_existing_book", icon: "mdi-headphones", gid: "reading", sid: "audio-import", al: ["有声书", "有聲書", "音频", "音訊", "audiobook", "重复", "重複", "合并", "合併", "挂靠", "掛靠", "同名", "duplicate", "merge", "link"] },
+  { key: "AUDIO_LINK_TO_EXISTING_BOOK", label: "settings.audio_link_to_existing_book", icon: "mdi-headphones", gid: "import", sid: "imp-upload", al: ["有声书", "有聲書", "音频", "音訊", "audiobook", "重复", "重複", "合并", "合併", "挂靠", "掛靠", "同名", "duplicate", "merge", "link"] },
   { key: "TRANSCRIBE_KEEP_TXT", label: "settings.transcribe_keep_txt", icon: "mdi-text-recognition", gid: "reading", sid: "transcribe", al: ["转写", "轉寫", "txt", "字幕", "srt", "whisper", "transcribe"] },
   { key: "SOCIALS", label: "settings.select_socials", icon: "mdi-at", gid: "users", sid: "users-social", al: ["qq", "微信", "微博", "github", "oauth"] },
   { key: "DEVICES", label: "settings.device_mgt", icon: "mdi-tablet-cellphone", gid: "push", sid: "push-devices", al: ["kindle", "文石", "掌阅", "汉王", "当当", "koreader", "duokan", "ireader", "boox", "ftp"] },
@@ -2042,20 +2042,6 @@ export default {
             special: "reader_dicts",
           },
           {
-            id: "audio-import",
-            icon: "mdi-headphones",
-            title: "settings.sec_audio_import",
-            groups: [
-              {
-                icon: "mdi-link-variant",
-                key: "AUDIO_LINK_TO_EXISTING_BOOK",
-                label: "settings.audio_link_to_existing_book",
-                tips: "settings.audio_link_to_existing_book_tips",
-                type: "checkbox",
-              },
-            ],
-          },
-          {
             id: "transcribe",
             icon: "mdi-text-recognition",
             title: "settings.sec_transcribe",
@@ -2081,12 +2067,6 @@ export default {
               { icon: "mdi-send", key: "ALLOW_GUEST_PUSH", label: "settings.allow_guest_push", type: "checkbox", lockOn: "REQUIRE_LOGIN" },
               { icon: "mdi-link-variant", key: "ENABLE_SHARE_LINK", label: "settings.allow_share_link", type: "checkbox" },
             ],
-          },
-          {
-            id: "reader-groups",
-            icon: "mdi-account-lock-outline",
-            title: "settings.sec_reader_groups",
-            special: "reader_groups",
           },
           {
             id: "users-reg",
@@ -2163,26 +2143,6 @@ export default {
             ],
             groups: [
               {
-                icon: "mdi-shield-lock-outline",
-                key: "READER_GROUP_STRICT",
-                label: "settings.reader_group_strict",
-                hint: "settings.reader_group_strict_hint",
-                fields: [],
-              },
-              {
-                icon: "mdi-book-lock-outline",
-                key: "ALLOW_READ_RANGE_SETTING",
-                label: "settings.allow_read_range_setting",
-                al: ["白名单", "黑名单"],
-                fields: [
-                  {
-                    key: "DEFAULT_READ_RANGE",
-                    type: "reading_range",
-                    label: "settings.default_read_range",
-                  },
-                ],
-              },
-              {
                 key: "ENABLE_DOWNLOAD_QUOTA",
                 icon: "mdi-download-lock-outline",
                 label: "settings.enable_download_quota",
@@ -2197,6 +2157,53 @@ export default {
                 ],
               },
             ],
+          },
+          {
+            // 读者组紧跟在「默认权限与配额」下面：这两块说的是同一件事
+            // （谁能看哪些书），分开摆会让人以为有两个互不相干的权限系统。
+            // 总开关放在这一节的第一位，因为它关掉时整个读者组都不生效。
+            id: "reader-groups",
+            icon: "mdi-account-lock-outline",
+            title: "settings.sec_reader_groups",
+            fields: [
+              {
+                icon: "mdi-book-lock-outline",
+                key: "ALLOW_READ_RANGE_SETTING",
+                label: "settings.allow_read_range_setting",
+                tips: "settings.allow_read_range_setting_tips",
+                al: ["白名单", "黑名单", "阅读范围", "读者组"],
+                type: "checkbox",
+              },
+            ],
+            groups: [
+              {
+                // 嵌套在总开关内部：开关关掉时这一整块折叠/失效，
+                // 避免「我明明配了组，怎么不管用」这种排查。
+                key: "READER_GROUP_STRICT",
+                icon: "mdi-shield-lock-outline",
+                label: "settings.reader_group_strict",
+                hint: "settings.reader_group_strict_hint",
+                al: ["严格", "空条件", "白名单"],
+                fields: [],
+              },
+              {
+                // 外层 group 的 key 不能和内部 field 同名，否则 v-model
+                // 会既绑布尔又绑对象，开关直接失灵。这里用独立键名。
+                key: "default-read-range-heading",
+                icon: "mdi-account-plus-outline",
+                label: "settings.default_read_range_heading",
+                hint: "settings.default_read_range_hint",
+                al: ["新用户", "默认范围"],
+                fields: [
+                  {
+                    key: "DEFAULT_READ_RANGE",
+                    type: "reading_range",
+                    label: "settings.default_read_range",
+                  },
+                ],
+              },
+            ],
+            special: "reader_groups",
           },
           {
             id: "users-social",
@@ -2240,6 +2247,17 @@ export default {
                 icon: "mdi-file-document-outline",
                 key: "UPLOAD_IGNORE_TITLE_CHECKING",
                 label: "settings.upload_ignore_title_checking",
+                type: "checkbox",
+              },
+              {
+                // 和上面的同名检查是「同一件事的两个阶段」，必须挨着放：
+                //   UPLOAD_IGNORE_TITLE_CHECKING 管「电子书之间」要不要拦同名
+                //   AUDIO_LINK_TO_EXISTING_BOOK  管「音频碰上同名电子书」时是挂靠还是新建
+                // 放在「阅读与浏览」下时，用户根本想不到导音频要去那边找一个开关。
+                icon: "mdi-headphones",
+                key: "AUDIO_LINK_TO_EXISTING_BOOK",
+                label: "settings.audio_link_to_existing_book",
+                tips: "settings.audio_link_to_existing_book_tips",
                 type: "checkbox",
               },
               {

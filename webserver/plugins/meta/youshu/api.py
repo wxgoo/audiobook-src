@@ -9,6 +9,7 @@ import logging
 import re
 import requests
 from webserver.i18n import _
+from webserver.base.meta_helper import guess_authors  # 4.6.0-9 作者清洗
 from bs4 import BeautifulSoup
 
 YOUSHU_ISBN = "0000000000002"
@@ -174,7 +175,12 @@ class YoushuApi:
         info = page.get_info()
 
         mi = Metadata(info["title"])
-        mi.authors = [info.get("author", "佚名")]
+        # 4.6.0-9：作者名统一过一遍清洗。
+        # 必须兜底：作者是"著"/"编"/"[美]"这类纯职责词时清洗结果为空，
+        # 下面 mi.authors[0] 会 IndexError，整批刮削任务就此中断。
+        _raw_author = info.get("author", "佚名")
+        _authors, _trans = guess_authors([_raw_author])
+        mi.authors = _authors or [_raw_author or "佚名"]
         mi.author_sort = mi.authors[0]
         mi.isbn = YOUSHU_ISBN
         mi.tags = page.get_tags()

@@ -62,8 +62,8 @@
                         <v-btn color="#1B813E" class="white--text rounded-btn" small v-on="on">{{ $t('admin.users.modify_permissions') }} <v-icon small>mdi-dots-vertical</v-icon></v-btn>
                     </template>
                     <v-list dense>
-                        <template v-for="perm in permissions" :key="'disable-' + perm.name">
-                            <v-list-item v-if="item[perm.name]">
+                        <template v-for="perm in permissions">
+                            <v-list-item :key="'disable-' + perm.name" v-if="item[perm.name]">
                                 <v-list-item-title>
                                     <v-icon color="success">mdi-account-check</v-icon> {{ $t('admin.users.allowed', { permission: perm.text }) }}
                                 </v-list-item-title>

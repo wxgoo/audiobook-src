@@ -30,6 +30,7 @@ from webserver.base.image_generator import ImageGenerator
 from webserver.base.image_helper import ImageHelper
 from webserver.base.epub_helper import EpubHelper
 from webserver.base.meta_helper import guess_authors, guess_tags
+from webserver.base.author_norm import resolve_author_list, lock_author
 from webserver.base.homepage import get_homepage_config
 from webserver.services.book_visit_service import BookVisitService
 from webserver.services.book_access_service import BookAccessService
@@ -983,7 +984,9 @@ class BookRefer(BaseHandler):
                 _authors_, _translators = guess_authors(org_mi.authors)
             else:
                 _authors_, _translators = guess_authors([org_mi.author_sort])
-            org_mi.authors = _authors_
+            # 4.6.0-9：电子书内嵌元数据是第三个脏来源（前两个：有声书 ID3、刮削源）。
+            # 归一化到别名表中的标准名；原文为空时保留清洗结果，不要凭空造作者。
+            org_mi.authors = resolve_author_list(_authors_) or _authors_
             logging.info(f"[RESET] get the book title from book file: {org_mi.title}")
             if org_mi.isbn:
                 org_mi.set("isbn", utils.super_strip(org_mi.isbn))
@@ -1184,6 +1187,8 @@ class BookRefer(BaseHandler):
             elif refer_mi.author_sort:
                 _authors, _translators = guess_authors([refer_mi.author_sort])
             if _authors:
+                # 4.6.0-9：只改作者/简介的场景（列表页的"更新作者简介"）同样归一化
+                _authors = resolve_author_list(_authors) or _authors
                 mi.authors = _authors
                 if refer_mi.author_sort:
                     mi.author_sort = refer_mi.author_sort
@@ -1210,6 +1215,10 @@ class BookRefer(BaseHandler):
                 _authors, _translators = guess_authors(refer_mi.authors)
             elif refer_mi.author_sort:
                 _authors, _translators = guess_authors([refer_mi.author_sort])
+            # 4.6.0-9：界面点"刮削"也是脏作者进库的一条路，与 autofill 走同一套归一化。
+            # 注意这里**不打锁**——用户只是点了刮削按钮，没手工改作者，
+            # 打锁会让这本书从此脱离自动刮削，属于越权替他做决定。
+            _authors = resolve_author_list(_authors) or _authors
             refer_mi.authors = _authors
             mi.smart_update(refer_mi, replace_metadata=True)
 
@@ -2064,13 +2073,27 @@ class BookEdit(BaseHandler):
             else:
                 need_update_cover = True
 
+        author_changed = False
         for key, val in data.items():
             if key not in self.KEYS:
                 continue
             if key == "comments" and not self._is_html_content(val):
                 # replace the line break with <br/> to avoid losing line break when display in web
                 val = val.replace("\n", "<br/>")
+            if key == "authors":
+                # 归一化到别名表里的标准名（未登记的写法原样保留），
+                # 并标记"作者已人工确认"，后续自动刮削不再覆盖这本书的作者。
+                # 兼容字符串入参（按 / , 、 ; 切分），避免被当成字符序列逐个处理。
+                if isinstance(val, str):
+                    val = [v.strip() for v in re.split(r"[/,，、;；]", val) if v.strip()]
+                elif not isinstance(val, (list, tuple)):
+                    val = []
+                val = resolve_author_list(list(val))
+                author_changed = True
             mi.set(key, val)
+
+        if author_changed:
+            lock_author(self.calibre_db, bid)
 
         if data.get("pubdate", None):
             content = douban.str2date(data["pubdate"])
@@ -3220,7 +3243,9 @@ class BookUpload(BaseHandler):
         else:
             authors = guess_authors([utils.super_strip(mi.author_sort)])
         mi.tags = guess_tags(mi.tags)
-        mi.authors = authors
+        # 4.6.0-9：入库那一刻归一化。这里是最划算的一道——脏名字还没落库，
+        # 归一化后 calibre 目录名/作者目录一次建对，不用后期再搬文件夹。
+        mi.authors = resolve_author_list(authors) or authors
 
         if failed:
             return {"err": "book.invalid", "msg": _("此书籍文件无法识别, 或者受DRM保护无法导入")}, fpath, None, []
@@ -3478,7 +3503,8 @@ class BookUploadChunk(BaseHandler):
                 _authors, _translators = guess_authors(mi.authors)
             else:
                 _authors, _translators = guess_authors([utils.super_strip(mi.author_sort)])
-            mi.authors = _authors
+            # 4.6.0-9：分片上传入库同样归一化，与单文件上传保持一致
+            mi.authors = resolve_author_list(_authors) or _authors
             if failed:
                 return {"err": "book.invalid", "msg": _("此书籍文件无法识别, 或者受DRM保护无法导入")}
 

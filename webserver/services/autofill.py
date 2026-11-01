@@ -12,6 +12,7 @@ from webserver.services import AsyncService
 from webserver.services.background_service import BackgroundService, BackgroundTask
 from webserver.services.book_search import BookSearch
 from webserver.constants import AUTO_FILL_META, CALIBRE_COLUMN_TRANSLATORS
+from webserver.base.author_norm import is_author_locked, resolve_author_list
 
 CONF = loader.get_settings()
 
@@ -159,8 +160,10 @@ class AutoFillService(AsyncService):
                             refer_mi.tags = self.guess_tags(refer_mi)
                         # 保留书名不修改
                         refer_mi.title = utils.remove_zlibrary_suffix(mi.title)
+                        # 记下刮削前的作者，供第三阶段判断是否要还原（见下）
+                        old_authors = list(mi.authors or [])
                         mi.smart_update(refer_mi, replace_metadata=True)
-                        updates.append((book_id, mi))
+                        updates.append((book_id, mi, old_authors))
                     else:
                         self.count_fail += 1
                         if not refer_mi:
@@ -172,10 +175,19 @@ class AutoFillService(AsyncService):
                     logging.error(_("获取书籍信息失败 id=%d: %s"), book_id, err if err else "Not found!")
 
             # 第三阶段：批量写入更新（减少数据库锁持有次数）
-            for book_id, mi in updates:
+            for book_id, mi, old_authors in updates:
                 try:
                     _authors, _translators = guess_authors(mi.authors)
-                    mi.authors = _authors
+                    _authors = resolve_author_list(_authors)
+                    # 作者已锁定 → 还原成刮削前的值，只保留封面/简介/标签等更新
+                    if old_authors and is_author_locked(self.db, book_id):
+                        logging.info(
+                            _("书籍 id=%d 作者已锁定，保留 %s（刮削值 %s）"),
+                            book_id, old_authors, mi.authors,
+                        )
+                        mi.authors = old_authors
+                    else:
+                        mi.authors = _authors
                     mi.title_sort = utils.get_title_sort(mi.title)
                     self.db.set_metadata(book_id, mi, ignore_errors=True)
                     if _translators:
@@ -350,9 +362,22 @@ class AutoFillService(AsyncService):
         refer_mi.title = title
         refer_mi.title_sort = utils.get_title_sort(refer_mi.title)
 
+        # 作者字段：若用户在界面上手动改过（已锁定），保留用户的值，不被刮削覆盖。
+        # old_authors 必须在 smart_update 之前取——它是就地修改 mi 的，
+        # 之后再读 mi.authors 拿到的已经是刮削源的值了。
+        old_authors = list(mi.authors or [])
+        author_locked = is_author_locked(self.db, book_id)
         _authors, _translators = guess_authors(refer_mi.authors)
+        _authors = resolve_author_list(_authors)
         mi.smart_update(refer_mi, replace_metadata=True)
-        mi.authors = _authors
+        if author_locked and old_authors:
+            mi.authors = old_authors
+            logging.info(
+                _("书籍 id=%d 作者已锁定，保留 %s（刮削值 %s）"),
+                book_id, old_authors, refer_mi.authors,
+            )
+        else:
+            mi.authors = _authors
         self.db.set_metadata(book_id, mi, ignore_errors=True)
         if _translators:
             translators = ",".join(_translators)

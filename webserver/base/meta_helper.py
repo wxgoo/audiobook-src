@@ -7,6 +7,13 @@ from typing import List, Tuple
 # 姓名前的地区/朝代标记，如 [明]、【美】、（清）、(英)、[唐]、［美］（全角方括号）等
 _DYNASTY_REGION_PREFIX = re.compile(r'^[\[［【\(（][^\]］】\)）]*[\]］】\)）]\s*')
 
+# 姓名前的职责词，如 "插画[美国]安德鲁·格拉斯"、"插画：张三"、"绘画 李四"。
+# 4.6.0-9 新增：这类脏名是"职责词 + 方括号国籍"叠在开头，原来的
+# _DYNASTY_REGION_PREFIX 要求方括号在字符串首位，够不着。
+# ⚠️ 刻意不含"译者"：译者标记由 _TRANSLATOR_SUFFIX 处理，进这里会把译者
+#    误当作者（"译者：张三" 的张三应该是译者，不是作者）。
+_DUTY_PREFIX = re.compile(r'^(?:插画|绘画|插图|摄影)\s*[：:]?\s*')
+
 # 姓名前的"原作："类角色前缀，如 原作：面堂兄、原作:面堂兄
 _ORIGINAL_AUTHOR_PREFIX = re.compile(r'^原作\s*[:：]\s*')
 
@@ -14,11 +21,19 @@ _ORIGINAL_AUTHOR_PREFIX = re.compile(r'^原作\s*[:：]\s*')
 # 注意中文后缀允许直接紧贴姓名（如 "温德著"），故使用 \s*
 # "主" 是"主编"被截断后的残留（如 "韦东山 主"），只在前面有空格时才当作角色后缀去除，
 # 避免误伤名字本身以"主"结尾的情况（无空格时不匹配）。
+#
+# 4.6.0-9：扩到 绘/校/注/原著/改编/主编/插图。三个约束必须同时满足：
+#   1. 单字（绘|校|注）**必须前面有空格**（\s+），否则 "图图"→"图"、"绘心"→"绘"
+#   2. 刻意不含单字 "图"、"文"：中文人名里"文文""图图"很常见，一定误伤
+#   3. 多字词（原著|改编|主编|插图）允许紧贴，因为它们本身足够长，不会误伤
 _AUTHOR_SUFFIX = re.compile(
     r'(?:'
-    r'\s*(?:著|编|编著)|\s*[-–]\s*(?:著|编|编著)|'
-    r'\s+(?:author|Author|editor|Editor)|\s*[-–]\s*(?:author|Author|editor|Editor)|'
-    r'\s*[\(\（]\s*(?:著|编|编著|author|Author|editor|Editor)\s*[\)\）]|'
+    r'\s*(?:著|编|编著|原著|改编|主编|插图)|'
+    r'\s+(?:绘|校|注|译)|'
+    r'\s*[-–]\s*(?:著|编|编著|绘|校|注)|'
+    r'\s+(?:author|Author|editor|Editor|illustrator|Illustrator)|'
+    r'\s*[-–]\s*(?:author|Author|editor|Editor|illustrator|Illustrator)|'
+    r'\s*[\(\（]\s*(?:著|编|编著|绘|校|注|author|editor|illustrator)\s*[\)\）]|'
     r'\s+主'
     r')$'
 )
@@ -32,8 +47,15 @@ _TRANSLATOR_SUFFIX = re.compile(
     r')$'
 )
 
-# 多人分隔符：/ 、 , ; ；（英文逗号、中英文分号）
-_MULTI_AUTHOR_SEP = re.compile(r'[/、,;；]')
+# 多人分隔符：/ 、 , ; ；（英文逗号、中英文分号、中文逗号）
+# 4.6.0-9：补上中文逗号"。原来顿号分开的 "李绍山、陈存军" 会拆，
+# 中文逗号分开的 "王惟恒，李艳" 却不拆——同样的合著两种行为，无法解释。
+# 副作用是 "Rowling,J.K." 会被拆成两段，由 _looks_like_initial() 挡住。
+_MULTI_AUTHOR_SEP = re.compile(r'[/、,;；，]')
+
+# 首字母缩写，如 J.K. / JK / J. K. / J.K
+# 用于避免把 "Rowling,J.K." 这类西文"姓, 名"格式拆坏
+_AUTHOR_INITIAL = re.compile(r'(?:[A-Za-z]\.?\s*){1,4}\Z')
 
 # 末尾的英文译名括号，如（Jean-Michel Frodon）、(John Smith)
 # 内容至少含一个英文字母，允许空格、连字符、·、.、' 等姓名常用符号
@@ -88,8 +110,11 @@ def guess_authors(authors: List[str]) -> Tuple[List[str], List[str]]:
         if not original or original in _ANONYMOUS_MARKERS:
             continue
 
-        # 1. 去除前导的"原作："角色前缀，再去除地区/朝代标记
+        # 1. 去除前导的"原作："角色前缀，再去除职责词，再去除地区/朝代标记。
+        #    顺序不能换："插画[美国]安德鲁·格拉斯" 里 "插画" 挡在 "[" 前面，
+        #    先走 _DYNASTY_REGION_PREFIX 的话它匹配不到 ^\[，国籍就剥不掉。
         name = _ORIGINAL_AUTHOR_PREFIX.sub('', original).strip()
+        name = _DUTY_PREFIX.sub('', name).strip()
         name = _DYNASTY_REGION_PREFIX.sub('', name).strip()
         if not name or name in _ANONYMOUS_MARKERS:
             continue
@@ -106,9 +131,13 @@ def guess_authors(authors: List[str]) -> Tuple[List[str], List[str]]:
         if not name or name in _ANONYMOUS_MARKERS:
             continue
 
-        # 4. 按 / 、 , 分割多人
+        # 4. 按 / 、 , ; ； ， 分割多人。
+        #    但如果任意一段是首字母缩写（J.K. / JK），说明这是西文 "姓, 名" 格式，
+        #    整体保留不拆——否则 "Rowling,J.K." 会变成两个作者。
         parts = [normalize_author_name(p) for p in _MULTI_AUTHOR_SEP.split(name)]
         parts = [p for p in parts if p and p not in _ANONYMOUS_MARKERS]
+        if len(parts) > 1 and any(_AUTHOR_INITIAL.match(p) for p in parts):
+            parts = [name]
 
         target = translator_result if is_translator else author_result
         for p in parts:

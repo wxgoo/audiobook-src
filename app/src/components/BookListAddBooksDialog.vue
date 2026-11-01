@@ -36,8 +36,8 @@
                                 <div class="grey--text text-caption">
                                     <span v-if="b.pubdate">{{ b.pubdate }}</span>
                                     <span v-if="b.languages"> · {{ b.languages }}</span>
-                                    <template v-for="(f, idx) in (b.files || []).slice(0, 3)" :key="idx">
-                                        <v-chip x-small class="ml-1" color="cyan" text-color="white">{{ f.format }}</v-chip>
+                                    <template v-for="(f, idx) in (b.files || []).slice(0, 3)">
+                                        <v-chip :key="idx" x-small class="ml-1" color="cyan" text-color="white">{{ f.format }}</v-chip>
                                     </template>
                                 </div>
                             </div>

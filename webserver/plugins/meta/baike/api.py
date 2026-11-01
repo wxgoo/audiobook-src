@@ -4,6 +4,7 @@ import logging
 import re
 import requests
 from webserver.i18n import _
+from webserver.base.meta_helper import guess_authors  # 4.6.0-9 作者清洗
 
 from webserver.plugins.meta.douban import str2date
 from webserver.constants import CHROME_MOBILE_HEADERS, DEFAULT_ISBN
@@ -48,7 +49,12 @@ class BaiduBaikeApi:
         mi.publisher = info.get(u"出版社", "")
         if not mi.publisher:
             mi.publisher = info.get(u"连载平台", "")
-        mi.authors = [info.get(u"作者", u"佚名")]
+        # 4.6.0-9：百科的"作者"字段常混入国籍前缀/机构名，统一过一遍清洗。
+        # 必须兜底：原文是"著"/"编"/"[美]"/"佚名"这类纯职责词时清洗结果为空，
+        # 下面 mi.authors[0] 会 IndexError，整批刮削任务就此中断。
+        _raw_author = info.get(u"作者", u"佚名")
+        _authors, _trans = guess_authors([_raw_author])
+        mi.authors = _authors or [_raw_author or u"佚名"]
         mi.author_sort = mi.authors[0]
         mi.isbn = info.get("ISBN", DEFAULT_ISBN)
         mi.tags = []

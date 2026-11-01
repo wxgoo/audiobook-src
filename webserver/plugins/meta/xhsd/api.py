@@ -8,6 +8,8 @@ import json
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
+from webserver.base.meta_helper import guess_authors  # 4.6.0-9 作者清洗
+
 
 KEY = "xinhua"
 XHSD_ISBN = "0000000000002"
@@ -177,7 +179,11 @@ class XhsdBookApi:
         mi = Metadata(title)
         mi.publisher = info.get("publisher", "")
         author = info.get("author", u"佚名")
-        mi.authors = [author] if author else [u"佚名"]
+        # 4.6.0-9：作者名统一过一遍清洗。
+        # 必须兜底：author 是"著"/"编"/"[美]"这类纯职责词时清洗结果为空，
+        # 下面 mi.authors[0] 会 IndexError（原文此处只判了空串，没判清洗后为空）。
+        _authors, _trans = guess_authors([author]) if author else ([], [])
+        mi.authors = _authors or [author or u"佚名"]
         mi.author_sort = mi.authors[0]
         mi.isbn = info.get("isbn", XHSD_ISBN)
         mi.tags = []

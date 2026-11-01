@@ -18,6 +18,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from webserver.constants import CHROME_MOBILE_HEADERS
+from webserver.base.meta_helper import guess_authors  # 4.6.0-9 作者清洗
 
 KEY = "Ujxsw"
 
@@ -129,6 +130,9 @@ def build_metadata(item, isbn=None, copy_image=False):
 
     title = item.get("title", "")
     author = item.get("author") or "佚名"
+    # 4.6.0-9：刮削源返回的作者名常常带国籍前缀/职责后缀，统一过一遍清洗
+    _authors, _trans = guess_authors([author])
+    author = _authors[0] if _authors else author
 
     mi = Metadata(title)
     mi.authors = [author]

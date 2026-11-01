@@ -295,9 +295,13 @@
             </template>
 
             <template v-slot:item.author="{ item }">
-                <v-edit-dialog large :return-value.sync="item.author" @save="save(item, 'authors')" :save-text="$t('admin.books.save')" :cancel-text="$t('admin.books.cancel')">
-                    <span class="three-lines" style="max-width: 200px" v-if="item.authors">{{ item.authors.join("/") }}</span>
+                <v-edit-dialog large :return-value.sync="item.author" @save="save(item, 'authors')" @open="onAuthorEditOpen(item)" :save-text="$t('admin.books.save')" :cancel-text="$t('admin.books.cancel')">
+                    <span class="three-lines" style="max-width: 180px" v-if="item.authors">{{ item.authors.join("/") }}</span>
                     <span v-else> - </span>
+                    <!-- 4.6.0-9：作者已锁定的书显示小锁，点击直接解锁 -->
+                    <v-icon v-if="item.author_locked" small class="ml-1" color="grey"
+                            :title="$t('admin.books.authorLockedTip')"
+                            @click.stop="toggleAuthorLock(item)">{{ authorLockBusy ? 'mdi-loading mdi-spin' : 'mdi-lock' }}</v-icon>
                     <template v-slot:input>
                         <!-- AUTHORS -->
                         <div class="mt-4 text-h6">{{ $t('admin.books.editField') }}</div>
@@ -327,6 +331,15 @@
                                 </v-chip>
                             </template>
                         </v-combobox>
+                        <!-- 4.6.0-9：保存后锁定，自动刮削不再覆盖作者 -->
+                        <v-checkbox
+                            v-model="item._lock_after_save"
+                            hide-details
+                            dense
+                            class="mt-2"
+                            :label="$t('admin.books.lockAfterSave')"
+                        ></v-checkbox>
+                        <div class="text-caption grey--text mb-2">{{ $t('admin.books.lockAfterSaveHint') }}</div>
                     </template>
                 </v-edit-dialog>
             </template>
@@ -726,6 +739,7 @@ export default {
         jumpPage: 1,
         books_selected: [],
         tag_input: null,
+        authorLockBusy: false,
         search: "",
         apiSearch: "",
         searchCategory: "all",
@@ -1355,8 +1369,40 @@ export default {
                             }
                         });
                     }
+                    // 4.6.0-9：改作者后按用户选择落锁/保持锁定状态（批量编辑不动锁）
+                    if (field === "authors" && this.books_selected.length <= 1) {
+                        const wantLock = book._lock_after_save !== false;
+                        if (wantLock !== !!book.author_locked) {
+                            this.setAuthorLock(book, wantLock);
+                        }
+                    }
                 }
             });
+        },
+        // 4.6.0-9：作者锁定。打开编辑框时初始化勾选状态；
+        // 锁图标点击 = 解锁；保存时按勾选联动。
+        onAuthorEditOpen(book) {
+            if (book._lock_after_save === undefined) {
+                this.$set(book, "_lock_after_save", !!book.author_locked);
+            }
+        },
+        setAuthorLock(book, locked) {
+            this.authorLockBusy = true;
+            this.$backend("/admin/book/" + book.id + "/author_lock", {
+                method: "PUT",
+                body: JSON.stringify({ locked: locked }),
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.$set(book, "author_locked", locked);
+                } else {
+                    this.$alert("error", rsp.msg || "操作失败");
+                }
+            }).catch(() => this.$alert("error", "操作失败"))
+              .finally(() => { this.authorLockBusy = false; });
+        },
+        toggleAuthorLock(book) {
+            if (this.authorLockBusy) return;
+            this.setAuthorLock(book, !book.author_locked);
         },
         checkStatusInLoop(url, callback) {
             setTimeout(() => {

@@ -15,8 +15,8 @@
         >
             <div class="drawer-click-area">
                 <v-list dense @click.stop>
-                    <template v-for="(item, idx) in items" :key="'nav-' + idx">
-                        <v-subheader v-if="item.heading" v-show="!miniVariant">{{ $t(item.heading) }}</v-subheader>
+                    <template v-for="(item, idx) in items">
+                        <v-subheader v-if="item.heading" :key="'heading-' + idx" v-show="!miniVariant">{{ $t(item.heading) }}</v-subheader>
 
                         <v-list-item
                             dense
@@ -693,6 +693,7 @@ export default {
                         { icon: "mdi-import", href: "/admin/imports", text: "appHeader.importBooks", color: "green"},
                         { icon: "mdi-library-shelves", href: "/admin/books", text: "appHeader.bookManagement", color: "blue darken-2"},
                         { icon: "mdi-content-duplicate", href: "/toolbox/book_dedup", text: "appHeader.bookDedup", color: "amber darken-2"},
+                        { icon: "mdi-account-convert-outline", href: "/toolbox/author_norm", text: "appHeader.authorNorm", color: "blue darken-1"},
                         ...(this.sys.allow.share_link ? [{ icon: "mdi-cloud-outline", href: "/admin/shares", text: "appHeader.shareManagement", color: "teal" }] : []),
                         { icon: "mdi-notebook", href: "/admin/all-expected", text: "expected.allPageTitle", color: "green"},
                         ...(this.sys.allow.user_memos ? [{ icon: "mdi-message-text-outline", href: "/admin/user-memos", text: "memos.pageTitle", color: "blue" }] : []),

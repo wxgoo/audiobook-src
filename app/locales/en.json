@@ -376,7 +376,10 @@
         "comments": "Description",
         "actions": "Actions",
         "series": "Series"
-      }
+      },
+      "authorLockedTip": "Author locked: auto metadata fetch will not overwrite it. Click to unlock",
+      "lockAfterSave": "Lock author after saving (scraper won't overwrite)",
+      "lockAfterSaveHint": "The name you just fixed won't be overwritten by scraping. Click the lock icon in the row to unlock anytime."
     },
     "users": {
       "title": "User Management",
@@ -662,7 +665,7 @@
     "allow_guest_register": "Allow guests to register accounts via email",
     "allow_new_user_manage_book": "Newly registered users are enabled to upload and download by default",
     "allow_new_user_push_book": "Newly registered users are enabled to push books to reading devices by default",
-    "allow_read_range_setting": "Allow setting user's reading range (restricting visible or invisible categories or tags, guests can only see books without categories and tags)",
+    "allow_read_range_setting": "Enable reading-range control (master switch)",
     "default_read_range": "Set default reading range",
     "default_read_range_dialog_title": "Set default reading range for new users",
     "default_read_range_all": "Default reading range: all visible",
@@ -905,7 +908,7 @@
     "reader_dict_test_unauthorized": "{msg}: the token is invalid or lacks query permission",
     "reader_dict_test_summary": "Dictionary test finished: {ok} succeeded, {failed} failed (hover the icon in front of each URL for details)",
     "reader_groups": "Reader groups (grade-based access)",
-    "sec_reader_groups": "Reader groups (grade-based access)",
+    "sec_reader_groups": "Reader groups (tiered access)",
     "reader_groups_tips": "Define reader groups (whitelist/blacklist by categories/tags) and assign users to them to batch-restrict which books they can read. A user's own explicit reading range takes precedence over the group.",
     "reader_group_name": "Group name",
     "reader_group_mode": "Mode",
@@ -961,7 +964,10 @@
     "reader_group_strict_hint": "When a whitelist group has no categories/tags, its members cannot see any book. Turn off to fall back to upstream behaviour (no restriction).",
     "reader_group_orphan_title": "Members point to a deleted group (they currently cannot see any book)",
     "reader_group_orphan_tips": "Re-assign them to an existing group to restore access, or clear their group.",
-    "reader_group_logic_tips": "Categories and tags are OR-ed: a book is visible if it matches either one. Filling only one side is enough."
+    "reader_group_logic_tips": "Categories and tags are OR-ed: a book is visible if it matches either one. Filling only one side is enough.",
+    "allow_read_range_setting_tips": "This is the master switch for reader groups. When off, every reader-group rule is ignored — per-group category/tag limits, strict mode and the default range below all stop applying, and every signed-in user can see the whole library. Turn it off only to temporarily lift restrictions while troubleshooting. Guests can always only see books without categories and tags.",
+    "default_read_range_heading": "Default reading range for new users",
+    "default_read_range_hint": "Only affects users created afterwards. Existing users keep whatever was applied when their account was created."
   },
   "book": {
     "readingStats": {
@@ -1486,7 +1492,8 @@
     "booklists": "Booklists",
     "publicBooklists": "Public Booklists",
     "likedBooklists": "Liked Booklists",
-    "bookDedup": "Duplicate Cleanup"
+    "bookDedup": "Duplicate Cleanup",
+    "authorNorm": "Author Normalization"
   },
   "language": {
     "zh": "简体中文",
@@ -2589,5 +2596,51 @@
     "failedHint": "Failed groups were left untouched. See [DEDUP] lines in the container log (docker logs).",
     "scanFailed": "Scan failed, please check the log",
     "applyFailed": "Merge failed, please check the log"
+  },
+  "authorNorm": {
+    "title": "Author Normalization",
+    "close": "Close",
+    "intro": "Unify different spellings of the same author (simplified/traditional, nationality prefix, punctuation) into one standard name, so one author is not split into multiple folders.",
+    "intro2": "This page only maintains rules and shows reports — it never modifies books. Use Author Cleanup for existing books; newly imported books apply rules automatically.",
+    "tabScan": "Author Scan",
+    "tabAlias": "Alias Table",
+    "scanBtn": "Run Scan",
+    "scanning": "Scanning…",
+    "scanHint": "Read-only report. Scans all author entries and clusters them by normalized key.",
+    "summary": "{total} entries · {dup} exact duplicates · {sus} suspects · {dirty} dirty names",
+    "duplicates": "Exact duplicates ({n})",
+    "suspects": "Suspected duplicates ({n})",
+    "suspectsHint": "These names have different keys but one contains the other — possibly the same person. Confirm before adding a rule.",
+    "maybeSame": "Possibly the same person:",
+    "canonicalIs": "Canonical name:",
+    "booksCount": "{n} books",
+    "addAliasRule": "Add to alias table",
+    "ruleStaged": "Rule staged: {name} (remember to save)",
+    "dirty": "Dirty names ({n})",
+    "dirtyHint": "Names that L1 cleaning would change (strip nationality prefix / duty suffix). New imports already use the clean form.",
+    "dirtyFooter": "For existing dirty names use Author Cleanup; the alias table cannot fix what is already in the library.",
+    "colDirtyName": "Current",
+    "colCleanName": "Cleaned",
+    "colBooks": "Books",
+    "colStandard": "Canonical name",
+    "colNote": "Note",
+    "allClean": "No issues found",
+    "allCleanHint": "All author entries are clean. Nothing to do.",
+    "scanFailed": "Scan failed",
+    "saveBtn": "Save alias table",
+    "newRule": "New rule",
+    "ruleCount": "{n} rules",
+    "aliasHint": "The canonical name is the spelling you want; aliases are other spellings that get merged into it. Simplified/traditional conversion is automatic. Takes effect immediately after saving.",
+    "aliasPlaceholder": "Type an alias and press Enter",
+    "saveTitle": "Save alias table",
+    "saveConfirm": "About to save {n} rules, overwriting the existing alias table. Continue?",
+    "savedTitle": "Saved",
+    "saveFailed": "Save failed",
+    "testTitle": "Normalization preview",
+    "testPlaceholder": "Try an author name, e.g. (法)J·k·羅琳",
+    "testBtn": "Test",
+    "testNoHit": "No rule hit; returns L1-cleaned value",
+    "testTranslators": "Translators detected",
+    "testFailed": "Test failed"
   }
 }

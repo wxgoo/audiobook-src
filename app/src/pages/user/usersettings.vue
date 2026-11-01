@@ -256,8 +256,8 @@
             $t("user.device_mgt_description")
           }}</v-card-subtitle>
 
-          <template v-for="(device, idx) in userDevices" :key="'udev-' + idx">
-            <div class="device-item mb-3">
+          <template v-for="(device, idx) in userDevices">
+            <div :key="'udev-' + idx" class="device-item mb-3">
               <v-row>
                 <v-col class="py-1" cols="3">
                   <v-text-field

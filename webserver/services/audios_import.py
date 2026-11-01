@@ -15,6 +15,8 @@ from webserver.models import ScanFile, Item
 from webserver.services import AsyncService
 from webserver.services.background_service import BackgroundService, BackgroundTask
 from webserver.services.scan_service import ScanService
+from webserver.base.meta_helper import guess_authors
+from webserver.base.author_norm import resolve_alias  # 4.6.0-9 作者归一化
 
 CONF = loader.get_settings()
 
@@ -367,6 +369,16 @@ class AudioBookImporter(AsyncService):
                 author = _("佚名")
             title = utils.super_strip(title) if title else dir_name
             author = utils.super_strip(author) if author else _("佚名")
+            # 4.6.0-9：有声书是作者名最脏的来源——ID3 的 artist 字段里
+            # 常见 "某某听书"、"酷我音乐"、多歌手用逗号连写、带国籍前缀等。
+            # 这里做两步：先 L1 清洗（去前缀后缀、拆多人后取第一个），
+            # 再查别名表统一到标准名。有声书固定用单作者，不拆多人。
+            # 清洗结果为空时回退原文，避免把有作者的书标成"佚名"。
+            # ⚠️ 不能用 "_" 接收译者列表：本模块的 "_" 是 i18n 函数，
+            # 覆盖后后面所有 _("...") 都会崩。
+            _cleaned, _cleaned_trans = guess_authors([author])
+            author = _cleaned[0] if _cleaned else author
+            author = resolve_alias(author) or author
 
             cover_path = _find_cover(dir_path)
             has_cover = cover_path is not None

@@ -1,9 +1,10 @@
 <template>
     <div>
         <div class="d-flex align-center">
-            <template v-for="(part, idx) in parts" :key="'part-' + idx">
-                <span v-if="idx > 0" class="mx-1 text-h6 grey--text">.</span>
+            <template v-for="(part, idx) in parts">
+                <span v-if="idx > 0" :key="'sep' + idx" class="mx-1 text-h6 grey--text">.</span>
                 <v-text-field
+                    :key="'input' + idx"
                     :ref="'input' + idx"
                     :value="part"
                     :label="$t('folder.level', { n: idx + 1 })"

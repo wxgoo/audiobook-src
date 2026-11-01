@@ -298,8 +298,6 @@
       "extractCatalogAllConfirm": "将遍历所有书籍提取目录信息（已有目录信息的书籍将被跳过）。这个操作可能需要较长时间，确认继续？",
       "clearRareTagsConfirm": "会将少于3本书的标签所对应的书籍重新更新标签。此操作可能需要一些时间，确认继续？",
       "deleteSelected": "删除选中图书",
-      "cancelTask": "取消任务",
-      "cancelTaskConfirm": "确定要取消当前任务吗？已处理的书籍会保留。",
       "selectedCount": "已选中 {count} 条",
       "exchangeType": "图书类型互转",
       "exchangeTypeConfirm": "会将所选电子书的图书类型进行切换，电子书转为实体书，实体书则转为电子书。如当前无有效ISBN或已有电子书格式的文件，则忽略。",
@@ -374,7 +372,12 @@
         "comments": "简介",
         "actions": "操作",
         "series": "丛书"
-      }
+      },
+      "cancelTask": "取消任务",
+      "cancelTaskConfirm": "确定要取消当前任务吗？已处理的书籍会保留。",
+      "authorLockedTip": "作者已锁定：自动刮削不会覆盖作者。点击解锁",
+      "lockAfterSave": "保存后锁定作者（自动刮削不再覆盖）",
+      "lockAfterSaveHint": "刚改好的作者名不会再被刮削改回去。点行内的小锁图标可随时解锁。"
     },
     "users": {
       "title": "用户管理",
@@ -574,7 +577,6 @@
     "convertToAudioNote": "将使用EPUB文件进行有声书转换，需要花费一段时间，请耐心等待。",
     "audioGenerated": "开始转换，请稍后刷新页面查看",
     "audioList": "有声书音频列表",
-    "audioResumeAt": "上次听到",
     "conversionFailed": "前一次转换失败:",
     "audioFilesDeleted": "音频文件已删除",
     "setCover": "设置封面",
@@ -779,7 +781,8 @@
     "uploadFailedNetwork": "网络错误",
     "ext_link": "图书链接",
     "translators": "译者",
-    "soledBooks": "私藏书籍,其他人不可见"
+    "soledBooks": "私藏书籍,其他人不可见",
+    "audioResumeAt": "上次听到"
   },
   "reader": {
     "tip": {
@@ -953,7 +956,7 @@
     "allow_guest_register": "允许访客以邮箱注册账号",
     "allow_new_user_manage_book": "新注册用户默认启用书籍管理权限，包括上传、编辑、删除、下载。",
     "allow_new_user_push_book": "新注册用户默认启用推送到阅读设备权限",
-    "allow_read_range_setting": "开启用户的阅读范围控制（限制用户可见或不可见的分类或标签, 访客仅能查看未设置分类及标签的书）",
+    "allow_read_range_setting": "启用阅读范围控制（总开关）",
     "default_read_range": "设置新用户的默认阅读范围",
     "default_read_range_dialog_title": "设置新用户默认阅读范围",
     "default_read_range_all": "默认阅读范围：全部可见",
@@ -1257,7 +1260,10 @@
     ],
     "reader_group_orphan_title": "成员指向已删除的组（这些人当前读不到任何书）",
     "reader_group_orphan_tips": "把这些人重新分配到现有组即可恢复；或删除他们的组归属。",
-    "reader_group_logic_tips": "分类与标签是「或」的关系：只需命中其中之一即可看到该书。只填一边就够，不必两边都选。"
+    "reader_group_logic_tips": "分类与标签是「或」的关系：只需命中其中之一即可看到该书。只填一边就够，不必两边都选。",
+    "allow_read_range_setting_tips": "这是读者组的总开关。关闭时所有读者组规则一律不生效，包括下方按组配置的分类/标签限制、严格模式与默认范围——所有登录用户都能看到全库。只想临时放开权限做排查时关掉即可，不用改任何组配置。访客始终只能看到未设置分类和标签的书。",
+    "default_read_range_heading": "新用户默认阅读范围",
+    "default_read_range_hint": "只影响之后新注册的用户；已有用户不受影响，因为他们已经按创建时的默认值落库了。"
   },
   "user": {
     "avatar": "头像",
@@ -1491,7 +1497,8 @@
     "booklists": "阅读书单",
     "publicBooklists": "公共书单",
     "likedBooklists": "收藏书单",
-    "bookDedup": "重复书清理"
+    "bookDedup": "重复书清理",
+    "authorNorm": "作者归一化"
   },
   "language": {
     "zh": "简体中文",
@@ -2203,18 +2210,6 @@
     "title": "Mimo-TTS 有声书",
     "close": "关闭",
     "hint": "通过 TTS API 将书籍合成为有声书（WAV格式），支持 MiMo Chat / OpenAI TTS 等兼容接口。目前仅支持 EPUB 格式，生成后可在书籍详情页在线播放。",
-    "helpTitle": "使用说明（点开查看）",
-    "helpIntro": "本工具把 EPUB 电子书逐段发送给 TTS 接口合成语音，再拼成整本有声书。接口地址、认证方式和密钥都需自行填写，服务器不会代为申请。",
-    "helpApiType": "① API 类型怎么选",
-    "helpApiChat": "MiMo TTS：小米 MiMo 官方接口，地址固定 https://api.xiaomimimo.com/v1/chat/completions，模型固定，认证方式选 api-key。",
-    "helpApiSpeech": "OpenAI TTS：任何兼容 /v1/audio/speech 的服务（OpenAI 官方、第三方中转、本地 GPT-SoVITS 等），认证方式一般选 Bearer。",
-    "helpApiCustom": "自定义：手工填写完整请求地址，适配其他自建服务；地址必须能被本服务器访问到。",
-    "helpAuth": "② 认证方式怎么选",
-    "helpAuthApiKey": "api-key：请求头为 api-key: 你的密钥，MiMo 官方接口用这个。",
-    "helpAuthBearer": "Bearer：请求头为 Authorization: Bearer 你的密钥，OpenAI 及大多数中转服务用这个。选错会返回 401/403。",
-    "helpKey": "③ 密钥从哪来：登录对应服务商控制台自行创建（如 MiMo 开放平台、OpenAI API Keys 页面），本工具不提供也不需要你的账号密码。",
-    "helpSave": "④ 填写后记得点下方「保存配置」，密钥会加密存放于服务器本地，下次进入自动回填；换浏览器或清除缓存后需重新填写。",
-    "searchBtn": "搜索",
     "selectBook": "选择书籍",
     "apiType": "API 类型",
     "apiTypeChat": "MiMo TTS",
@@ -2285,7 +2280,19 @@
     "statusCompleted": "已完成",
     "noResults": "未找到相关书籍",
     "noEpub": "所选书籍没有 EPUB 格式",
-    "audioOpen": "打开有声书"
+    "audioOpen": "打开有声书",
+    "helpTitle": "使用说明（点开查看）",
+    "helpIntro": "本工具把 EPUB 电子书逐段发送给 TTS 接口合成语音，再拼成整本有声书。接口地址、认证方式和密钥都需自行填写，服务器不会代为申请。",
+    "helpApiType": "① API 类型怎么选",
+    "helpApiChat": "MiMo TTS：小米 MiMo 官方接口，地址固定 https://api.xiaomimimo.com/v1/chat/completions，模型固定，认证方式选 api-key。",
+    "helpApiSpeech": "OpenAI TTS：任何兼容 /v1/audio/speech 的服务（OpenAI 官方、第三方中转、本地 GPT-SoVITS 等），认证方式一般选 Bearer。",
+    "helpApiCustom": "自定义：手工填写完整请求地址，适配其他自建服务；地址必须能被本服务器访问到。",
+    "helpAuth": "② 认证方式怎么选",
+    "helpAuthApiKey": "api-key：请求头为 api-key: 你的密钥，MiMo 官方接口用这个。",
+    "helpAuthBearer": "Bearer：请求头为 Authorization: Bearer 你的密钥，OpenAI 及大多数中转服务用这个。选错会返回 401/403。",
+    "helpKey": "③ 密钥从哪来：登录对应服务商控制台自行创建（如 MiMo 开放平台、OpenAI API Keys 页面），本工具不提供也不需要你的账号密码。",
+    "helpSave": "④ 填写后记得点下方「保存配置」，密钥会加密存放于服务器本地，下次进入自动回填；换浏览器或清除缓存后需重新填写。",
+    "searchBtn": "搜索"
   },
   "textReplace": {
     "title": "正文查找替换",
@@ -2606,5 +2613,51 @@
     "failedHint": "失败的组未做任何改动，详见容器日志（docker logs）中的 [DEDUP] 行。",
     "scanFailed": "扫描失败，请查看日志",
     "applyFailed": "合并失败，请查看日志"
+  },
+  "authorNorm": {
+    "title": "作者归一化",
+    "close": "关闭",
+    "intro": "把同一作者的不同写法（简繁、国籍前缀、标点差异）统一到标准名，避免同一人被拆进多个目录。",
+    "intro2": "这里只维护规则与查看报告，不改书。改存量书请用「作者清理」；新入库的书会自动套用规则。",
+    "tabScan": "作者体检",
+    "tabAlias": "别名表",
+    "scanBtn": "体检扫描",
+    "scanning": "扫描中…",
+    "scanHint": "只读报告，不会改任何数据。扫描全部作者条目并按归一化键聚类。",
+    "summary": "共 {total} 个条目 · 确定重复 {dup} 组 · 疑似 {sus} 组 · 脏名 {dirty} 个",
+    "duplicates": "确定重复（{n} 组）",
+    "suspects": "疑似重复（{n} 组）",
+    "suspectsHint": "这些名字归一化键不同，但一个包含另一个，可能是同一人。确认后再加规则。",
+    "maybeSame": "可能是同一人：",
+    "canonicalIs": "标准名：",
+    "booksCount": "{n} 本",
+    "addAliasRule": "加入别名表",
+    "ruleStaged": "已加入待保存规则：{name}（记得点保存）",
+    "dirty": "脏名候选（{n} 个）",
+    "dirtyHint": "清洗后名字会发生变化（去国籍前缀/职责后缀）。新入库的书已自动使用干净写法。",
+    "dirtyFooter": "存量的脏名字请用「作者清理」逐个替换；别名表管不了已经写进库里的旧数据。",
+    "colDirtyName": "当前写法",
+    "colCleanName": "清洗后",
+    "colBooks": "书本数",
+    "colStandard": "标准名",
+    "colNote": "备注",
+    "allClean": "没发现问题",
+    "allCleanHint": "所有作者条目都是干净的，不需要任何处理。",
+    "scanFailed": "体检扫描失败",
+    "saveBtn": "保存别名表",
+    "newRule": "新增规则",
+    "ruleCount": "共 {n} 条规则",
+    "aliasHint": "标准名保留你希望的写法；别名是会被归并的其他写法。支持繁简自动归一。保存后立即生效，无需重启。",
+    "aliasPlaceholder": "输入别名后回车",
+    "saveTitle": "保存别名表",
+    "saveConfirm": "即将保存 {n} 条规则，覆盖现有别名表。确认？",
+    "savedTitle": "已保存",
+    "saveFailed": "保存失败",
+    "testTitle": "归一化预览",
+    "testPlaceholder": "输入一个作者名试试，如 (法)J·k·羅琳",
+    "testBtn": "测试",
+    "testNoHit": "未命中规则，按 L1 清洗返回",
+    "testTranslators": "识别出译者",
+    "testFailed": "测试失败"
   }
 }

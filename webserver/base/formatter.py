@@ -11,6 +11,7 @@ from webserver.constants import CALIBRE_COLUMN_TRANSLATORS
 from webserver.constants import BOOK_TYPE_EBOOK, CALIBRE_COLUMN_DYNAMIC_COVER
 from webserver.constants import CALIBRE_COLUMN_LOCATION, BOOK_TYPE_PHYSICAL
 from webserver.constants import CALIBRE_COLUMN_CATALOG
+from webserver.constants import CALIBRE_COLUMN_AUTHOR_LOCKED
 
 CONF = get_settings()
 
@@ -62,6 +63,8 @@ class SimpleBookFormatter:
         ext_link = self.val(CALIBRE_COLUMN_EXT_LINK, '').strip()
         location = self.val(CALIBRE_COLUMN_LOCATION, '').strip() if book_type == BOOK_TYPE_PHYSICAL else ""
         dynamic_cover = self.val(CALIBRE_COLUMN_DYNAMIC_COVER, 0)
+        # 4.6.0-9：作者锁定标记，管理端书籍列表显示锁图标用
+        author_locked = self.val(CALIBRE_COLUMN_AUTHOR_LOCKED, 0)
         comments = self.val("comments", _("暂无简介")) if include_comments else ""
         translators = self.val(CALIBRE_COLUMN_TRANSLATORS, "")
         catalog = self.val(CALIBRE_COLUMN_CATALOG, "") if include_comments else ""
@@ -103,6 +106,7 @@ class SimpleBookFormatter:
             'files': self.get_files(),
             'dynamic_cover': dynamic_cover,
             'location': location,
+            'author_locked': bool(author_locked),
         }
 
 

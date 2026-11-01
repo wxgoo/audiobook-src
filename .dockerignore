@@ -61,6 +61,12 @@ document/
 # ---- 音频/书籍等用户数据（如果被误放在项目里）----
 data/
 
+# ---- 运行时数据（容器内自己生成；带进构建上下文会拖慢 layer 并污染镜像）----
+cache
+sync
+books
+audio
+
 # ---- 前端专用的大体积第三方库（镜像内既不需要也用不到）----
 # epub.js 仅前端打包用；epubreader-js 已在前端 public/static 里有副本
 third-party/epubreader-js/

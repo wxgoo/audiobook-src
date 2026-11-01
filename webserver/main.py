@@ -36,7 +36,7 @@ from webserver.services.resource_service import ResourceService
 from webserver.recommend import CalibreFeatureSource, RecommendConfig, RecommendService, SqlCrowdSource, SqlProfileSource
 from webserver.constants import COLUMN_CATEGORY, COLUMN_FOLDER, COLUMN_PHY_COUNT, COLUMN_BOOK_TYPE, COLUMN_TRANSLATORS
 from webserver.constants import COLUMN_EXT_LINK, CUSTOM_COVER_IMAGE, COLUMN_DYNAMIC_COVER
-from webserver.constants import COLUMN_LOCATION, COLUMN_CATALOG
+from webserver.constants import COLUMN_LOCATION, COLUMN_CATALOG, COLUMN_AUTHOR_LOCKED
 from webserver.version import VERSION
 
 CONF = loader.get_settings()
@@ -372,6 +372,9 @@ def make_app():
         _ = add_meta_in_calibre(cache, COLUMN_DYNAMIC_COVER, "Dynamic Cover", "int")
         added_translator = add_meta_in_calibre(cache, COLUMN_TRANSLATORS, "Translator", "text")
         added_catalog = add_meta_in_calibre(cache, COLUMN_CATALOG, "Catalog", "comments")
+        # 作者锁定：用户在界面上手动改过作者的书，自动刮削不再覆盖作者字段。
+        # 放在最后，避免影响上面几个列的历史返回值判断。
+        add_meta_in_calibre(cache, COLUMN_AUTHOR_LOCKED, "Author Locked", "int")
         if added_source or added_category or added_phy_count or added_location or added_translator or added_catalog:
             need_sync_item_to_calibre = added_source or added_category or added_phy_count
             book_db = LibraryDatabase(os.path.expanduser(options.with_library))
@@ -459,12 +462,12 @@ def make_app():
     # WebDAV must come before files.routes() because files has a catch-all (r"/(.*)")
     # We need to get routes from handlers module without files, add webdav, then add files
     import importlib
-    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "reader_group", "transcribe", "book_dedup"]
+    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "reader_group", "transcribe", "book_dedup", "author_norm"]
     mods = {}
     for name in names:
         with substep("import_handler:" + name):
             mods[name] = importlib.import_module("webserver.handlers." + name)
-    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, reader_group, transcribe, book_dedup = (mods[n] for n in names)
+    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, reader_group, transcribe, book_dedup, author_norm = (mods[n] for n in names)
 
     app_routes = []
     app_routes += social_routes.SOCIAL_AUTH_ROUTES
@@ -491,6 +494,8 @@ def make_app():
     app_routes += reader_group.routes()
     app_routes += transcribe.routes()
     app_routes += book_dedup.routes()
+    # 4.6.0-9 作者归一化管理接口（体检/别名表/预览/锁定）
+    app_routes += author_norm.routes()
     app_routes += koreader.routes()
 
     # Podcast routes are always registered; each handler calls check_podcast_enabled()

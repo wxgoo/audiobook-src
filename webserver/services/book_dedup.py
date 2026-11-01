@@ -217,6 +217,29 @@ class DuplicateBookMerger(object):
 
         title = briefs[0]["title"] if briefs else key
 
+        # 4.6.0-9：作者冲突检查。分组只按书名，同名不同作者的书也会聚到一起；
+        # 原逻辑只看「电子书/音频分布」，一本《人生》路遥的电子书 + 一本《人生》
+        # 某网络作者的音频，方向"明确"（1 电子书 + 有音频），会被误合并。
+        # 现在要求：每本有音频的书与电子书那本的作者**归一化后必须相交**，
+        # 否则整组跳过。作者解析不出（佚名/脏名）时不冲突，维持原有判定。
+        from webserver.base.author_norm import authors_conflict
+
+        if with_ebook:
+            ebook_authors = with_ebook[0]["authors"]
+            for b in with_audio:
+                if b["book_id"] == with_ebook[0]["book_id"]:
+                    continue
+                if authors_conflict(ebook_authors, b["authors"]):
+                    return {
+                        "key": key,
+                        "title": title,
+                        "books": briefs,
+                        "action": "skipped",
+                        "reason": "作者不同（%s vs %s），不是重复书，请人工确认"
+                                  % ("、".join(ebook_authors) or "佚名",
+                                     "、".join(b["authors"]) or "佚名"),
+                    }
+
         # 方向明确才动手：恰好一本有电子书，且存在有音频的记录
         if len(with_ebook) == 1 and with_audio:
             keep = with_ebook[0]

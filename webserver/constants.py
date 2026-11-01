@@ -64,6 +64,12 @@ CALIBRE_COLUMN_TRANSLATORS = "#translators"
 COLUMN_CATALOG = "catalog"
 CALIBRE_COLUMN_CATALOG = "#catalog"
 
+# 作者已锁定：1 = 用户在界面上手动改过作者，后续自动刮削不再覆盖作者字段
+# （其他字段如封面、简介、标签仍会正常更新）
+# 见 webserver/base/author_norm.py 的 lock_author / is_author_locked
+COLUMN_AUTHOR_LOCKED = "author_locked"
+CALIBRE_COLUMN_AUTHOR_LOCKED = "#author_locked"
+
 # Audio related constants
 ENABLE_VIP_QUOTA_KEY = "ENABLE_VIP_QUOTA"
 ENABLE_AUDIO_CONVERSION_LOG = "ENABLE_AUDIO_CONVERSION_LOG"

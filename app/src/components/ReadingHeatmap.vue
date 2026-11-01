@@ -14,7 +14,7 @@
             :style="{ gridColumnStart: marker.col + 1, fontSize: labelFontSize }"
         >{{ marker.label }}</span>
 
-        <template v-for="(week, wi) in weeksGrid" :key="'week-' + wi">
+        <template v-for="(week, wi) in weeksGrid">
             <v-tooltip v-for="(day, di) in week" :key="`${wi}-${di}`" top :disabled="!day">
                 <template #activator="{ on, attrs }">
                     <div
