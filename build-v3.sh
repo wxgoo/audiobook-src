@@ -120,8 +120,28 @@ if [ -n "$MYREADER_TGZ" ]; then
     mkdir -p "$TREE/myreader-dist"
     tar -xzf "$MYREADER_TGZ" -C "$TREE/myreader-dist" --strip-components=1
     ok "myreader-dist 已用外部包替换"
+    else
+        ok "myreader-dist 沿用基准包（$(find "$TREE/myreader-dist" \( -type f -o -type l \) | wc -l) 条）"
+fi
+
+# ---------------------------------------------------------------------------
+say "[3.5] 替换预构建 dist（源码树的新 dist 优先于基准包的旧 dist）"
+# 为什么必须替换：-9 改了前端（作者归一化菜单/页面、书籍列表锁图标），
+# 基准包的 dist 编译于这些改动之前。沿用旧 dist 会导致"源码里全都在、
+# 界面上什么都看不见"。dist 必须和 src 同源编译。
+if [ -f "$SRC/app/dist/index.html" ] && [ -f "$SRC/app/dist/200.html" ] \
+   && [ -d "$SRC/app/dist/_nuxt" ]; then
+    # 校验新 dist 的两个硬指标
+    grep -rq "kindle_sender" "$SRC"/app/dist/_nuxt/*.js \
+        || bad "源码树 dist 缺详情页 chunk（kindle_sender）—— 先跑 npm run build-spa"
+    grep -rq "author_norm" "$SRC"/app/dist/_nuxt/*.js \
+        || bad "源码树 dist 缺归一化 chunk（author_norm）—— AppHeader 菜单没编进去？"
+    rm -rf "$TREE/app/dist"
+    cp -a "$SRC/app/dist" "$TREE/app/dist"
+    N_DIST=$(find "$TREE/app/dist" -type f | wc -l)
+    ok "dist 已替换为源码树版本（$N_DIST 个文件）"
 else
-    ok "myreader-dist 沿用基准包（$(find "$TREE/myreader-dist" \( -type f -o -type l \) | wc -l) 条）"
+    echo "  ! 源码树没有 dist，沿用基准包的旧 dist（归一化菜单将不可见！）"
 fi
 
 # ---------------------------------------------------------------------------

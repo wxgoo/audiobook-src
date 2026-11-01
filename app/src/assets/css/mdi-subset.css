@@ -42,6 +42,10 @@
   content: "\F1370";
 }
 
+.mdi-account-convert-outline::before {
+  content: "\F1301";
+}
+
 .mdi-account-eye-outline::before {
   content: "\F127B";
 }
@@ -68,6 +72,10 @@
 
 .mdi-account-plus::before {
   content: "\F0014";
+}
+
+.mdi-account-plus-outline::before {
+  content: "\F0801";
 }
 
 .mdi-account-remove::before {
@@ -642,6 +650,10 @@
   content: "\F023D";
 }
 
+.mdi-flask::before {
+  content: "\F0093";
+}
+
 .mdi-folder::before {
   content: "\F024B";
 }
@@ -724,6 +736,14 @@
 
 .mdi-heart-outline::before {
   content: "\F02D5";
+}
+
+.mdi-help-circle::before {
+  content: "\F02D7";
+}
+
+.mdi-help-circle-outline::before {
+  content: "\F0625";
 }
 
 .mdi-help-rhombus-outline::before {
@@ -1076,6 +1096,10 @@
 
 .mdi-shield-key::before {
   content: "\F0BC4";
+}
+
+.mdi-shield-lock-outline::before {
+  content: "\F0CCC";
 }
 
 .mdi-shuffle::before {
