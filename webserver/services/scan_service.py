@@ -60,6 +60,7 @@ from webserver.base.epub_helper import EpubHelper
 from webserver.base.image_helper import ImageHelper
 from webserver.base.image_generator import ImageGenerator
 from webserver.base.meta_helper import guess_authors, guess_tags
+from webserver.base.author_norm import resolve_author_list
 from webserver.services import AsyncService
 from webserver.models import Item, ScanFile, Reader, ScanDirSnapshot
 from webserver import utils, constants
@@ -1356,7 +1357,10 @@ class ScanService(AsyncService):
                     _authors, _translators = guess_authors(mi.authors)
                 else:
                     _authors, _translators = guess_authors([utils.super_strip(mi.author_sort)])
-                mi.authors = _authors
+                # 4.6.0-9：扫描目录导入是第四个脏来源（内嵌元数据）。
+                # 先过 L1 清洗（guess_authors），再过别名表统一到标准名。
+                # 别名表没命中时 resolve_author_list 原样返回，不会丢作者。
+                mi.authors = resolve_author_list(_authors) or _authors
                 logging.info("[IMPORT] Metadata read [%.3fs]: %s", time.time() - start_time, repr(mi.title))
             except Exception as e:
                 logging.error("[IMPORT] Error reading metadata from %s: %s", fpath, e)
