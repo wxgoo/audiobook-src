@@ -59,9 +59,19 @@ RUN npm ci --no-fund --no-audit --loglevel=error \
 
 # spa build mode will clear ssr build data, run it first
 COPY app/ /build/
-RUN mkdir -p /app-static/ && \
-    npm run build-spa && \
-    cp -r dist nuxt.config.js package* /app-static/
+# 【v2 新增】若部署包里已带预构建 dist（merge 脚本注入 app/dist/），直接采用，
+# 跳过 NAS 现场构建 —— 消除"同一份源码，NAS 构建产物异常"这个变量。
+# dist 由打包机在同一份源码上跑 npm ci + npm run build-spa 产出并逐项校验。
+RUN if [ -f /build/dist/index.html ] && [ -f /build/dist/200.html ]; then \
+        echo "==> 检测到预构建 dist，跳过现场 build-spa"; \
+        mkdir -p /app-static/ && cp -r /build/dist /app-static/dist && \
+        cp /build/nuxt.config.js /build/package.json /app-static/ 2>/dev/null || true; \
+        cp /build/package-lock.json /app-static/ 2>/dev/null || true; \
+    else \
+        echo "==> 无预构建 dist，现场执行 npm run build-spa"; \
+        mkdir -p /app-static/ && npm run build-spa && \
+        cp -r dist nuxt.config.js package* /app-static/; \
+    fi
 
 # ----------------------------------------
 # 第二阶段，构建环境（基于预构建的基础镜像，含系统包、python依赖及calibre补丁）

@@ -9,6 +9,8 @@
 app/node_modules
 app/.nuxt
 app/dist
+!app/dist
+!app/dist/**
 app/.env
 **/node_modules
 **/.nuxt
