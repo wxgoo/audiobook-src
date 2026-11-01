@@ -314,6 +314,36 @@ if authors_conflict(ebook_authors, b["authors"]):
 > 归并原则：**同一个问题只留一份文档**。`START_HERE.md` 是总纲，遇到具体问题往下翻；
 > 逐步操作看 `NAS操作手册.md`；`如何执行.md` 与之重复，删。
 
+### 追加：繁体 epub 打开慢 — 坏字体剥离（4.6.0-9 第三批，v9 包）
+
+> 完整排查与测试记录见 `坏字体修复-4.6.0-9-归档.md`。
+
+**问题**：一本 3.11MB 的繁体 epub 打开要 50-60 秒，console 报
+`OTS parsing error: invalid sfntVersion: 1179602516`（= ASCII `FONT`）。
+calibre 从 PDF 转 epub 时把带子集加密的字体原样搬进包里，这种以 `FONT`
+魔数开头的伪字体不是合法 sfnt，浏览器一律拒绝加载；数据本体是加密的，
+**无法还原，只能删**。实测该书 4 个坏字体占全书体积 **52.4%**。
+
+**修复（三件套，共用 `webserver/services/epub_font_fix.py`）**：
+
+| 链路 | 文件 | 时机 |
+|---|---|---|
+| B 新书转换 | `services/converter.py` + `batch_convert.py` | 转换出包后就地清理 |
+| A 旧书下载 | `handlers/book.py`（`epub_lite_path` + 负缓存） | 首次下载生成精简副本，缓存在 `CACHE_DIR/epub-lite/` |
+| C 存量清扫 | `tools/fix_broken_fonts.py`（命令行） | dry-run / --apply / -r / --json |
+
+另有阅读器侧兜底（`static_files.py`：坏字体 404 + no-store，CSS 动态剥离坏 `@font-face`）。
+
+**效果**：样本 3.11MB → 1.65MB（省 46.9%），正文逐字一致；
+用户实测打开从 50-60 秒降到 **1.15 秒**（`[open-perf] total=1155ms`）。
+
+**踩坑记录**：`mkstemp` 产生的 0600 权限会经 `shutil.move` 带进书库导致
+calibre/nginx 读不到——替换前必须恢复原文件的 mode/uid/gid/mtime。
+
+**部署**：用 **v9 包** `audiobook-deploy-4.6.0-9-v9.tar.gz`
+（md5 `ef924442b42b7fbf631a0284b149469d`）。v8 缺这批改动，勿用。
+白名单 `build/patch-files-v3.txt` 已补 4 条。
+
 ---
 
 ## 4.6.0-8（待发布）
@@ -634,15 +664,3 @@ if authors_conflict(ebook_authors, b["authors"]):
 | 4.6.0-3 | 设置页保存优化 | |
 | 4.6.0-2 | 读者组 KeyError 修复 | 未单独出成品包 |
 | 4.6.0-1 | 全部定制基线（原 v4.8.2/v4.8.3） | |
-
-## 2026-11-01 事故记录：4.6.0-9 详情页空白，已回滚 4.6.0-8
-
-- 现象：-9 部署后所有书籍详情页（/book/<id>）空白，书架正常。
-- 排查结论：-9 前端源码本身无罪（本地同源码构建 + 桩后端实测正常），
-  问题出在 -9 包的构建产物/构建环境；且 -9 发布包的 myreader-dist
-  一度缺 1359 文件 + 0700 权限（已另行修复）。
-- 另：用户 NAS 上的 audiobook-deploy-4.6.0-8.tar.gz（248MB，3398 条目/
-  1958 node_modules）才是完整包；工作区里 94MB 的 -8 包是残缺产物，
-  不可用于回滚。
-- 处置：rollback-to-8.sh 一键回滚成功，详情页恢复正常。
-- 后续：若要重上 -9，须以 248MB 的 -8 包为基准重新出包，勿复用 -9 产物。
