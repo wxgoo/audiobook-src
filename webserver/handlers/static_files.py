@@ -10,6 +10,7 @@ import os
 import random
 import re
 import time
+import unicodedata
 import urllib
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -333,6 +334,54 @@ class ProgressHandler(BaseHandler):
 
 
 class EpubReader(BaseHandler):
+    @staticmethod
+    def _zip_find(zf, path):
+        """把 HTTP 请求路径匹配到 zip 条目，容错三类真实世界的坏 epub：
+
+        1. 大小写不一致（旧版已有）；
+        2. Unicode 归一化不一致：macOS 压制的 epub 文件名是 NFD 分解形式，
+           而 OPF/浏览器请求是 NFC；
+        3. zip 条目缺 UTF-8 标志（0x800）：中文 Windows 工具压出的 epub 文件名
+           是 GBK 字节，Python zipfile 按规范误读成 CP437 乱码，请求名永远
+           对不上 → 正文文字正常、插图全部 404 裂图（4.6.0-9 用户实测复现）。
+
+        返回 namelist 中的原条目名；找不到返回 None。
+        """
+        names = zf.namelist()
+        if path in names:
+            return path
+        low = path.lower()
+        for n in names:
+            if n.lower() == low:
+                return n
+
+        def variants(s):
+            out = {s, unicodedata.normalize("NFC", s), unicodedata.normalize("NFD", s)}
+            try:
+                raw = s.encode("cp437")  # 尝试还原被 CP437 误读的原始字节
+            except UnicodeError:
+                raw = None
+            if raw:
+                for enc in ("utf-8", "gbk", "big5"):
+                    try:
+                        d = raw.decode(enc)
+                    except UnicodeDecodeError:
+                        continue
+                    out.add(d)
+                    out.add(unicodedata.normalize("NFC", d))
+                    out.add(unicodedata.normalize("NFD", d))
+            return out
+
+        table = {}
+        for n in names:
+            for v in variants(n):
+                table.setdefault(v, n)
+        want = variants(path)
+        for v in want:
+            if v in table:
+                return table[v]
+        return None
+
     def get(self, bid, path):
         if not self.current_user and not BookAccessService.guest_read_allowed(self, bid):
             return self.redirect("/login")
@@ -351,14 +400,12 @@ class EpubReader(BaseHandler):
 
         with zipfile.ZipFile(fpath, 'r') as zf:
             if path not in zf.namelist():
-                # 有些epub文件里路径忽略了大小写
-                path_lower = path.lower()
-                for name in zf.namelist():
-                    if name.lower() == path_lower:
-                        path = name
-                        break
-                if path not in zf.namelist():
+                # 有些epub文件里路径忽略了大小写；还有 Unicode 归一化与 zip 编码问题，
+                # 见 _zip_find 的说明（4.6.0-9：中文文件名插图 404 裂图修复）
+                found = self._zip_find(zf, path)
+                if not found:
                     raise web.HTTPError(404)
+                path = found
 
             content_type = mimetypes.guess_type(path)[0]
             if content_type:

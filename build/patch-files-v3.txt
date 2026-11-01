@@ -43,3 +43,4 @@ Dockerfile
 docker-compose.yml
 upgrade.sh
 rollback-to-8.sh
+webserver/handlers/static_files.py
