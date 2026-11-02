@@ -151,17 +151,16 @@ conf 打进镜像，需重建生效（upgrade.sh / deploy.sh 均会做）；仓�
 
 ### 交付
 
-| 文件 | 大小 | md5 |
-|---|---|---|
-| `audiobook-deploy-4.6.0-10.tar.gz` | 198M | `4873e879889b018a3e28bd785b16e395` |
-| `audiobook-docs-scripts-4.6.0-10.tar.gz` | 74K | `4331cb8e082f2a09862cf294037fa0c8` |
+包与校验值不在正文里写死（每次回填都会改变包本身，自相矛盾）。
+定稿的 md5 见仓库外的交付说明 `上传说明.md`；脚本自检：
 
-> 包已做成**可复现**（`--sort=name --mtime=<最后提交时间>`、`gzip -n`）：同一份源码
-> 重出多少次 md5 都一样，所以上表这个值可以放心核。核不过就是包有问题或源码已改。
->
-> 同版本号早期副本一律作废。**先核对上表 md5，再核包内容**：
-> 解开后 `scripts/` 里 6 个 `.sh` + 1 个 `README.md`、`docs/` 里 3 个 `.md`、无任何 `archive/`，
-> 跑 `sh audiobook/scripts/pack.sh --check <包路径>` 应输出「✅ 校验通过」。
+```sh
+sh scripts/pack.sh --check /workspace/audiobook-deploy-4.6.0-10.tar.gz
+```
+
+包已做成**可复现**：`--sort=name --mtime=<最后一个提交时间>` 加 `gzip -n`，
+同一份源码重出多少次字节都一样。所以核 md5 是有意义的——
+对不上就是包坏了，或者源码在出包之后又改过。
 
 ---
 
