@@ -153,8 +153,8 @@ conf 打进镜像，需重建生效（upgrade.sh / deploy.sh 均会做）；仓�
 
 | 文件 | 大小 | md5 |
 |---|---|---|
-| `audiobook-deploy-4.6.0-10.tar.gz` | 198M | `aeca37b7157b44bc4a84cabefa7e11c9` |
-| `audiobook-docs-scripts-4.6.0-10.tar.gz` | 74K | `970d359039e00e604867eb01060892c7` |
+| `audiobook-deploy-4.6.0-10.tar.gz` | 198M | `4873e879889b018a3e28bd785b16e395` |
+| `audiobook-docs-scripts-4.6.0-10.tar.gz` | 74K | `4331cb8e082f2a09862cf294037fa0c8` |
 
 > 包已做成**可复现**（`--sort=name --mtime=<最后提交时间>`、`gzip -n`）：同一份源码
 > 重出多少次 md5 都一样，所以上表这个值可以放心核。核不过就是包有问题或源码已改。
