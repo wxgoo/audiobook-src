@@ -41,22 +41,33 @@ if [ "${1:-}" = "--check" ]; then
         trap 'rm -rf "$T"' EXIT
         tar -xzf "$PKG" -C "$T" || { echo "!! 解压失败"; exit 1; }
         D="$T/audiobook"
-        [ -d "$D" ] || { echo "!! 包内没有 audiobook/ 顶层目录"; exit 1; }
+        [ -d "$D" ] || D="$T"      # 允许把已解开的目录打包后再验
+        [ -d "$D" ] || { echo "!! 包内没有 audiobook/ 或包根不是目录"; exit 1; }
 
         fail=0
+        # 该有的东西：少一样就起不来或没法升级
         for f in Dockerfile docker-compose.yml myreader-dist/app/server.js \
                  conf/supervisor/mybooks.conf conf/nginx/mybooks.conf \
-                 scripts/upgrade.sh scripts/deploy.sh tools/category_backfill.py; do
+                 scripts/upgrade.sh scripts/deploy.sh scripts/check-reader.sh \
+                 scripts/pack.sh tools/category_backfill.py; do
             [ -e "$D/$f" ] || { echo "  !! 缺 $f"; fail=1; }
         done
 
+        # 不该有的东西：归档、开发侧杂物
+        # 注意：app/node_modules 是要的 —— Dockerfile 里 COPY app/ /build/ 靠它走「已有产物」快路，
+        # 少了它镜像里没有 next，阅读器起不来。别当成杂物排掉。
+        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git; do
+            [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
+        done
+
+        # myreader-dist 必须完整：符号链接是相对路径，打包方式一变就全断
         valid=0; broken=0
         for l in $(find "$D/myreader-dist" -type l 2>/dev/null); do
             if [ -e "$l" ]; then valid=$((valid + 1)); else broken=$((broken + 1)); fi
         done
-        echo "  myreader-dist: $(find "$D/myreader-dist" \( -type f -o -type l \) | wc -l) 条, 有效链接 $valid, 断链 $broken"
+        n=$(find "$D/myreader-dist" \( -type f -o -type l \) 2>/dev/null | wc -l)
+        echo "  myreader-dist: $n 条, 有效链接 $valid, 断链 $broken"
 
-        # 断链超过 10 个就是打包方式坏了（正常残留是 8 个，见 deploy.sh 说明）
         if [ "$valid" -lt 100 ]; then
             echo "  !! 有效链接只有 $valid 个（应 ≥100）—— 多半被 --transform 改坏了，或解压压扁了"
             fail=1
@@ -66,17 +77,23 @@ if [ "${1:-}" = "--check" ]; then
             fail=1
         fi
 
+        # 数据目录：空的允许（可能是空壳），有文件就是误打包
         for d in books book data audios library upload imports sync cache logs; do
-            [ -e "$D/$d" ] && { echo "  !! 源码目录混入数据目录: $d"; fail=1; }
+            [ -e "$D/$d" ] || continue
+            if [ -z "$(find "$D/$d" -type f 2>/dev/null | head -1)" ]; then
+                echo "  - $d/ 是空目录"
+            else
+                echo "  !! 混入带数据的目录 $d（$(du -sh "$D/$d" | cut -f1)）"; fail=1
+            fi
         done
 
-        # 归档与开发侧杂物不该出现在部署包里
-        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src; do
-            [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
-        done
+        # 脚本与文档清单：包里只剩长期脚本，不能出现 8 个散脚本那套
+        echo "  脚本: $(cd "$D/scripts" 2>/dev/null && ls *.sh 2>/dev/null | tr '\n' ' ')"
+        echo "  文档: $(cd "$D/docs" 2>/dev/null && ls *.md 2>/dev/null | tr '\n' ' ')"
 
         [ "$fail" = "0" ] && echo "  ✅ 校验通过" || { echo "  ❌ 校验失败"; exit 1; }
     }
+
     echo "==> 校验 $PKG"
     verify
     exit 0
