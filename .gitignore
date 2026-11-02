@@ -60,3 +60,35 @@ node_modules/
 
 *.log
 
+
+# ============================================================
+# 例外：myreader-dist 是「构建产物」，不是源码。
+# 它必须完整入库，否则 git 里存的是一份跑不起来的残骸：
+# 阅读器启动即 Cannot find module 'next' → 9100 不监听 → /readerx 全 502。
+#
+# 上面几条通配规则（node_modules/ / media/ / *.mp3 / src/）本意是挡
+# 运行时数据和音频库，会连带把产物里的东西一起挡掉。这里逐条反解。
+# 必须放在文件最后：git 后出现的规则优先。
+#
+# 验证方式（改完 .gitignore 一定要跑）：
+#   git status --short --ignored myreader-dist    # 期望：无 !! 输出
+#   git ls-files myreader-dist | wc -l            # 期望：≈2700
+# ============================================================
+!myreader-dist/
+!myreader-dist/**
+!myreader-dist/node_modules/
+!myreader-dist/node_modules/**
+!myreader-dist/app/node_modules/
+!myreader-dist/app/node_modules/**
+!myreader-dist/app/.next/node_modules/
+!myreader-dist/app/.next/node_modules/**
+!myreader-dist/app/.next/static/media/
+!myreader-dist/app/.next/static/media/**
+!myreader-dist/app/src/
+!myreader-dist/app/src/**
+!myreader-dist/app/public/assets/
+!myreader-dist/app/public/assets/**
+!myreader-dist/**/*.mp3
+!myreader-dist/**/*.m4a
+!myreader-dist/**/*.m4b
+!myreader-dist/**/*.flac
