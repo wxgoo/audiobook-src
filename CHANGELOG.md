@@ -126,6 +126,36 @@ myreader location 只覆盖 readerx/_next/assets 等前缀，请求落进 SPA �
 本地 nginx + 假后端端到端实测三条路径全过；NAS 上已先热修验证（200 application/javascript）。
 conf 打进镜像，需重建生效（upgrade.sh / deploy.sh 均会做）；仓库已永久修复。
 
+### 补齐：webserver/epub_to_audio 整个目录丢了
+
+EPUB 转有声书（「听书」里的自动转音频）从 4.6.0-9 起就是坏的，报错在
+`webserver/worker/epub2audio_worker.py` 里拉 `subprocess python3 main.py` 时失败——
+因为 `main.py` 压根不在。
+
+上游 4.6.0 镜像里这个目录是**内嵌的第三方项目**（p0n1/epub_to_audiobook，
+自带 `.git` 指向 `../../.git/modules/webserver/epub_to_audio`，是个 git submodule）。
+移植时只带了仓库里 `git ls-files` 能看到的路径，submodule 内容没跟过来。
+
+补回 61 个文件（0.5M）。**没有带**的内容及原因：
+
+| 跳过 | 原因 |
+|---|---|
+| `examples/` (2.1M) | Robinson Crusoe 示例 epub + 两张 README 截图，运行时不用 |
+| `.github/`、`.dockerignore`、`.gitattributes` | 上游 CI 与镜像构建用 |
+| `.git` | 一行 `gitdir:` 指针，指向本仓库不存在的路径，留着 `git status` 会报错 |
+| `__pycache__/` | 开发残留，见「顺手清掉 __pycache__」 |
+
+同时改了两处依赖：
+
+- `webserver/epub_to_audio/requirements.txt`：去掉 gradio / gradio_log / docker
+  的 pin，改为注释说明为什么生产不装（gradio 那条链会顶掉基础镜像里
+  numpy/pydantic 的版本，连 calibre 一起弄坏；我们只跑命令行 `main.py`，
+  不跑它的 WebUI `main_ui.py`）
+- `Dockerfile`：在装完主依赖后单独补 `EbookLib / mutagen / pydub / sentencex`，
+  并 `import` 一遍做自检（缺了就让构建失败，而不是等用户点转换才报错）。
+  `edge-tts` 不在这一批里——它已经从 `third-party/edge-tts` 装了 PoxenStudio
+  定制版，再装一次会覆盖成 PyPI 官方版、丢掉 `proxy` 参数。
+
 ### 部署包瘦身：归档内容不再下发
 
 部署包里混着不该给 NAS 用的东西，逻辑上混乱（"哪个脚本该跑"要多想一步），体积也白占：
@@ -148,6 +178,17 @@ conf 打进镜像，需重建生效（upgrade.sh / deploy.sh 均会做）；仓�
   统一注明"仅在源码仓库，不随包下发"
 
 包体积 199M → 198M（归档本身很小，主要是逻辑清晰了）。归档内容在仓库里完好保留。
+
+### 顺手清掉 `__pycache__`
+
+仓库里散着 17 个 `__pycache__`（`webserver/`、`tools/`、`tests/` 下都有），
+合计约 5MB。`.dockerignore` 里早就排掉了，所以镜像里没有；
+但 `pack.sh` 没排，于是每份部署包都带着它们，解压到 NAS 上纯占地方。
+
+`pack.sh` 打包时现在会清掉 `__pycache__` 与 `*.pyc/*.pyo`，`--check` 里加了断言：
+超过 5 个就报错。这些文件本来就在 `.gitignore` 里、不在版本库中，删了不影响任何东西。
+
+包体积随之下到 197M。
 
 ### 交付
 

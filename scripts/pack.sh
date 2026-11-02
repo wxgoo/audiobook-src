@@ -60,6 +60,13 @@ if [ "${1:-}" = "--check" ]; then
             [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
         done
 
+        # __pycache__：允许零星几个（比如解压后又跑过脚本），但不该整片带进来
+        npc=$(find "$D" -name '__pycache__' -type d 2>/dev/null | wc -l)
+        if [ "$npc" -gt 5 ]; then
+            echo "  !! 包里有 $npc 个 __pycache__ 目录（应为 0）—— 打包时漏了清理"
+            fail=1
+        fi
+
         # myreader-dist 必须完整：符号链接是相对路径，打包方式一变就全断
         valid=0; broken=0
         for l in $(find "$D/myreader-dist" -type l 2>/dev/null); do
@@ -148,7 +155,7 @@ echo "==> [3/4] 打包（cd 到父目录对目录名打包，不用 --transform�
 # 变数有两个，都钉死：
 #   1. gzip 会把压缩时间戳写进文件头 → -n 去掉
 #   2. tar 按文件名排序时，同一批命令产生的 mtime 精度不同 → --mtime + --sort=name
-export GZIP=-n
+# gzip -n 而不是 export GZIP：新版 gzip 会对该变量告警，且它不是给 tar 用的接口
 TAR_OPTS="--sort=name --mtime=@$REPRO_MTIME --owner=0 --group=0 --numeric-owner"
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
@@ -171,8 +178,16 @@ for junk in scripts/archive docs/archive docs/settings-redesign; do
     [ -e "$STAGE/audiobook/$junk" ] && rm -rf "$STAGE/audiobook/$junk"
 done
 
+# __pycache__ 同理：开发时跑过脚本就会留下，5MB 左右，NAS 上纯占地方。
+# 镜像构建本来就从 .dockerignore 排掉它，部署包里更不该有。
+# 注意 .gitignore 里也有 __pycache__/，所以这些文件不在版本库里，
+# 清掉不影响任何东西（下次跑脚本会自己重建）。
+find "$STAGE/audiobook" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null
+find "$STAGE/audiobook" \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null
+echo "  已清掉 __pycache__ / *.pyc（5MB 左右的开发残留）"
+
 mkdir -p "$OUTDIR"
-( cd "$STAGE" && tar $TAR_OPTS -czf "$OUT" audiobook )
+( cd "$STAGE" && tar $TAR_OPTS -cf - audiobook | gzip -n > "$OUT" )
 echo "  产物: $OUT"
 
 # ---------- 验包 ----------

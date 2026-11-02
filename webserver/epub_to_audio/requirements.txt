@@ -1,0 +1,24 @@
+# 本模块的独立依赖清单（原来它自己是个 docker 镜像，这份表也服务于那个用途）。
+# 注意：MyBooks 生产镜像【不读这个文件】——不走 pip 装，而是在 Dockerfile 里
+# 从本地 wheel / 基础镜像装（见「安装可选的 ebook 转换依赖」那一节）。
+# 原因见该节注释：gradio 那条链会顶掉基础镜像里已装好的 numpy/pydantic 版本。
+#
+# 改动这里的版本前，先看一眼 Dockerfile 里钉住的版本和原因。
+
+beautifulsoup4==4.13.4
+EbookLib==0.19
+mutagen==1.47.0
+openai==1.85.0
+requests==2.32.4
+# 用 PoxenStudio 定制版（支持 proxy 参数）；仓库同时内置 third-party/edge-tts，
+# 优先装本地那份，避免构建时访问 GitHub。
+edge-tts @ git+https://github.com/PoxenStudio/edge-tts.git@develop
+pydub==0.25.1
+wyoming==1.6.0
+sentencex==0.6.1
+
+# 以下三项只有它自己的 WebUI / docker 模式用得上，MyBooks 里用不到，故不给版本钉死，
+# 生产镜像也不安装：
+#   gradio==5.33.1
+#   gradio_log==0.0.8
+#   docker==7.1.0

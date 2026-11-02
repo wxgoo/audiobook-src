@@ -342,6 +342,20 @@ print('faster-whisper API check OK')" \
         echo "skip faster-whisper (WITH_WHISPER=$WITH_WHISPER)"; \
     fi; \
     rm -rf /root/.cache /root/.config/pip /tmp/pip-* /var/tmp/*; \
+    # 音频转换（EPUB → 有声书）：webserver/epub_to_audio 是上游内置的第三方工具，
+    # 不在主 requirements.txt 里，这里单独装它缺的几样。
+    # 为什么不直接 pip install -r webserver/epub_to_audio/requirements.txt：
+    # 那份表里有 gradio 5.33 + gradio_log + docker，会把基础镜像里已装好的
+    # numpy / pydantic 顶到不兼容的版本，连 calibre 一起弄坏。生产只跑命令行
+    # （main.py），不跑它的 WebUI（main_ui.py），所以那三个包不装。
+    # 也不装 edge-tts：Dockerfile 上面已经从 third-party/edge-tts 装了 PoxenStudio
+    # 定制版（支持 proxy），定制版进不了 PyPI，重装会覆盖成官方版、丢掉 proxy 参数。
+    pip install --no-cache-dir --no-compile --find-links /tmp/wheels \
+        "EbookLib==0.19" "mutagen==1.47.0" "pydub==0.25.1" "sentencex==0.6.1" \
+        --break-system-packages; \
+    python3 -c "import ebooklib, mutagen, pydub, sentencex, edge_tts; print('epub->audio deps OK')" \
+        || (echo "ERROR: EPUB 转音频依赖装完无法导入，检查上面的 pip 输出" && exit 1); \
+    rm -rf /root/.cache /root/.config/pip /tmp/pip-* /var/tmp/*; \
     # MyBooks 自带的 calibre 插件（DjVu/CBZ/UVZ 元数据）
     python3 /tmp/calibre-plugins/build.py --out /usr/lib/calibre/mybooks-plugins; \
     rm -rf /tmp/calibre-plugins; \

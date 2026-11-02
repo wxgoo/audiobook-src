@@ -41,6 +41,9 @@ app/.env
 !myreader-dist/app/.next/node_modules/**
 
 # ---- Python 缓存 ----
+# 注意：这个只影响构建上下文。仓库和各子目录里的 __pycache__ 仍然会被
+# 打进部署包（pack.sh 没排除它们），解压后在 NAS 上占地方又没用。
+# 想在包里也清掉，把 __pycache__ 加进 .gitignore（已加）并在 pack.sh 里排一次。
 **/__pycache__
 **/*.pyc
 **/*.pyo
