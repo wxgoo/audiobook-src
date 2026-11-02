@@ -22,7 +22,7 @@
 | 改代码（代码结构、测试命令，给人和 AI 看） | [`CLAUDE.md`](CLAUDE.md) |
 | 安全问题怎么报 | [`SECURITY.md`](SECURITY.md) |
 
-历史归档（只查不改）：[`docs/archive/`](docs/archive/)
+历史归档（只查不改，**仅在源码仓库，不随部署包下发**）：`docs/archive/`、`scripts/archive/`
 
 ---
 

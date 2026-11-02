@@ -70,6 +70,11 @@ if [ "${1:-}" = "--check" ]; then
             [ -e "$D/$d" ] && { echo "  !! 源码目录混入数据目录: $d"; fail=1; }
         done
 
+        # 归档与开发侧杂物不该出现在部署包里
+        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src; do
+            [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
+        done
+
         [ "$fail" = "0" ] && echo "  ✅ 校验通过" || { echo "  ❌ 校验失败"; exit 1; }
     }
     echo "==> 校验 $PKG"
@@ -121,10 +126,21 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/audiobook"
 for item in $(ls -A); do
     case "$item" in
+        # 版本库与开发侧杂物
         .git|.claude|node_modules|cache|sync|books|data|__pycache__|logs) continue ;;
+        # 误提交的嵌套仓库条目（历史上 clone 自己的残留），空目录，无内容
+        audiobook-src) continue ;;
     esac
     cp -al "$item" "$STAGE/audiobook/$item" 2>/dev/null || cp -a "$item" "$STAGE/audiobook/$item"
 done
+
+# 归档目录不进部署包：它们是历史记录（v9 那趟的一次性脚本、旧版操作手册、
+# 设计稿截图），NAS 上用不到，只会让包变大、让人分不清哪个脚本该跑。
+# 仓库里保留，随时可查。
+for junk in scripts/archive docs/archive docs/settings-redesign; do
+    [ -e "$STAGE/audiobook/$junk" ] && rm -rf "$STAGE/audiobook/$junk"
+done
+
 mkdir -p "$OUTDIR"
 ( cd "$STAGE" && tar -czf "$OUT" audiobook )
 echo "  产物: $OUT"

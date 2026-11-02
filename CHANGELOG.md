@@ -59,8 +59,8 @@ chunk、调用方副本 2 处，共 5 处全部修补，`node --check` 全过）
 
 | 位置 | 内容 |
 |---|---|
-| `scripts/` | 5 个长期脚本：`upgrade.sh`（升级入口）、`deploy.sh`（首装）、`check-reader.sh`（只读诊断）、`protect-custom.sh`、`upgrade-upstream.sh`，附 `README.md` 索引 |
-| `scripts/archive/` | 9 个一次性脚本，头部统一标注【已归档】+ 归档原因 |
+| `scripts/` | 6 个长期脚本：`upgrade.sh`（升级入口）、`deploy.sh`（首装）、`check-reader.sh`（只读诊断）、`protect-custom.sh`、`upgrade-upstream.sh`、`pack.sh`（出包），附 `README.md` 索引 |
+| `scripts/archive/` | 9 个一次性脚本，头部统一标注【已归档】+ 归档原因（**仅在源码仓库，不随部署包下发**） |
 
 同时修掉三处会实际咬人的问题：
 
@@ -126,13 +126,38 @@ myreader location 只覆盖 readerx/_next/assets 等前缀，请求落进 SPA �
 本地 nginx + 假后端端到端实测三条路径全过；NAS 上已先热修验证（200 application/javascript）。
 conf 打进镜像，需重建生效（upgrade.sh / deploy.sh 均会做）；仓库已永久修复。
 
+### 部署包瘦身：归档内容不再下发
+
+部署包里混着不该给 NAS 用的东西，逻辑上混乱（"哪个脚本该跑"要多想一步），体积也白占：
+
+| 排除项 | 是什么 | 原来占 |
+|---|---|---|
+| `scripts/archive/` | 9 个一次性脚本（v9 合并、回退 v8、导产物…） | 10 条 |
+| `docs/archive/` | 旧版 NAS 操作手册、坏字体排查记录 | 2 条 |
+| `docs/settings-redesign/` | 界面设计稿截图 | 10 条 |
+| `audiobook-src/` | 误提交的嵌套仓库条目（空目录，无内容） | 1 条 |
+
+`audiobook-src` 还是 git 层面的脏数据：它以 submodule 模式（`160000`）被提交，
+但 `.gitmodules` 里没有它 —— 早期在仓库里 clone 自己留下的残迹。已 `git rm --cached` 清掉。
+
+做法：
+- `pack.sh` 打包时硬排除这四类；`--check` 增加断言，包里出现就给红
+- `docs/坏字体修复-4.6.0-9-归档.md` 归入 `docs/archive/`（它是排查记录，不是现行手册；
+  功能本身 `epub_font_fix.py` / `tools/fix_broken_fonts.py` 仍在用）
+- README / 操作总纲 / 部署包说明 / scripts README 里凡指向 archive 的地方，
+  统一注明"仅在源码仓库，不随包下发"
+
+包体积 199M → 198M（归档本身很小，主要是逻辑清晰了）。归档内容在仓库里完好保留。
+
 ### 交付
 
-| 文件 | md5 |
-|---|---|
-| `audiobook-deploy-4.6.0-10.tar.gz` | `a027b49e798262d0aef7a4a3e0b94978`（最终版，含 /runtime-config.js nginx 修复） |
+| 文件 | 大小 | md5 |
+|---|---|---|
+| `audiobook-deploy-4.6.0-10.tar.gz` | 198M | `55b02fb4bd018a68a084ef85a5e71ef1` |
+| `audiobook-docs-scripts-4.6.0-10.tar.gz` | 74K | `ea9980c20225f73214cbd1889b5cf09d` |
 
-> 同版本号出过三份包，md5 分别为 `111f…` → `7861…` → `a027…`，旧副本作废。
+> 同版本号出过四份包，md5 依次为 `111f…` → `7861…` → `a027…` → `55b0…`，
+> 前三个作废。最后一份的差别是去掉归档内容，并附上从主包解出的小包。
 
 ---
 
@@ -448,7 +473,7 @@ if authors_conflict(ebook_authors, b["authors"]):
 
 ### 追加：繁体 epub 打开慢 — 坏字体剥离（4.6.0-9 第三批，v9 包）
 
-> 完整排查与测试记录见 `坏字体修复-4.6.0-9-归档.md`。
+> 完整排查与测试记录见 `docs/archive/坏字体修复-4.6.0-9.md`（归档，不随包下发）。
 
 **问题**：一本 3.11MB 的繁体 epub 打开要 50-60 秒，console 报
 `OTS parsing error: invalid sfntVersion: 1179602516`（= ASCII `FONT`）。
