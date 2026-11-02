@@ -95,8 +95,14 @@ if [ "${1:-}" = "--check" ]; then
         done
 
         # 脚本与文档清单：包里只剩长期脚本，不能出现 8 个散脚本那套
-        echo "  脚本: $(cd "$D/scripts" 2>/dev/null && ls *.sh 2>/dev/null | tr '\n' ' ')"
+        # 注意 *.py 也要列 —— watch-upstream.py 是日常运维要用的，别漏看
+        echo "  脚本: $(cd "$D/scripts" 2>/dev/null && ls *.sh *.py 2>/dev/null | tr '\n' ' ')"
         echo "  文档: $(cd "$D/docs" 2>/dev/null && ls *.md 2>/dev/null | tr '\n' ' ')"
+
+        # 盯上游的工具必须能在部署机上跑（只用标准库，不需要装依赖）
+        for f in scripts/watch-upstream.py docs/upstream-baseline.json; do
+            [ -e "$D/$f" ] || { echo "  !! 缺 $f（盯上游的工具不完整）"; fail=1; }
+        done
 
         [ "$fail" = "0" ] && echo "  ✅ 校验通过" || { echo "  ❌ 校验失败"; exit 1; }
     }
