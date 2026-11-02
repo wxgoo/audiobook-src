@@ -1,6 +1,6 @@
 # MyBooks（audiobook 功能移植版）安装使用说明书
 
-> 版本：4.6.0-1（基于上游 mybooks tag 4.6.0，旧编号 v4.8.2）
+> 版本：4.6.0-10（基于上游 mybooks tag 4.6.0，旧编号 v4.8.2）
 > 本版变化：**彻底移除 Windows exe 安装器**，Docker 是唯一官方部署方式；新增「读者组分级权限」「音频转写文稿」「有声书挂靠」三个功能；**内嵌阅读器 MyReader 的构建产物已随包提供**（见第八节）。
 
 ---
@@ -50,7 +50,7 @@
 
 ### 第 2 步：获取项目
 
-把交付的 `audiobook-deploy-4.6.0-1.tar.gz` 解压到一个**路径里不含中文和空格**的目录，例如：
+把交付的 `audiobook-deploy-4.6.0-10.tar.gz` 解压到一个**路径里不含中文和空格**的目录，例如：
 
 ```
 D:\audiobook\
@@ -143,7 +143,7 @@ SSH 登录 NAS 后，**三行命令**完成部署：
 
 ```bash
 cd /volume1/docker
-tar -xzf audiobook-deploy-4.6.0-1.tar.gz
+tar -xzf audiobook-deploy-4.6.0-10.tar.gz
 cd audiobook && sh deploy.sh
 ```
 
@@ -856,7 +856,7 @@ docker exec audiobook-mybooks-1 python3 -c \
 
 ```bash
 cd /volume1/docker
-sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-1.tar.gz
+sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-10.tar.gz
 ```
 
 它做的事（详见 DEPLOY_README.md 的步骤表）核心只有一句：

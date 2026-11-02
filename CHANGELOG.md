@@ -3,11 +3,67 @@
 本项目的版本号规则：**`<上游 mybooks tag>-<自建序号>`**
 （上游 tag 无 `v` 前缀，如 `4.6.0`；自己改代码序号 +1，上游发新版序号归 1）
 
+旧编号 `v4.8.x` 已废弃，对应关系见文末「旧编号时期发布说明」。
+
+> 想查某个改动为什么这么做：搜版本号，或看 [`docs/`](docs/) 下的专题记录。
+
 ---
 
-## 4.6.0-9（待发布）
+## 4.6.0-10（当前）
+
+> 相对 `-9` 只动了内嵌阅读器的 4 个 chunk，**不需要重建前端**，但仍需 `upgrade.sh` 重打镜像。
+
+### 修复：阅读器本地阅读统计写不进去
+
+**症状**：云端书每次翻页后控制台报
+
+```
+[stats] failed to persist reading events: TypeError: Cannot read properties of undefined (reading 'id')
+    at a.upsertBook (0w9daefn615~0.js:484:167)
+```
+
+**根因**：`StatisticsDb.upsertBook` 的 INSERT 分支，新建书籍行后立刻按 `md5` 反查 id：
+`(await this.db.select("SELECT id FROM book WHERE md5 = ? LIMIT 1", ...))[0].id`。
+书首次入库时写后立即读查不到行，`[0]` 是 `undefined`，读 `.id` 直接抛错。
+已入库的书走 UPDATE 分支（复用开头查到的 id，不涉及写后读），所以不报——
+**这就是"只有某几本书一直刷这个错"的原因**。
+
+**重要**：这个 bug **上游 4.6.0 原生就有**，不是我们的改动引入的。
+已比对确认：我们改前的 reader chunk 与上游官方包逐字节一致。
+
+**修法**（`myreader-dist` 是构建产物，压缩 JS 直改；同一个类被复制进 3 个
+chunk、调用方副本 2 处，共 5 处全部修补，`node --check` 全过）：
+
+- 尾部改为重试读（间隔 40ms × 3 次）→ 仍查不到返回 `null`
+- 调用方拿到 `null` 直接跳过后续 `insertPageEvent` / `recomputeBookTotals`
+
+效果：若根因是写后读可见性竞态 → 统计恢复正常；若写永不生效 → 安静跳过
+（与修复前等价，但不再刷错误日志）。**不影响阅读与进度同步**。
+
+### 与上游 4.6.0 的完整性核对
+
+拿上游官方容器镜像包（`mybooks4.6.0.tar`，约 2GB）逐文件比对：
+
+| 部分 | 结果 |
+|---|---|
+| reader `static/chunks` 198 个文件 | **191 个逐字节相同**；差异 4 个正是本版补丁，另 3 个是同代码的另一次构建（BUILD_ID 不同） |
+| 后端 `webserver/` | 差异全部是**我们新增**（坏字体处理、字符集嗅探、作者归一化、读者组），上游没有任何被我们删掉的内容 |
+| 坏字体处理 | 上游**一处都没有**（`FONT` / `sfnt` / `epub-lite` 全无） |
+
+结论：这份定制是上游的**严格超集**。那本慢书在上游上同样慢，而且更糟（无剥离）。
+
+### 交付
+
+| 文件 | md5 |
+|---|---|
+| `audiobook-deploy-4.6.0-10.tar.gz` | `111f9a72b72cb6ad617e94f2e75da385` |
+
+---
+
+## 4.6.0-9
 
 > **这一版前后端都动了，必须重建镜像**（`upgrade.sh` 会自动做，约 4 分钟）。
+
 >
 > 核心一句话：**作者名不再被刮削搞乱，人工改过的作者也不会再被覆盖；
 > 同名不同作者的书不会被误合并。**
@@ -673,9 +729,160 @@ chunk、caller 副本 2 处，全部修补，`node --check` 全过）：
 | 数据目录跑进源码目录 | 致命 | 升级后 books/data 出现在 `audiobook/` 下 | 挂载外置 + upgrade.sh/deploy.sh 污染自检 |
 | git 推送符号链接丢失 | 中 | myreader-dist 127 个符号链接变普通文件 | 改用 tar 包分发，不依赖 git |
 
+
+---
+
+## 附：旧编号时期发布说明（v4.7.1 ~ v4.8.0）
+
+> 这段内容原本堆在 `README.md` 里。由于 `README` 应承担"项目说明"职责，
+> 发布说明统一迁到这里留存。旧编号 `v4.8.2` 对应新编号 `4.6.0-1`。
+> 下面几条按当时写法保留，未做改写。
+
+## v4.8.0 音频转写可用 + 读者组易用性 + 有声书挂靠 + 内嵌阅读器
+
+**内嵌阅读器 MyReader（修 `/readerx` 502）**
+
+* 之前 `/readerx/open?bookId=…&format=…` 一直 **502 Bad Gateway**：`myreader-dist/` 里
+  只有 `.keep` 占位，容器里 `/var/www/myreader/app/server.js` 不存在 → supervisor 起不来 →
+  9100 不监听 → nginx upstream 拒绝连接。**现在源码包内直接附带构建好的产物**
+  （92MB / 2605 文件），开箱即用。
+* MyReader 的 GitHub Release 里只有 `.deb` / `.dmg` / `.apk` / `.exe` 这些桌面和移动安装包，
+  **没有**容器可用的 web 产物，所以是从 `PoxenStudio/MyReader` tag `0.9.1` 源码构建的
+  （`pnpm build-docker-dist`），构建步骤见 `INSTALL_GUIDE.md` 第八节。
+* 修掉一个很隐蔽的坑：`.dockerignore` 里的 `**/node_modules`（给前端源码用的）会把
+  `myreader-dist` 下**三层**产物依赖一起排掉。其中 `app/.next/node_modules/` 那层被排掉时，
+  服务能正常启动、9100 也能监听，但**第一个请求才报** `Cannot find module 'js-md5-<hash>'`。
+  已加显式放行，并用真实 `docker build` + 起容器实测过（`/readerx/...` 返 200）。
+* 实测数据：`pnpm install --frozen-lockfile` 21.8s，`next build` 35s，产物 92MB。
+
+**音频转写（Whisper）**
+
+* **镜像内置 `faster-whisper`**（构建参数 `WITH_WHISPER=1`，默认开）。不装 torch，约 +250MB，
+  比 openai-whisper 快 4 倍以上。不需要就把参数设成 `0`。
+* **转写同时产出 `.srt` + `.txt`**：`.srt` 带时间轴，播放页会自动配对同名字幕文件，
+  **播放时逐句高亮跟随**；`.txt` 是纯文本全稿，用于搜索/复制/离线阅读。
+* **模型下载走 `hf-mirror.com`**（`HF_ENDPOINT`），并关闭 xet 通道（`HF_HUB_DISABLE_XET=1`）——
+  国内直连 huggingface.co 基本不通，原实现会卡死。
+* **模型缓存在 `/data/models/whisper`**，容器重建不用重下。`TRANSCRIBE_MODEL` /
+  `TRANSCRIBE_LANG` / `TRANSCRIBE_KEEP_TXT` 可在设置里调。
+* 锁定 `av<16`：faster-whisper 1.2.x 仍调 `av.open(metadata_errors=...)`，av 16+ 删了该参数会
+  `TypeError`。运行期也加了版本守卫，报错信息直接给出修复命令。
+
+**读者组**
+
+* **分类/标签从「手打文本框」改成下拉多选**（`v-combobox multiple`）：候选值来自系统里
+  真实存在的分类与标签（新增接口 `/api/admin/reader_groups/options`），点选即可，
+  仍允许自由输入。以前打错一个字符就静默失效（白名单看不到任何书、黑名单什么都没屏蔽）。
+* 组列表里的分类/标签以 chips 呈现，重复值自动去重。
+
+**有声书挂靠（修上游 bug）**
+
+* **后加音频不再变成另一本书**。电子书在 `library/`、有声书在 `audios/<book_id>/`，两套目录。
+  上游导入音频时只看「这本书有没有 `audios/<id>/`」，没有就新建一本书——于是先导 epub、
+  后加音频，书库里就多出一条同名记录。
+* 现在发现**同名书籍已存在**就复用它的 `book_id`（挑选优先级：`library/` 里真有格式文件的那本 →
+  都没有则取最早的 id），音频仍放 `audios/<book_id>/`。一条记录、一个封面、一套元数据。
+* 新增设置项 **`AUDIO_LINK_TO_EXISTING_BOOK`**（默认开），后台「系统设置 → 阅读与浏览 →
+  有声书导入」可关；关掉恢复旧行为。扫描结果多一项「已挂靠」计数，日志打
+  `[AUDIO_IMPORT] 同名书籍已存在(book_id=N)，音频将挂到该书而非新建`。
+* 注意：本改动只影响之后的导入，**历史重复记录用内置的「重复书清理」一次合并**（见下）。
+
+**同名重复书清理（迁移工具）**
+
+* 后台「管理 → 重复书清理」（`/toolbox/book_dedup`）：先**扫描预览**（只读），
+  看清每组的"保留/删除"关系后再一键合并。不用连 SSH、不用一条条手点。
+* 合并时自动完成：音频目录 `audios/<重复id>/` → `audios/<保留id>/`（封面、`.srt` 字幕
+  一起搬，不覆盖目标已有文件）→ 阅读进度/收藏/书单/评论/分享**改指**到保留书 →
+  删掉重复记录 → 修正 `ScanFile` 指向。
+* **三条安全线**：① 方向不明确的组（两本都有电子书、都没有电子书、同名超 8 本）
+  只报告不改动；② 执行前用 `sqlite3.backup()` 在线备份用户库到 `data/backup/`；
+  ③ 删 calibre 记录前再校验一次"确实没有电子书格式"，有就拒删。
+* 书单关联的冗余行被删时会同步扣减 `book_count`，避免书单显示数量虚高；
+  共读同步记录（`book_records`，身份是 `book_hash`）删而不改指，否则 hash 与 id 会串书。
+
+**工程**
+
+* 新增 `PORTING_NOTES.md`：全部改动清单、上游更新合并指引、冲突解决速查、隐性耦合点。
+* 测试：`test_transcribe_service.py` 24 项（双后端 + SRT 格式 + 边界）、
+  `test_reader_group.py` 14 项（含 options 接口容错）、`test_audio_link_existing.py` 17 项
+  （开关解析 / 挂靠挑选 / 状态计数）、`test_book_dedup.py` 43 项（含真实 SQLite 库的
+  关联数据迁移验证），合计 98 项全通过。
+
+### v4.7.4 修复
+
+* **`COPY myreader-dist*` 报 "no source files were specified"**：Docker 的 COPY 通配符零匹配会直接报错（不是静默跳过）。
+  改为内置 `myreader-dist/.keep` 占位文件 + `COPY myreader-dist/`，始终有源可拷。
+  自 v4.8.0 起源码包已附带真实产物，这个问题不会再出现。
+
+
+### v4.7.3 修复与加速
+
+**修复（都是会让构建直接失败/异常的硬问题）**
+
+* **`third-party/*` 是空的 git submodule**：`COPY` 空目录会失败。改为「有就拷、空则警告并继续」。
+  * `foliate-js` 缺失 → 仅微信读书批注导入(CFI 生成)不可用，其他功能不受影响。
+  * `edge-tts` 缺失 → 自动回退 PyPI 官方版。注意官方版 `list_voices` 不支持 `proxy` 参数，
+    代理环境下听书可能异常；需要完整功能请 `git submodule update --init third-party/edge-tts`。
+
+**加速**
+
+* `.dockerignore` 重写：排除 `node_modules`/`.nuxt`/`dist`/`__pycache__`/`.DS_Store` 等，
+  以及前端专用的大体积库（`third-party/epubreader-js` 35M 等），构建上下文更小、传输更快。
+* `docker-compose.yml` 加 `target: production`，跳过 test 阶段（省一次完整 pip install）。
+* 新增 **`make fast-build` / `make fast-up`**：BuildKit + 本地层缓存（`.buildcache`），
+  改代码后重建通常 1 分钟内完成；`make clean-cache` 清缓存。
+* `cfi_gen` 的 `npm ci` 补上国内源（原来没走镜像，国内很慢）。
+
+**关于 `mybooks_base`（慢的主因）**
+
+基础镜像约 **1.5 GB**（Ubuntu 24.04 + Calibre 7.6 + FFmpeg + Node），首次构建必须拉取。
+之后会命中本地缓存。国内建议给 Docker 配 `registry-mirrors`（`docker.1ms.run`、
+`docker.m.daocloud.io`、`hub.rat.dev` 实测均可用）。
+
+### v4.7.2 修复（Node 版本过低）
+
+* **builder 阶段基础镜像 `node:16-alpine` → `node:20-alpine`**。Nuxt 2 的 CLI 链里 `@clack/core` 用了
+  `node:util` 的 `styleText`（Node ≥ 20.12 才有），Node 16 下 `import` 阶段直接失败：
+  ```
+  import { styleText } from 'node:util';
+  SyntaxError: The requested module 'node:util' does not provide an export named 'styleText'
+    at file:///build/node_modules/@nuxt/cli/bin/nuxi.mjs:78:21
+  ```
+  注意 ESLint 那步是通过的（`0 errors`），报错发生在真正开始构建时，很容易误判。
+* Dockerfile 里加了 Node 主版本断言，低于 20 时构建直接给出明确提示，而不是含糊的模块错误。
+* 实测：Node 16.20.2 的 `util.styleText === undefined`；Node 20.19.0 下 `npm ci`（5 秒）+
+  `npm run build-spa`（36 秒 `Compiled successfully`）全部通过。
+
+### v4.7.1 修复（构建问题）
+
+* **`app/package.json` 的 `nuxt` 版本写错**：原为 `^4.6.2`（会解析到 Nuxt 4 / Vue 3），本项目是 Nuxt 2 + Vue 2，导致
+  `npm install` 拉一整套 Nuxt 4 依赖后编译报 `<template v-for> key should be placed on the <template> tag`。
+  已改为 `^2.18.1`，与 `package-lock.json` 里锁定的 2.18.1 一致。
+* **Dockerfile 改用 `npm ci`**：严格按 lockfile 安装，杜绝 `^` 范围重新解析出不兼容大版本。
+* **20 处 `<template v-for>` 的 `:key` 统一移到 `<template>` 标签上**：Vue 3 编译器强制此规则，
+  这样即便将来依赖解析异常也不会因此直接构建失败。
+* **新增 `app/.npmrc`**（npmmirror 源），`docker-compose.yml` 默认传 `BUILD_COUNTRY: CN`，构建更快。
+* 实测结果：`npm ci` 5 秒装完 1448 个包 → `npm run build-spa` 36 秒 `Compiled successfully`，ESLint 0 error。
+
+### v4.7 新增（移植自 audiobook 项目）
+
+* **读者组分级权限**：管理员定义读者组（白名单/黑名单 + 分类/标签），用户划入组即可批量限制可读书目，不用逐个设置。
+  API：`GET/POST /api/admin/reader_groups`、`POST /api/admin/reader_groups/delete`、`POST /api/admin/reader_groups/assign`（管理员）。
+  生效规则：用户自己显式设置过阅读范围就用自己；否则回退组配置。组定义持久化在站点设置（`READER_GROUPS`），用户归属存在用户 `extra.reader_group`，零数据库迁移。
+* **音频转写文稿（可选）**：Whisper 把有声书音频转成可阅读的 .txt 文稿。
+  服务器需 `pip install -r requirements-optional.txt`（含 openai-whisper/torch，体积大故不进主依赖）；
+  未安装时 `GET /api/admin/transcribe/available` 返回 `{"available": false}`，前端可隐藏入口。
+  API：`POST /api/admin/transcribe/run|cancel`、`GET /api/admin/transcribe/status`。转写进度接入既有后台任务体系。
+  路径支持文件或目录（目录自动递归收集音频），前端带服务器目录浏览器（复用服务端目录浏览，范围限 /data）。
+
+> Windows 安装器（exe）自 v4.6 起已彻底移除，Docker 是唯一官方部署方式，见下节。
+
+
+
 ---
 
 ## 附：升级历史速查
+
 
 | 版本 | 主要内容 | 备注 |
 |---|---|---|
