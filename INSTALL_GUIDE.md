@@ -144,10 +144,10 @@ SSH 登录 NAS 后，**三行命令**完成部署：
 ```bash
 cd /volume1/docker
 tar -xzf audiobook-deploy-4.6.0-10.tar.gz
-cd audiobook && sh deploy.sh
+cd audiobook && sh scripts/deploy.sh
 ```
 
-`deploy.sh` 会自动做五步：
+`scripts/deploy.sh` 会自动做五步：
 
 1. **关键文件校验**——Dockerfile、docker-compose.yml、myreader-dist 产物、
    supervisor/nginx 配置、回填脚本，缺一个直接报错停止；
@@ -158,7 +158,7 @@ cd audiobook && sh deploy.sh
 5. 等 20 秒后自动输出 supervisor 各进程状态和 myreader 日志尾部，一眼确认
    `myreader RUNNING`、日志无 `SyntaxError`。
 
-只构建不启动：`sh deploy.sh build-only`。
+只构建不启动：`sh scripts/deploy.sh build-only`。
 手动部署与脚本等效，见下面的分步说明。
 
 
@@ -852,14 +852,14 @@ docker exec audiobook-mybooks-1 python3 -c \
 但旧包里已被删掉的文件会残留下来。历史上（v4.8.1 及以前）数据也落在源码目录里，
 于是旧 `books/` 残留 + 新包叠加，就出现了"`audiobook` 下冒出 `books`"的现象。
 
-**v4.8.2 起提供 `upgrade.sh`，从根上避免这件事：**
+**v4.8.2 起提供 `scripts/upgrade.sh`，从根上避免这件事：**
 
 ```bash
 cd /volume1/docker
-sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-10.tar.gz
+sh audiobook/scripts/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-10.tar.gz
 ```
 
-它做的事（详见 DEPLOY_README.md 的步骤表）核心只有一句：
+它做的事（详见 [`docs/部署包说明.md`](docs/部署包说明.md) 的步骤表）核心只有一句：
 **先把 `audiobook` 整个改名成 `audiobook.old`，再 `mkdir` 一个全新目录解压。**
 全新目录里不可能有任何历史残留，也就谈不上"污染"。
 
@@ -890,7 +890,7 @@ docker exec audiobook-mybooks-1 python3 -c \
   "import sqlite3;print('书数:',sqlite3.connect('/data/books/library/metadata.db').execute('select count(*) from books').fetchone()[0])"
 ```
 
-`deploy.sh` 与 `upgrade.sh` 已把 ① ② 固化为脚本开头的强制检查，失败即中止，
+`scripts/deploy.sh` 与 `scripts/upgrade.sh` 已把 ① ② 固化为脚本开头的强制检查，失败即中止，
 不会在"脏目录"上继续构建出镜像。
 
 #### 万一发现源码目录里已有数据目录
@@ -912,7 +912,7 @@ command -v rsync >/dev/null && rsync -av  audiobook/books/ audiobook-data/books/
 rm -rf audiobook/books audiobook/data audiobook/library audiobook/audios
 ```
 
-清理完重跑一次 `upgrade.sh`，即可得到完全干净的源码目录。
+清理完重跑一次 `scripts/upgrade.sh`，即可得到完全干净的源码目录。
 
 ## 九、日常使用速览
 
@@ -964,7 +964,7 @@ calibre-webserver.db + audios 音频）。
 
 1. 备份 `audiobook-data`。
 2. 源码目录随便换：`rm -rf audiobook` 后解压新包即可（数据在 `audiobook-data`，不受影响）。
-3. `sh deploy.sh` 重建。
+3. `sh scripts/deploy.sh` 重建。
 
 ### 改一行代码不想等构建：热更新（`tools/hotfix.sh`）
 

@@ -1,22 +1,33 @@
 #!/bin/sh
 # ============================================================
-# MyBooks 移植版（audiobook）NAS 一键部署脚本 4.6.0-1
+# MyBooks 移植版（audiobook）NAS 一键部署脚本
 #
-# 用法（在解压出来的 audiobook 目录的上一级执行）：
+# 用法（在解压出来的 audiobook 目录里执行）：
 #   cd /volume1/docker/audiobook
-#   sh deploy.sh            # 默认做：校验 -> 构建 -> 启动 -> 验证
-#   sh deploy.sh build-only # 只构建不启动
+#   sh scripts/deploy.sh            # 默认做：校验 -> 构建 -> 启动 -> 验证
+#   sh scripts/deploy.sh build-only # 只构建不启动
 #
 # 前提：NAS 已安装 Docker + Docker Compose（v2：docker compose 子命令）
 # ============================================================
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+# 本脚本住在 <包根>/scripts/ 下，真正要操作的是上一级（Dockerfile 所在处）。
+# 老包把它放在根目录，所以两种位置都认。
+if [ -f "$DIR/Dockerfile" ]; then
+    :
+elif [ -f "$DIR/../Dockerfile" ]; then
+    DIR="$(cd "$DIR/.." && pwd)"
+else
+    echo "!! 找不到 Dockerfile（已在 $DIR 与上层各找过）"
+    echo "   请在解压出来的 audiobook 目录里运行：sh scripts/deploy.sh"
+    exit 1
+fi
 cd "$DIR"
 CONTAINER="${CONTAINER:-audiobook-mybooks-1}"
 
 echo "==> [0/5] 源码目录污染自检"
-# 4.6.0-1 起数据外置到 /volume1/docker/audiobook-data，
+# 布局（自 4.6.0-1 起）数据外置到 /volume1/docker/audiobook-data，
 # 源码目录里不应出现 books/ data/ 等运行数据目录。
 DIRTY=""
 for p in books book data audios library upload imports sync models cache logs log workspace; do

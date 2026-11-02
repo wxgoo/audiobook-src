@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================
-# audiobook（MyBooks 移植版）升级 / 重装脚本 4.6.0-1（基于上游 mybooks tag 4.6.0）
+# audiobook（MyBooks 移植版）升级 / 重装脚本（基于上游 mybooks tag 4.6.0）
 #
 # 解决的问题：
 #   直接在 audiobook/ 里 tar -xzf 新包 → 旧目录残留 + 新包叠加，
@@ -8,7 +8,7 @@
 #   "数据目录不唯一"。本脚本用 原子替换 的方式彻底避免。
 #
 # 用法（在 /volume1/docker 下执行，或任意位置带绝对路径）：
-#   sh upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-1.tar.gz
+#   sh scripts/upgrade.sh /volume1/docker/audiobook-deploy-<版本>.tar.gz
 #
 # 可选环境变量：
 #   SKIP_BUILD=1   只解压不构建（先看代码）
@@ -16,7 +16,7 @@
 #   KEEP_OLD=1     保留 audiobook.old（默认成功后自动删）
 #   NO_BACKUP=1    不备份数据（不推荐）
 #
-# 布局约定（4.6.0-1 起）：
+# 布局约定（自 4.6.0-1 起）：
 #   /volume1/docker/audiobook/        源码 + 配置，可随意删了重解压
 #   /volume1/docker/audiobook-data/   唯一数据目录，永不被本脚本触碰
 # ============================================================
@@ -31,7 +31,7 @@ CONTAINER="${CONTAINER:-audiobook-mybooks-1}"
 
 # ---------- 参数校验 ----------
 if [ -z "$PKG" ]; then
-    echo "用法: sh upgrade.sh /path/to/audiobook-deploy-vX.Y.Z.tar.gz"
+    echo "用法: sh scripts/upgrade.sh /path/to/audiobook-deploy-vX.Y.Z.tar.gz"
     exit 1
 fi
 if [ ! -f "$PKG" ]; then
@@ -124,7 +124,7 @@ fi
 echo "==> [5/8] 解压新包到全新目录"
 mkdir -p "$SRC"
 
-# 判断包是否带外层目录（如 audiobook-deploy-4.6.0-1/）
+# 判断包是否带外层目录（如 audiobook-deploy-<版本>/）
 if tar -tzf "$PKG" 2>/dev/null | head -1 | grep -q '/'; then
     echo "    检测到外层目录，使用 --strip-components=1"
     tar -xzf "$PKG" -C "$SRC" --strip-components=1

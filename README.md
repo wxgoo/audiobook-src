@@ -35,7 +35,7 @@
 | **功能移植** | 阅读器分组分级权限、音频转写（Whisper）、TTS 朗读（edge-tts）、微信读书批注导入 |
 | **修上游 bug** | 有声书重复入库、权限判定散落 5 处、同名书误合并、epub 坏字体拖慢打开、阅读统计写库失败 |
 | **大量打磨** | 刮削源补清洗、作者名归一化、重复书清理、中文文件名容错、弱网缓存策略 |
-| **运维工具** | `upgrade.sh` 原子升级、`protect-custom.sh` 保护自定义内容、批量转换、坏字体清扫 CLI |
+| **运维工具** | [`scripts/`](scripts/) 下的原子升级、阅读器诊断、自定义内容保护、跟随上游一条龙；另有批量转换与坏字体清扫 CLI |
 
 完整逐条清单见 [`docs/移植改动清单.md`](docs/移植改动清单.md)，按「冲突风险」分三档。
 
@@ -63,7 +63,7 @@ audiobook-src/
 **铁律：源码和数据永远分开。**
 数据只在 `/volume1/docker/audiobook-data/`（容器内挂载为 `/data`）。
 源码目录 `audiobook/` 里一旦出现 `books/`、`data/`、`library/`、`audios/`，就是出错了——
-`upgrade.sh` 和 `deploy.sh` 都把这个检查写成硬校验，命中即 `exit 1`。
+`scripts/upgrade.sh` 和 `scripts/deploy.sh` 都把这个检查写成硬校验，命中即 `exit 1`。
 
 ---
 
@@ -74,10 +74,10 @@ audiobook-src/
 ```sh
 # 把 audiobook-deploy-4.6.0-10.tar.gz 放到 /volume1/docker/
 tar -xzf audiobook-deploy-4.6.0-10.tar.gz
-sh audiobook/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-10.tar.gz
+sh audiobook/scripts/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-10.tar.gz
 ```
 
-`upgrade.sh` 做**原子替换**（`mv audiobook audiobook.old` → 解压到全新目录），
+`scripts/upgrade.sh` 做**原子替换**（`mv audiobook audiobook.old` → 解压到全新目录），
 从机制上杜绝旧文件残留，不靠人记得先 `rm -rf`。
 构建约 4 分钟，完成后四个进程都应为 `RUNNING`。
 
@@ -124,7 +124,7 @@ cd app && npm run build-spa
 ## 发布流程
 
 ```
-开发侧改代码 → git commit → 出包 → 推 Gitee → NAS 上 upgrade.sh 上线
+开发侧改代码 → git commit → 出包 → 推 Gitee → NAS 上 scripts/upgrade.sh 上线
 ```
 
 完整步骤、两个操作环境的区别、跟上上游的合并套路，见 [`docs/操作总纲.md`](docs/操作总纲.md)。

@@ -52,6 +52,30 @@ chunk、调用方副本 2 处，共 5 处全部修补，`node --check` 全过）
 
 结论：这份定制是上游的**严格超集**。那本慢书在上游上同样慢，而且更糟（无剥离）。
 
+### 整理：运维脚本全部收进 `scripts/`
+
+原来 14 个 `.sh` 散在仓库根目录，哪些能用在现役版本、哪些是 v9 那趟的一次性工具，看不出来。
+现在按「能否再用」分两处：
+
+| 位置 | 内容 |
+|---|---|
+| `scripts/` | 5 个长期脚本：`upgrade.sh`（升级入口）、`deploy.sh`（首装）、`check-reader.sh`（只读诊断）、`protect-custom.sh`、`upgrade-upstream.sh`，附 `README.md` 索引 |
+| `scripts/archive/` | 9 个一次性脚本，头部统一标注【已归档】+ 归档原因 |
+
+同时修掉三处会实际咬人的问题：
+
+- **`deploy.sh` 移到 `scripts/` 后找错工作目录**：它原来 `cd $(dirname $0)` 然后校验 `Dockerfile`，
+  移层后会在 `scripts/` 里找。改为「自身目录有 `Dockerfile` 就用自身，否则用上一级，都没有则报错退出」，
+  两种摆放位置都认。
+- **`upgrade-upstream.sh` 找不到 `protect-custom.sh`**：查找路径从 3 个补到 5 个
+  （自身目录 → 上一层 `scripts/` → `/volume1/docker/scripts/` → `/volume1/docker/` → 现役源码目录）。
+  `check` 阶段改为复用同一个 `$PROTECT` 变量，不再硬编码 `$(dirname $0)`。
+- **补丁包流程的残留文档**：`docs/操作总纲.md` 第三章还在教人打 `audiobook-patch-*.tar.gz`
+  再跑 `merge-patch3.sh`，而那个脚本和补丁包早已不存在。整段改为「开发侧直接出成品包 → NAS 装」，
+  并明确写出该流程已废弃。
+
+`protect-custom.sh`、`upgrade-upstream.sh` 此前从未进过 git（换台机器就丢），这次一并纳入。
+
 ### 交付
 
 | 文件 | md5 |
