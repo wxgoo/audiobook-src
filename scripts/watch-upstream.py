@@ -120,6 +120,62 @@ def save_baseline(rev, date):
         f.write("\n")
 
 
+def resolve_ref(cache, ref):
+    """把 tag 名解析成 commit。本地没有该 tag 时提示怎么拉。"""
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref + "^{commit}"],
+                       cwd=cache, capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        sys.exit("找不到 %s。本地没有这个 tag 时先拉一下：\n"
+                 "  git -C %s fetch --tags --depth 200" % (ref, cache))
+    return r.stdout.strip()
+
+
+def show_between(cache, spec, offline):
+    """看两个 tag/提交之间的改动，如 v4.6.0..v4.6.1。"""
+    if ".." not in spec:
+        sys.exit("--between 要写成 A..B，例如 --between v4.6.0..v4.6.1")
+    a, b = spec.split("..", 1)
+    if not os.path.isdir(os.path.join(cache, ".git")):
+        if offline:
+            sys.exit("缓存不存在且指定了 --offline：%s" % cache)
+        run(["git", "clone", "--depth", "200", "--filter=blob:none",
+             "--no-checkout", UPSTREAM, cache])
+    resolve_ref(cache, a)
+    resolve_ref(cache, b)
+    rng = "%s..%s" % (a, b)
+    n = int(run(["git", "rev-list", "--count", rng], cwd=cache).strip() or 0)
+    if n == 0:
+        print("%s 与 %s 之间没有提交（可能历史太浅，试试 git -C %s fetch --unshallow）"
+              % (a, b, cache))
+        return 0
+    print("范围：%s（%d 个提交）\n" % (rng, n))
+    return report(cache, rng, n, header=None)
+
+
+def show_tags(cache, offline):
+    """列出上游 tag，新的在上。用来判断「上游发新版了吗」。"""
+    if not os.path.isdir(os.path.join(cache, ".git")):
+        if offline:
+            sys.exit("缓存不存在且指定了 --offline：%s" % cache)
+        run(["git", "clone", "--depth", "1", "--filter=blob:none",
+             "--no-checkout", UPSTREAM, cache])
+    out = run(["git", "tag", "--sort=-creatordate",
+               "--format=%(refname:lstrip=2)\t%(creatordate:short)\t%(objectname:short)"],
+              cwd=cache, check=False)
+    if not out.strip():
+        print("本地没有 tag。先联网跑一次（去掉 --offline）把 tag 拉下来：")
+        print("  git -C %s fetch --tags" % cache)
+        return 0
+    print("上游 tag（新的在上）：")
+    for line in out.strip().split("\n")[:20]:
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            print("  %-12s %s  %s" % (parts[0], parts[1], parts[2]))
+    print()
+    print("看某个区间的改动：--between 旧tag..新tag")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=30, help="看最近多少个提交")
@@ -127,9 +183,21 @@ def main():
     ap.add_argument("--since-baseline", action="store_true", help="只看基线之后")
     ap.add_argument("--cache", default=os.path.join(tempfile.gettempdir(), "mybooks-upstream-cache"))
     ap.add_argument("--offline", action="store_true", help="不联网，只看本地缓存")
+    ap.add_argument("--tags", action="store_true",
+                    help="列出上游所有 tag（看有没有发新版）")
+    ap.add_argument("--between", metavar="A..B",
+                    help="看两个 tag/提交之间的改动，如 --between v4.6.0..v4.6.1")
     args = ap.parse_args()
 
     cache = args.cache
+
+    # --tags / --between 都不需要解析分支 HEAD —— 只拿 tag 克隆的仓库里没有
+    # origin/develop，早在这里返回，别让后面的 rev-parse 把命令打断。
+    if args.tags:
+        return show_tags(cache, args.offline)
+    if args.between:
+        return show_between(cache, args.between, args.offline)
+
     rev = ensure_repo(cache, offline=args.offline)
     head_date = run(["git", "log", "-1", "--format=%ci", rev], cwd=cache).strip()
     short = rev[:7]
@@ -154,9 +222,19 @@ def main():
     else:
         rng = rev
 
-    # 取提交列表
+    if not base:
+        print("上游 %s/%s 当前 %s (%s)" % ("PoxenStudio/mybooks", BRANCH, short, head_date))
+        print("检查范围：最近 %d 个提交\n" % args.limit)
+    rc = report(cache, rng, args.limit, header=None)
+    if not base:
+        print("提示：用 --baseline 把当前位置记下来，之后 --since-baseline 只看增量。")
+    return rc
+
+
+def report(cache, rng, limit, header=None):
+    """按「跟我们有没有关系」把 rng 范围内的提交分三档打印出来。"""
     fmt = "%H%x1f%h%x1f%ci%x1f%s"
-    log = run(["git", "log", rng, "--max-count=%d" % args.limit, "--format=" + fmt], cwd=cache)
+    log = run(["git", "log", rng, "--max-count=%d" % limit, "--format=" + fmt], cwd=cache)
     commits = []
     for line in log.strip().split("\n"):
         if not line.strip():
@@ -171,7 +249,7 @@ def main():
         return 0
 
     # 一次性拿到这批提交改了哪些文件
-    out = run(["git", "log", rng, "--max-count=%d" % args.limit,
+    out = run(["git", "log", rng, "--max-count=%d" % limit,
                "--name-only", "--format=@@%H"], cwd=cache)
     files_by_commit = {}
     cur = None
@@ -184,11 +262,6 @@ def main():
             files_by_commit[cur].append(line)
 
     touched_set = set(TOUCHED)
-
-    print("上游 %s/%s 当前 %s (%s)" % ("PoxenStudio/mybooks", BRANCH, short, head_date))
-    if base:
-        print("基线 %s (%s)" % (base["commit"][:7], base.get("date", "?")))
-    print("检查范围：最近 %d 个提交\n" % len(commits))
 
     conflicts, related, other = [], [], []
     for c in commits:
@@ -225,8 +298,6 @@ def main():
          "webserver/ 或 app/src/ 下有改动，可能有我们需要的修复。", show_files=True)
     print("○ 其余 %d 个提交（依赖升级、文档、其他目录）—— 一般可忽略" % len(other))
 
-    if not base:
-        print("\n提示：用 --baseline 把当前位置记下来，之后 --since-baseline 只看增量。")
     return 0
 
 

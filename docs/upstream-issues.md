@@ -335,3 +335,135 @@ python3 scripts/watch-upstream.py --offline        # 网络不通时看上次拉
 整体升级（`upgrade-upstream.sh` 按 tag merge）是另一回事，那个脚本已经在了，
 走的是「合上游 release tag → 解冲突」。这个脚本盯的是**两次 release 之间的增量**，
 免得攒到发版时一次面对几百个提交。
+
+---
+
+# 附四：v4.6.1 已经发了（2026-11-01），该不该跟
+
+## 先搞清楚版本关系
+
+| tag | commit | 时间 | 说明 |
+|---|---|---|---|
+| `v4.6.0` | `f45f730` | — | **我们这份就是基于它** |
+| `v4.6.1` | `cdbe366` | 2026-11-01 15:52 | 新建 tag，**没有 Release 页面**（只有 tag，没写发布说明） |
+| `develop` | `2135ad7` | 2026-11-01 15:12 | v4.6.1 的前 12 个提交 |
+
+`v4.6.1` 就是 `develop` 那一天的快照，比 `develop` HEAD 多 12 个提交（favicon、ipv6、样式微调）。
+GitHub 上没有 `releases/tag/v4.6.1` 这个页面，所以看不到「官方变更说明」——
+只能自己数：**35 个提交、80 个文件、+8683 −7349 行**。
+
+## 跟我们重叠的 9 个文件（升级必冲突）
+
+| 文件 | 改动 | 我们要不要 |
+|---|---|---|
+| `webserver/services/autofill.py` | +28 −2，加 `cancel_requested` + `cancel()` | **要**，见下 |
+| `webserver/services/ai_fillinfo.py` | +25 −7，同上 | **要** |
+| `webserver/handlers/admin.py` | +31 −7，两个接口收 `{"cancel": true}`；favicon 支持 png | **要**（取消部分） |
+| `webserver/handlers/base.py` | +11 −3，`is_opds_acquisition()`，下载直链并入 401 分支 | 看情况，见下 |
+| `webserver/handlers/book.py` | +21 −13，本月统计改用 `site_month_bounds_server_local` | **要** |
+| `app/src/pages/admin/settings.vue` | +80 −23，时区选项改 -12~+12 | 看情况 |
+| `app/src/components/AppHeader.vue` | +13 −268 | 顺手，主要是删代码 |
+| `app/src/components/BookCards.vue` | +81 −81 | 样式微调 |
+| `app/src/components/ReadingTimeBackfillDialog.vue` | +8 −1 | 小修 |
+
+## 其中最重要的一条：**长任务取消，上游做了，跟我建议的一模一样**
+
+我在 P2 里写的建议是「两个 service 各加 `cancel_requested` 标志 + `cancel()` 方法，
+在循环的每个主要断点检查一次；`handlers/admin.py` 两个接口接受 `{"cancel": true}`」。
+
+v4.6.1 的实现**逐字对应**：
+
+```python
+# autofill.py / ai_fillinfo.py
+self.cancel_requested = False
+
+def cancel(self):
+    """请求中断当前刮取任务。"""
+    if not self.is_running:
+        return False
+    self.cancel_requested = True
+    return True
+
+# 循环里
+for batch_start in range(0, len(idlist), batch_size):
+    if throttle_aborted or self.cancel_requested:
+        break
+```
+
+```python
+# admin.py
+req = tornado.escape.json_decode(self.request.body) if self.request.body else {}
+if req.get("cancel"):
+    if not AutoFillService().cancel():
+        return {"err": "task.not_running", "msg": _("当前没有正在运行的任务")}
+    return {"err": "ok", "msg": _("已取消任务")}
+```
+
+所以 **P2 这条可以从「给上游的建议」里划掉了**——他们已经修了。
+
+## 顺手确认：P0 的两个 f-string 语法问题**还是没修**
+
+我逐文件搜了 `book_type_query`（`handlers/admin.py`）和 `The installed version is`
+（`webserver/main.py`），**v4.6.1 的 diff 里两处都没有**。
+
+这意味着：
+
+- 用 Python 3.11 跑上游 v4.6.1，`admin.py` 和 `main.py` **依然会 SyntaxError**
+- 上游自己大概是 3.12+ 在跑，所以感知不到
+- **这条 P0 要照旧提给他们**
+
+## 其余值得注意的改动
+
+| 改动 | 影响 |
+|---|---|
+| `requirements.txt`：`tornado 6.5.9→6.6`、`social-auth-core 5.0.0→6.2.0` | 跟不跟都行。social-auth-core 跨大版本，升级后**登录链路要回归测一遍** |
+| `Dockerfile` + `docker/start.sh`：新增 `conf/nginx/ipv6-listen.conf`，启动时探测 IPv6 是否可用再决定监听 | **不能跟**。我们的 nginx 配置是自管的（`conf/nginx/mybooks.conf`），照抄会打架 |
+| `app/package.json`：`nuxt 2.18.1 → 4.6.2` | **不能跟**，见附三。这是错的，Vue 2 跑不了 Nuxt 4 |
+| `webserver/site_time.py` +77 −17 | 时区工具大改，`book.py` 的统计依赖它。要跟就两个一起 |
+| `webserver/assistant/ai_assistant_agent.py` +96 −17 | AI 助手，我们没启用 |
+| `skills/mybooks/*`、`tests/test_locale_i18n_keys.py` | 上游自己的 skill 与测试，与我们无关 |
+| 18 个 `app/public/logo/favicon_*.png` | 只是图标资源 |
+| `conf/nginx/ipv6-listen.conf` | 见上，不跟 |
+
+## 结论：不做整体升级，只挑 4 处
+
+**理由**：v4.6.1 的改动性质和我们的定制不叠加——它主要是「AI 会话、时区统计、favicon、
+ipv6」这些新方向，而我们是「读者组、作者锁定、EPUB 修复」。整体 merge 会带来
+80 个文件的冲突面，收益却只有下面这几点。
+
+按优先级挑：
+
+| 优先级 | 挑什么 | 为什么 |
+|---|---|---|
+| P0 | 长任务取消（3 个文件） | 我们已经踩过「点错了只能重启容器」，改动小、风险低 |
+| P1 | 本月统计按站点时区切（`book.py` + `site_time.py`） | 我们的容器时区跟站点时区**必然不一致**（东八区容器、用户可能设别的），月初那几小时会算错，是真实 bug |
+| P2 | OPDS 下载直链 401（`base.py`） | **仅当我们开了 `REQUIRE_LOGIN`** 才有意义；我们默认没开，可以缓 |
+| 不跟 | nuxt 4.6.2、ipv6 nginx、favicon、AI 助手 | 见上表 |
+
+`AppHeader.vue` / `BookCards.vue` / `settings.vue` 这几个前端改动，如果后面要做
+「设置页时区选项」才需要一起合，否则纯属增加冲突。
+
+## 关于「部署机上跑不了 watch-upstream.py」
+
+```sh
+python3: can't open file '/volume1/docker/audiobook/scripts/watch-upstream.py':
+[Errno 2] No such file or directory
+```
+
+**原因**：那个脚本是今天才加进包的，NAS 上装的是**上一版包**，里面还没有它。
+`upgrade.sh` 每次会把新包解压到 `/volume1/docker/audiobook/`，所以：
+
+- 装上一版包 → 目录里没有 `watch-upstream.py`
+- 装这一版包（md5 `fec015c4…` 那个）→ 就有了
+
+**不需要为跑这个脚本专门升级**。想先看效果，两个办法：
+
+1. 直接从包里单独取出来（不动现有部署）：
+   ```sh
+   cd /volume1/docker
+   tar -xzf audiobook-deploy-4.6.0-10.tar.gz audiobook/scripts/watch-upstream.py --strip-components=2
+   python3 watch-upstream.py --help
+   ```
+2. 或者等下次升级时自然会带上。
+
+另外这个脚本**只用 Python 标准库**，NAS 上不用装任何依赖，只要有 `python3` 和 `git`。

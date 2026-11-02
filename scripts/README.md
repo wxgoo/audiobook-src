@@ -12,7 +12,7 @@
 | [`deploy.sh`](deploy.sh) | 首次装机，或怀疑包被解压坏了 | 会。构建并启动容器 |
 | [`protect-custom.sh`](protect-custom.sh) | 跟随上游合并前后，保护 BOOK_NAV 与三语文案 | 不改运行环境，只读写源码文件 |
 | [`upgrade-upstream.sh`](upgrade-upstream.sh) | 上游 mybooks 发了新版，要跟 | 会。全链路，最后调 `upgrade.sh` 上线 |
-| [`watch-upstream.py`](watch-upstream.py) | 日常盯上游改动，**不等发版**。看哪些提交跟我们有关 | 只读，只拉取上游仓库 |
+| [`watch-upstream.py`](watch-upstream.py) | 日常盯上游改动，**不等发版**。`--tags` 看有没有新版，`--between` 看两版之间改了什么 | 只读，只拉取上游仓库 |
 
 三个高频命令，照抄即可：
 

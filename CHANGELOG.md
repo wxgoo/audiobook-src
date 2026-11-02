@@ -225,6 +225,44 @@ python3 scripts/watch-upstream.py --offline        # github 断了看缓存
 我们本地是 `^2.18.1`，且 Dockerfile 走 `COPY app/dist*` 已有产物、不跑 npm，暂未受影响。
 但**别照抄上游的 `package.json`**。
 
+### 上游发了 v4.6.1：只挑 4 处，不做整体升级
+
+`v4.6.1`（`cdbe366`，2026-11-01）共 **35 个提交、80 个文件、+8683 −7349 行**，
+GitHub 上**没有 Release 页面**，只有 tag，所以没有官方变更说明，得自己数。
+
+跟我们重叠的 9 个文件里，有两条值得跟：
+
+**① 长任务取消（上游已经做了，和我之前建议的逐字一致）**
+
+`autofill.py` / `ai_fillinfo.py` 加 `cancel_requested` + `cancel()`，
+循环每个批次和每本书前检查；`handlers/admin.py` 两个接口收 `{"cancel": true}`。
+—— 这正是 `docs/upstream-issues.md` 里 P2 的建议，**可以从「给上游的清单」里划掉了**。
+
+**② 本月阅读统计按站点时区切**
+
+`handlers/book.py` 原来用 `extract('year'/'month', read_date)`，等于按**容器时区**切月；
+容器是东八区、用户设了别的时区时，月初那几小时会被算进上个月。
+改用 `site_time.site_month_bounds_server_local()` 换算（`site_time.py` 同步 +77 −17）。
+
+**P0 的两个 f-string 语法问题，v4.6.1 仍然没修**——`book_type_query`（`admin.py`）
+和 `The installed version is`（`main.py`）两处都没动，Python 3.11 下照旧 SyntaxError。
+
+**明确不跟**：`nuxt 2.18.1 → 4.6.2`（错的，Vue 2 跑不了 Nuxt 4）、
+`conf/nginx/ipv6-listen.conf`（我们的 nginx 配置自管，照抄会打架）、
+favicon 资源、AI 助手。
+
+详细对照见 `docs/upstream-issues.md` 附四。
+
+### 盯上游：watch-upstream.py 补 --tags 与 --between
+
+```sh
+python3 scripts/watch-upstream.py --tags                     # 上游发新版了吗
+python3 scripts/watch-upstream.py --between v4.6.0..v4.6.1   # 两个版本之间改了什么
+```
+
+`--between` 输出和基本模式同一套分档（⚠ 冲突 / ● 相关 / ○ 其余），
+不用再手动数 80 个文件。
+
 ### 部署包瘦身：归档内容不再下发
 
 部署包里混着不该给 NAS 用的东西，逻辑上混乱（"哪个脚本该跑"要多想一步），体积也白占：
