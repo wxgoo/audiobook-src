@@ -156,6 +156,44 @@ EPUB 转有声书（「听书」里的自动转音频）从 4.6.0-9 起就是坏
   `edge-tts` 不在这一批里——它已经从 `third-party/edge-tts` 装了 PoxenStudio
   定制版，再装一次会覆盖成 PyPI 官方版、丢掉 `proxy` 参数。
 
+### 修复：转音频的音质（48kbps）+ 纯标点段落丢字
+
+补回 `epub_to_audio` 之后顺着它的上游查下去，发现这个目录对应的不是
+`p0n1/epub_to_audiobook` 主干，而是 **`HorkyChen/epub_to_audiobook`** 这个 fork
+（提交 `8ca3bc4`）。fork 落后主干 7 个提交，其中两个是**真实影响听感与内容**的：
+
+**① 双重 MP3 编码，输出被压到 32kbps**
+
+原流程：每个 chunk 编成 mp3 存临时文件 → 合并时全部解成 PCM → 最后再编一次 mp3。
+最后一次 `combined.export(..., format="mp3")` **没给 `bitrate`**，落到 ffmpeg 默认的
+32kbps。实测（3 段 1 秒、24kHz 单声道）：
+
+| 路径 | 码率 | 3 秒大小 |
+|---|---|---|
+| 原来 | 32000 bps | 12,429 字节 |
+| 现在 | 48000 bps | 18,525 字节 |
+
+**② 纯标点片段会整段丢**
+
+`parse_text()` 只过滤空白，`——`、`...`、`，` 这类单独成段的会送进 edge-tts，
+返回 `NoAudioReceived`，那一段静音丢字。中文书里破折号分段、省略号行很常见。
+
+**改法**（`webserver/epub_to_audio/audiobook_generator/tts_providers/edge_tts_provider.py`）：
+
+- 把主干 `f11a014` 的做法合进来：`get_audio_segment()` 返回内存 PCM 段，
+  `text_to_speech` 攒齐后**只编一次**、指定 `bitrate="48k"`
+- 把主干 `fd76745` 的 `_is_meaningful_text()` 合进来：无字母数字的片段丢弃，
+  单字母（`A`、`B,`）保留
+- **fork 的字幕逻辑原样保留**：`collect_subtitles`、`cue_events`、`elapsed_ticks`
+  一个字没动，`--output_srt` 照常出 `.srt`
+
+实测（mock edge_tts，三段 1 秒音频 + 0.5 秒停顿）：
+MP3 48000bps/24kHz/单声道；SRT 时间轴 `0.0 / 1.5 / 3.0` 秒正确累加；
+不再产生 `/tmp/chapter-*` 临时文件。文本过滤边界 16 种输入全部符合预期。
+
+> **以后升级 `epub_to_audio` 别直接覆盖回 `8ca3bc4`**，会把这两处修复冲掉。
+> 详细对照见 `docs/upstream-issues.md` 附二。
+
 ### 部署包瘦身：归档内容不再下发
 
 部署包里混着不该给 NAS 用的东西，逻辑上混乱（"哪个脚本该跑"要多想一步），体积也白占：

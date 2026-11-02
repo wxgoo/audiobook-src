@@ -12,8 +12,6 @@ from pydub import AudioSegment
 from audiobook_generator.config.general_config import GeneralConfig
 from audiobook_generator.core.audio_tags import AudioTags
 from audiobook_generator.utils.utils import (
-    pydub_merge_audio_segments,
-    save_segment_tmp,
     set_audio_tags,
     split_text,
 )
@@ -100,9 +98,34 @@ class CommWithPauses:
             return [self.full_text]
 
         parts = self.full_text.split(self.break_string)
-        parts = [p for p in parts if p.strip()] # skip empty parts
-        logger.debug(f"split into <{len(parts)}> parts: {[p[:MAX_DEBUG_LOG_CHARS] for p in parts]}")
-        return parts
+
+        # 只保留「有实际内容」的片段：空白和纯标点都会让 Edge TTS 返回
+        # NoAudioReceived（整段静默丢字），所以这里过滤掉。
+        # 单个字母（"A"、"B,"）要保留——那可能是目录或编号里的真实内容。
+        # 移植自上游 p0n1/epub_to_audiobook 的 fd76745。
+        meaningful_parts = []
+        for part in parts:
+            if self._is_meaningful_text(part):
+                meaningful_parts.append(part.strip())
+
+        logger.debug(f"split into <{len(meaningful_parts)}> meaningful parts: {[p[:MAX_DEBUG_LOG_CHARS] for p in meaningful_parts]}")
+        return meaningful_parts
+
+    def _is_meaningful_text(self, text: str) -> bool:
+        """判断片段是否含 Edge TTS 能出声的内容（空串、纯标点会被拒）。"""
+        stripped_text = text.strip()
+        if not stripped_text:
+            return False
+
+        # 没有任何字母数字 → edge-tts 合成不出音频，报 NoAudioReceived。
+        if not any(char.isalnum() for char in stripped_text):
+            if len(stripped_text) >= 50:
+                logger.warning(
+                    f"Found a long text chunk without alphanumeric content: "
+                    f"<{stripped_text[:MAX_DEBUG_LOG_CHARS]}>, this might be a bug for specific text."
+                )
+            return False
+        return True
 
     async def chunkify(self):
         logger.debug(f"Chunkifying the text")
@@ -189,6 +212,20 @@ class CommWithPauses:
         output_bytes.seek(0)
         return output_bytes
 
+    async def get_audio_segment(self) -> AudioSegment:
+        """返回未编码的 PCM 片段，供调用方在内存里合并、最后只编码一次。
+
+        原来每个 chunk 各存一个 mp3 临时文件、合并时再解成 PCM、最后再编一次
+        mp3，属于「MP3→PCM→MP3」双重有损编码，落到 32 kbps 会发闷发尖。
+        这条路径避开那两次多余的编码。移植自上游的 f11a014。
+        """
+        await self.chunkify()
+        self.file.seek(0)
+        return AudioSegment.from_raw(
+            self.file, sample_width=PCM_SAMPLE_WIDTH,
+            frame_rate=PCM_FRAME_RATE, channels=1,
+        )
+
 
 class EdgeTTSProvider(BaseTTSProvider):
     def __init__(self, config: GeneralConfig):
@@ -239,7 +276,10 @@ class EdgeTTSProvider(BaseTTSProvider):
         # Running total, in ticks, of audio already written by previous text_chunks.
         chapter_elapsed_ticks = 0
 
-        tmp_files = []
+        # 各 chunk 先攒成内存里的 PCM 段，最后统一编码一次。
+        # 别改回 save_segment_tmp + pydub_merge_audio_segments：那条路每段都要
+        # 编一次 mp3、合并时再解一次、最后再编一次，实测输出被压到 32 kbps。
+        segments = []
         for i, chunk in enumerate(text_chunks, 1):
             chunk_id = f"chapter-{audio_tags.idx}_{audio_tags.title}_chunk_{i}_of_{len(text_chunks)}"
             logger.info(f"Processing {chunk_id}, length={len(chunk)}")
@@ -259,13 +299,8 @@ class EdgeTTSProvider(BaseTTSProvider):
                         pitch=self.config.voice_pitch,
                         proxy=self.config.proxy,
                     )
-                    audio_stream = asyncio.run(communicate.get_audio_stream())
-                    tmp_file = save_segment_tmp(
-                        audio_stream,
-                        self.get_output_file_extension(),
-                        prefix=chunk_id,
-                    )
-                    tmp_files.append(tmp_file)
+                    segment = asyncio.run(communicate.get_audio_segment())
+                    segments.append(segment)
                     if collect_subtitles:
                         for event in communicate.cue_events:
                             subtitle_events.append({
@@ -288,9 +323,14 @@ class EdgeTTSProvider(BaseTTSProvider):
                     else:
                         raise e
 
-        pydub_merge_audio_segments(
-            tmp_files, output_file, self.get_output_file_extension()
-        )
+        # Merge all PCM segments
+        combined = AudioSegment.empty()
+        for seg in segments:
+            combined += seg
+
+        # Export once to MP3 at the desired bitrate to avoid downsampling artifacts
+        target_bitrate = self._get_target_bitrate()
+        combined.export(output_file, format=self.get_output_file_extension(), bitrate=target_bitrate)
 
         set_audio_tags(output_file, audio_tags)
 
@@ -334,6 +374,15 @@ class EdgeTTSProvider(BaseTTSProvider):
             raise NotImplementedError(
                 f"Unknown file extension for output format: {self.config.output_format}. Only mp3 supported in edge-tts. See https://github.com/rany2/edge-tts/issues/179."
             )
+
+
+    def _get_target_bitrate(self) -> str:
+        """
+        Edge TTS only supports MP3; use 48 kbps to match edge-tts stream quality
+        (audio-24khz-48kbitrate-mono-mp3). The old merge path silently landed on
+        ffmpeg's 32 kbps default and lost the high end.
+        """
+        return "48k"
 
 
 def get_edge_tts_supported_output_formats():
