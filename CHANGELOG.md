@@ -153,11 +153,15 @@ conf 打进镜像，需重建生效（upgrade.sh / deploy.sh 均会做）；仓�
 
 | 文件 | 大小 | md5 |
 |---|---|---|
-| `audiobook-deploy-4.6.0-10.tar.gz` | 198M | `55b02fb4bd018a68a084ef85a5e71ef1` |
-| `audiobook-docs-scripts-4.6.0-10.tar.gz` | 74K | `ea9980c20225f73214cbd1889b5cf09d` |
+| `audiobook-deploy-4.6.0-10.tar.gz` | 198M | `b97c0c86160bdf1cf028c5c92908f23c` |
+| `audiobook-docs-scripts-4.6.0-10.tar.gz` | 74K | `54c2257dbbbeada049a784e34fba41f5` |
 
-> 同版本号出过四份包，md5 依次为 `111f…` → `7861…` → `a027…` → `55b0…`，
-> 前三个作废。最后一份的差别是去掉归档内容，并附上从主包解出的小包。
+> 包已做成**可复现**（`--sort=name --mtime=<最后提交时间>`、`gzip -n`）：同一份源码
+> 重出多少次 md5 都一样，所以上表这个值可以放心核。核不过就是包有问题或源码已改。
+>
+> 同版本号早期副本一律作废。**先核对上表 md5，再核包内容**：
+> 解开后 `scripts/` 里 6 个 `.sh` + 1 个 `README.md`、`docs/` 里 3 个 `.md`、无任何 `archive/`，
+> 跑 `sh audiobook/scripts/pack.sh --check <包路径>` 应输出「✅ 校验通过」。
 
 ---
 

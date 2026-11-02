@@ -109,6 +109,12 @@ else
     echo "==> 版本号（手动指定）: $VER"
 fi
 
+# 可复现基准时间：取最后一个提交的作者时间，而不是「现在」。
+# 这样同一份源码不管哪天重出，包内时间戳和 md5 都一样；
+# 源码一变，基准时间跟着走，md5 自然变。
+REPRO_MTIME=$(git log -1 --format=%ct 2>/dev/null)
+[ -n "$REPRO_MTIME" ] || REPRO_MTIME=1700000000   # 不在 git 仓库里时的兜底
+
 NAME="audiobook-deploy-$VER"
 OUTDIR="${OUTDIR:-/workspace}"
 OUT="$OUTDIR/$NAME.tar.gz"
@@ -137,6 +143,13 @@ echo "  $mr_total 条，有效链接 $mr_valid"
 
 # ---------- 打包 ----------
 echo "==> [3/4] 打包（cd 到父目录对目录名打包，不用 --transform）"
+
+# 同一份源码要能出同一个 md5，否则「包没传坏吧」这个问题永远说不清。
+# 变数有两个，都钉死：
+#   1. gzip 会把压缩时间戳写进文件头 → -n 去掉
+#   2. tar 按文件名排序时，同一批命令产生的 mtime 精度不同 → --mtime + --sort=name
+export GZIP=-n
+TAR_OPTS="--sort=name --mtime=@$REPRO_MTIME --owner=0 --group=0 --numeric-owner"
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 # 用硬链接镜像出一份叫 audiobook 的树，避免复制 92M 产物
@@ -159,7 +172,7 @@ for junk in scripts/archive docs/archive docs/settings-redesign; do
 done
 
 mkdir -p "$OUTDIR"
-( cd "$STAGE" && tar -czf "$OUT" audiobook )
+( cd "$STAGE" && tar $TAR_OPTS -czf "$OUT" audiobook )
 echo "  产物: $OUT"
 
 # ---------- 验包 ----------
