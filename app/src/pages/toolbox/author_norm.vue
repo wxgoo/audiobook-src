@@ -58,7 +58,10 @@
               </div>
               <v-chip v-for="v in d.variants" :key="v.name" small label class="ma-1"
                       :color="v.name === d.canonical ? 'green lighten-3' : 'grey lighten-3'">
-                {{ v.name }} <span class="text--secondary ml-1">×{{ v.count }}</span>
+                <!-- lighten-3 是浅底，深色主题下默认文字仍偏浅，浅底浅字看不见；
+                     显式压黑文字，两种主题都成立 -->
+                <span class="black--text">{{ v.name }}</span>
+                <span class="grey--text text--darken-3 ml-1">×{{ v.count }}</span>
               </v-chip>
               <div class="mt-2">
                 <v-btn x-small text color="primary" @click="addRule(d.canonical, otherNames(d))">
@@ -83,7 +86,8 @@
                 <span class="text--secondary">（{{ $t('authorNorm.booksCount', { n: s.books }) }}）</span>
               </div>
               <v-chip v-for="v in s.variants" :key="v.name" small label class="ma-1 grey lighten-3">
-                {{ v.name }} <span class="text--secondary ml-1">×{{ v.count }}</span>
+                <span class="black--text">{{ v.name }}</span>
+                <span class="grey--text text--darken-3 ml-1">×{{ v.count }}</span>
               </v-chip>
               <div class="mt-2">
                 <v-btn x-small text color="primary" @click="addRule(s.canonical, otherNames(s))">
@@ -161,7 +165,9 @@
             </div>
             <div class="d-flex align-center flex-wrap" style="gap: 6px">
               <v-chip v-for="(a, j) in r.aliases" :key="j" close small label class="ma-1 grey lighten-3"
-                      @click:close="r.aliases.splice(j, 1)">{{ a }}</v-chip>
+                      @click:close="r.aliases.splice(j, 1)">
+                <span class="black--text">{{ a }}</span>
+              </v-chip>
               <v-text-field v-model="r._newAlias" dense hide-details outlined
                             :placeholder="$t('authorNorm.aliasPlaceholder')"
                             style="max-width: 220px; height: 40px"
@@ -206,6 +212,7 @@
       type="confirm"
       :title="$t('authorNorm.saveTitle')"
       color="primary"
+      :confirm-text="$t('common.ok')"
       :confirm-loading="saving"
       @confirm="doSave"
     >
@@ -217,6 +224,8 @@
       type="action"
       :title="$t('authorNorm.savedTitle')"
       color="success"
+      :confirm-text="$t('common.ok')"
+      @confirm="resultDialog = false"
     >
       {{ resultMsg }}
     </AppDialog>
