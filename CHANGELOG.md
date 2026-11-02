@@ -194,6 +194,37 @@ MP3 48000bps/24kHz/单声道；SRT 时间轴 `0.0 / 1.5 / 3.0` 秒正确累加�
 > **以后升级 `epub_to_audio` 别直接覆盖回 `8ca3bc4`**，会把这两处修复冲掉。
 > 详细对照见 `docs/upstream-issues.md` 附二。
 
+### 新增：盯上游改动的工具
+
+上一版里写「epub_to_audiobook 这个 fork 已经停了」——**说错了，已更正**。
+准确情况：`HorkyChen/epub_to_audiobook` 的 `develop` 分支停在 `8ca3bc4`（2026-10-13），
+但**上游本体 `PoxenStudio/mybooks` 一天十几个提交**，只是没再动 `epub_to_audio` 而已。
+
+新增 `scripts/watch-upstream.py`，按「跟我们有没有关系」给上游提交分档：
+
+```
+⚠ 改了我们也改过的文件（升级必冲突）     ← 必看
+● 碰了 webserver/ 或 app/src/           ← 扫一眼
+○ 其余（dependabot、文档）               ← 忽略
+```
+
+```sh
+python3 scripts/watch-upstream.py                  # 最近 30 个
+python3 scripts/watch-upstream.py --since-baseline # 只看增量
+python3 scripts/watch-upstream.py --offline        # github 断了看缓存
+```
+
+基线 `docs/upstream-baseline.json` 已记到 `2135ad7`（2026-11-01）。
+
+**顺带查出一个上游的坑**：上游 `app/package.json` 被 dependabot 把 `nuxt` 从 `2.18.1`
+顶成 `^4.6.2`（PR `c120663`，10-25 合入），但两个锁文件互相矛盾——
+`package-lock.json` 锁的仍是 2.18.1，`pnpm-lock.yaml` 已解析成 4.6.2。
+其余依赖全是 Vue 2（`vue ^2.6.14`、`vuetify ^2.6.10`）、`nuxt.config.js` 是 Nuxt 2 写法，
+而 **Nuxt 4 只支持 Vue 3**。用 `npm ci` 还能构建，用 `pnpm install` 大概率直接失败。
+
+我们本地是 `^2.18.1`，且 Dockerfile 走 `COPY app/dist*` 已有产物、不跑 npm，暂未受影响。
+但**别照抄上游的 `package.json`**。
+
 ### 部署包瘦身：归档内容不再下发
 
 部署包里混着不该给 NAS 用的东西，逻辑上混乱（"哪个脚本该跑"要多想一步），体积也白占：

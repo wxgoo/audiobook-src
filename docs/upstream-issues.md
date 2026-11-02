@@ -197,14 +197,17 @@ edge-tts 对这类输入返回 `NoAudioReceived`，那一整段直接静音丢�
 | `b36236c` / `ee47a4d` / `a24cac9` | 都是 merge 提交，内容已体现在上面两个 |
 | `2a7308a` 修测试 | 只是它测试的路径与 `title_mode`，跟运行时代码无关 |
 
-## 另一件事：这个 fork 已经停了
+## 另一件事：`epub_to_audio` 自带的那部分没再更新了
 
-`8ca3bc4` 之后没有新提交，而主干还在走。往后 fork 会越落越远，
-`fea4f19`/`e2361f1` 钉的 edge-tts 版本也会逐渐跟服务端不兼容。
+`8ca3bc4` 之后 `HorkyChen/epub_to_audiobook` 的 `develop` 分支没有新提交，而 p0n1 主干还在走。
+往后这个 fork 的 `edge-tts` 版本会逐渐跟服务端不兼容。
+
+**注意**：这只说明「`epub_to_audio` 这一块」没动，不代表上游停了 ——
+`PoxenStudio/mybooks` 本体一直在更新，见下面的**附三**。
 
 **建议**：不要把 `webserver/epub_to_audio/` 当 submodule 挂着，直接把代码 vendored 进仓库
 （我们现在就是这么做的），并把这个 fork 独有的 4 个提交整理成 patch 说明，
-将来主干若吸收了 opencc 字幕能力就能整体切回主干。这件事**不用你们做**，
+将来主干若吸收了字幕能力就能整体切回主干。这件事**不用你们做**，
 列在这里只是说明我们为什么现在是 vendored 状态而不是 submodule。
 
 ---
@@ -214,3 +217,121 @@ edge-tts 对这类输入返回 `NoAudioReceived`，那一整段直接静音丢�
 这一节里的两条修复**我们已经自己打在 vendored 副本上**，不指望上游动。
 写出来是因为：如果你们以后升级 `epub_to_audio`，**别直接覆盖回 `8ca3bc4`**，
 那会把 48kbps 和标点过滤两处修复又冲掉。
+
+---
+
+# 附三：怎么盯上游 `PoxenStudio/mybooks` 的改动
+
+## 先更正上一版的一个说法
+
+上一节写「这个 fork 已经停了」。**说错了**，准确情况是：
+
+| 分支 | 最新提交 | 日期 | 说明 |
+|---|---|---|---|
+| `develop` | `8ca3bc4` | 2026-10-13 | **PoxenStudio 自己的开发分支**，我们的 `epub_to_audio` 就取自这里 |
+| `main` | `a24cac9` | 2025-08-29 | p0n1 主干，停在 2025-08 |
+| `release/v0.8.3` | `fea4f19` | 2026-01-22 | 旧发布分支 |
+
+`8ca3bc4` 之后 `develop` 上确实没有新提交，但**整个 mybooks 主仓库（`PoxenStudio/mybooks`）一天十几个提交**，
+只是没再动 `epub_to_audio` 而已。所以「盯着主干」这件事是**可做且该做**的，盯的对象是：
+
+```
+https://github.com/PoxenStudio/mybooks  分支 develop
+```
+
+而且这不是第三方仓库——**它就是上游本体**（`webserver/` 那套代码的来源）。
+`epub_to_audio` 只是它挂的一个 submodule。
+
+## 上游现在在走什么
+
+`develop` 当前 HEAD `2135ad7`（2026-11-01），最近两周的改动方向：
+
+- **AI 伴读**：`AiChatDialog.vue`（591 行）新增、会话样式调整、调用限额处理
+- **阅读统计**：按站点时区切天、月界换算、「即将读完」排除已读完
+- **必须登录（`REQUIRE_LOGIN`）**：OPDS 下载直链改回 401 挑战、路由中间件、`$ensureSession`
+- **Toolbox**：`epub_merge` 拼图封面重做、`epub_fixer` i18n 修复
+- **元数据**：无名图书 API 接入、整库批量补齐（`wuming_*` 六个工具）
+
+## 我们跟它的差距
+
+拿 `develop` 的 `app/src` 和我们仓库的 `app/src` 逐文件比（各 155 / 158 个文件）：
+
+| 情况 | 数量 | 例子 |
+|---|---|---|
+| 上游有、我们没有 | 1 | `AiChatDialog.vue`（591 行，AI 伴读整个功能） |
+| 我们有、上游没有 | 4 | `ReaderGroupEditor.vue`、`TranscribePanel.vue`、`toolbox/author_norm.vue`、`toolbox/book_dedup.vue` |
+| 两边都有但内容不同 | 17 | `AppHeader.vue`、`BookCards.vue`、`admin/settings.vue`、`toolbox/*.vue` 等 |
+
+这和 `webserver/` 那边是一致的：我们是「上游 4.6.0 + 定制」，上游已经在往前走，
+**差距会随时间变大**，不会自己缩小。
+
+## 一个必须先说的坑：上游的 `package.json` 已经不对了
+
+上游 `app/package.json` 声明 `"nuxt": "^4.6.2"`，但：
+
+- `app/package-lock.json` 里锁的还是 **2.18.1**
+- `app/pnpm-lock.yaml` 里已经解析成 **4.6.2**
+- 其余依赖全是 Vue 2：`vue ^2.6.14`、`vue-i18n ^8`、`vuetify ^2.6.10`、`webpack ^4`
+- `nuxt.config.js` 是 Nuxt 2 写法（`head` / `hooks['build:before']` / `dir.static`）
+- `plugins/i18n.js` 里写着 `import Vue from 'vue'`
+
+**Nuxt 4 只支持 Vue 3**。这是 dependabot 提交的 PR（`c120663`，10-25 合入），
+合的时候没人验过能不能构建。后果：
+
+- 用 `npm ci` 的人还能装上 2.18.1，**构建正常**
+- 用 `pnpm install` 的人会装到 4.6.2，**构建大概率直接失败**
+
+我们本地这份是 `^2.18.1`，并且走的是「Dockerfile 直接用 `app/dist` 已有产物」的快路
+（`COPY app/dist*`），根本不跑 `npm`，所以**暂时没被影响**。
+但这意味着**不能照抄上游的 `package.json`**。
+
+## 怎么盯：`scripts/watch-upstream.py`
+
+光靠人看 GitHub 提交列表是不现实的——一天十几个提交，绝大多数是 dependabot 升依赖。
+写了个脚本按「跟我们有没有关系」分类：
+
+```sh
+python3 scripts/watch-upstream.py                  # 看最近 30 个提交
+python3 scripts/watch-upstream.py --limit 100      # 看更多
+python3 scripts/watch-upstream.py --since-baseline # 只看基线之后的增量
+python3 scripts/watch-upstream.py --offline        # 网络不通时看上次拉到的
+```
+
+输出分三档：
+
+| 档位 | 含义 | 要不要管 |
+|---|---|---|
+| ⚠ 改了我们也改过的文件 | `TOUCHED` 列表里的文件被上游动了 | **必看**，下次 merge 必然冲突 |
+| ● 碰了 `webserver/` 或 `app/src/` | 可能有我们能直接抄的修复 | 扫一眼 |
+| ○ 其余 | 依赖升级、文档、其他目录 | 忽略 |
+
+`TOUCHED` 列表是从 `docs/移植改动清单.md` 抄的（23 个上游文件），
+那边加了新改动记得同步 `scripts/watch-upstream.py` 顶部。
+
+基线存在 `docs/upstream-baseline.json`，**提交进仓库**，换机器也能接着盯：
+
+```json
+{
+  "branch": "develop",
+  "commit": "2135ad753a72b52aac80c4746d072e0346890a99",
+  "date": "2026-11-01 15:12:06 +0800"
+}
+```
+
+**建议节奏**：每周跑一次 `--since-baseline`，看看增量；有 ⚠ 就评估要不要跟。
+确认看完后 `--baseline` 把位置推进到最新。
+
+注意脚本用 `git` 而不是 GitHub API——未认证的 API 每小时只有 60 次，跑几次就废了。
+国内直连 github 时不时断（本次就是），断了加 `--offline` 看缓存。
+
+## 跟不跟：分三类处理
+
+| 上游改动 | 建议 | 理由 |
+|---|---|---|
+| **安全性 / 数据正确性**（如 `REQUIRE_LOGIN` 相关、时区切天） | 跟 | 这类 bug 我们也会踩 |
+| **我们已独立修过的**（如 EPUB 修复页 i18n、`epub_merge` 封面） | 不跟，比一下谁的方案好 | 我们已经改过了，重复劳动 |
+| **新功能**（AI 伴读、无名图书 API） | 先不跟 | 需求不是我们的，跟了要一并维护前端 |
+
+整体升级（`upgrade-upstream.sh` 按 tag merge）是另一回事，那个脚本已经在了，
+走的是「合上游 release tag → 解冲突」。这个脚本盯的是**两次 release 之间的增量**，
+免得攒到发版时一次面对几百个提交。
