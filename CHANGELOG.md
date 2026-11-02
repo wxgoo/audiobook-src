@@ -115,11 +115,24 @@ chunk、调用方副本 2 处，共 5 处全部修补，`node --check` 全过）
 `sh scripts/pack.sh` 从仓库直出 → 199M → 有效链接 119 / 断链 8 → 校验通过，
 与手工组装的包行为完全一致。
 
+### 追加修复：nginx 补 /runtime-config.js 转发
+
+阅读页 console 报 `runtime-config.js:1 Uncaught SyntaxError: Unexpected token '<'`。
+根因：该文件是 Next.js 服务端路由（9100 的 Node 动态返回），但 nginx 的
+myreader location 只覆盖 readerx/_next/assets 等前缀，请求落进 SPA 兜底返回 index.html。
+自内嵌阅读器上线起就存在，非本次升级引入。
+
+修法：`conf/nginx/mybooks.conf` 加 `location = /runtime-config.js` 精确转发。
+本地 nginx + 假后端端到端实测三条路径全过；NAS 上已先热修验证（200 application/javascript）。
+conf 打进镜像，需重建生效（upgrade.sh / deploy.sh 均会做）；仓库已永久修复。
+
 ### 交付
 
 | 文件 | md5 |
 |---|---|
-| `audiobook-deploy-4.6.0-10.tar.gz` | `111f9a72b72cb6ad617e94f2e75da385` |
+| `audiobook-deploy-4.6.0-10.tar.gz` | `a027b49e798262d0aef7a4a3e0b94978`（最终版，含 /runtime-config.js nginx 修复） |
+
+> 同版本号出过三份包，md5 分别为 `111f…` → `7861…` → `a027…`，旧副本作废。
 
 ---
 
