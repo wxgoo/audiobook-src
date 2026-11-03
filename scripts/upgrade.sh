@@ -195,6 +195,15 @@ if docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null | grep -q 'rem
     done
     docker rm -f "$CONTAINER" 2>/dev/null || true
 fi
+# 同名占用兜底：down 只能移除 compose 项目创建的容器。如果容器是手动
+# docker run 建的（不属于本项目），up -d 会报
+#   Conflict. The container name "/audiobook-mybooks-1" is already in use...
+# 此时镜像已构建完，白白中断。发现同名容器还占着名字就删掉——
+# 数据全在 /data（宿主机 audiobook-data），删容器不伤任何书。
+if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    echo "    检测到同名容器存在（可能是手动 docker run 建的，不属于本项目），删除后由 compose 重建..."
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+fi
 ( cd "$SRC" && docker compose up -d )
 
 # ---------- 等容器真正跑起来再检查 ----------
