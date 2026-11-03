@@ -160,13 +160,19 @@
         ></v-slider>
       </div>
 
-      <!-- 字幕显示区 -->
-      <div class="subtitle-section" v-if="showSubtitle && subtitleCues.length">
+      <!-- 字幕显示区：固定 20 行窗口，当前句高亮居中，随播放滚动 -->
+      <div class="subtitle-section" v-if="showSubtitle && subtitleCues.length" ref="subtitleBox">
         <div
-          class="subtitle-text"
-          @click="currentCue && seekToCue(currentCue)"
-          :title="$t('audio.subtitle')"
-        >{{ currentCue ? currentCue.text : ' ' }}</div>
+          v-for="i in visibleCueIndexes"
+          :key="'sub-' + i"
+          :ref="'subcue-' + i"
+          class="subtitle-line"
+          :class="{
+            'active': i === currentCueIndex,
+            'past': i < currentCueIndex
+          }"
+          @click="seekToCue(subtitleCues[i])"
+        >{{ subtitleCues[i].text }}</div>
       </div>
 
       <!-- 控制按钮 -->
@@ -828,29 +834,40 @@ export default {
      * 把整个播放页顶上去。
      */
     scrollToActiveCue() {
-      if (!this.showLyrics) return;  // 未展开时不滚，省掉无谓的布局计算
-      const box = this.$refs.lyricsBox;
-      if (!box) return;
+      // 两个字幕视窗各自独立跟随：左侧整篇歌词面板 + 底部 20 行字幕区，
+      // 哪个展开着就滚哪个（另一个可能是 v-show 隐藏的，尺寸为 0，滚了也无害）
+      this._centerCueIn('lyricsBox', 'cue-', false);
+      this._centerCueIn('subtitleBox', 'subcue-', false);
+    },
+
+    /**
+     * 把一个容器里的当前句滚到可视区正中。
+     * @param {string} boxRef   容器 ref 名
+     * @param {string} cueRef   每次句子的 ref 前缀
+     * @param {boolean} instant 是否禁用平滑动画
+     */
+    _centerCueIn(boxRef, cueRef, instant) {
       const idx = this.currentCueIndex;
       if (idx < 0) return;
+      const box = this.$refs[boxRef];
+      if (!box || !box.clientHeight) return;   // 隐藏容器：跳过
 
-      // 内容没超出可视区（20 行常态）：flex 已经居中，无需滚动
+      // 内容没超出可视区：flex 已居中，无需滚动
       if (box.scrollHeight <= box.clientHeight + 1) {
         box.scrollTop = 0;
         return;
       }
 
-      const el = this.$refs['cue-' + idx];
+      const el = this.$refs[cueRef + idx];
       const node = Array.isArray(el) ? el[0] : el;
       if (!node) return;
 
       const target = Math.max(
         0, node.offsetTop - box.clientHeight / 2 + node.offsetHeight / 2);
-
-      // 已经在目标位置（误差 1px 内）就别折腾，避免每句都触发一次平滑动画
       if (Math.abs(box.scrollTop - target) < 1) return;
 
-      if (typeof box.scrollTo === 'function') {
+      const smooth = !instant && typeof box.scrollTo === 'function';
+      if (smooth) {
         box.scrollTo({ top: target, behavior: 'smooth' });
       } else {
         box.scrollTop = target;
@@ -871,7 +888,8 @@ export default {
         this.$nextTick(() => {
           const box = this.$refs.lyricsBox;
           if (box) box.scrollTop = 0;   // flex 居中，常态无需滚动
-          this.scrollToActiveCue();
+          this._centerCueIn('lyricsBox', 'cue-', true);
+          this._centerCueIn('subtitleBox', 'subcue-', true);
         });
       }
     },
@@ -1572,34 +1590,81 @@ export default {
   margin: 0;
 }
 
-/* 字幕显示区 */
+/* 字幕区：固定 20 行窗口，当前句高亮居中，随播放滚动。
+   高度按 20 行行高算（2.2rem x 20 ≈ 44rem），上限 45vh 免得挤掉控制条。 */
 .subtitle-section {
-  min-height: 44px;
-  max-height: 72px;
+  height: min(44rem, 45vh);
   overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 16px;
+  flex-direction: column;
+  /* 必须 relative：滚动定位用的是子句 offsetTop，不设会回溯到外层定位祖先，
+     目标位置整体算错（实测当前句被滚出可视区上方） */
+  position: relative;
+  padding: 4px 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  /* 上下渐隐，滚动带两端不硬切 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10%, #000 90%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 10%, #000 90%, transparent 100%);
 }
 
-.subtitle-text {
+/* 安全居中：有富余空间时上下均分（内容居中），溢出时自动归零可滚动。
+   不能用 justify-content: center —— 溢出会把顶部裁进不可滚动区 */
+.subtitle-section::before,
+.subtitle-section::after {
+  content: '';
+  flex: 1 0 0;
+  pointer-events: none;
+}
+
+.subtitle-section::-webkit-scrollbar {
+  width: 6px;
+}
+
+.subtitle-section::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+/* 单句 */
+.subtitle-line {
+  flex: 0 0 auto;
   font-size: 1rem;
-  line-height: 1.5;
-  color: #e0e0e0;
-  background: rgba(0, 0, 0, 0.45);
+  line-height: 1.6;
+  min-height: 2.2rem;
+  color: #7a7a7a;                 /* 未播到：暗 */
+  background: rgba(0, 0, 0, 0.28);
   border-radius: 8px;
   padding: 6px 14px;
+  margin-bottom: 2px;
   text-align: center;
   white-space: pre-wrap;
   word-break: break-word;
   cursor: pointer;
-  transition: background 0.2s ease;
-  max-width: 100%;
+  box-sizing: border-box;
+  transition: color 0.2s ease, background 0.2s ease;
 }
 
-.subtitle-text:hover {
-  background: rgba(156, 39, 176, 0.35);
+.subtitle-line.past {
+  color: #5c5c5c;
+}
+
+.subtitle-line:hover {
+  background: rgba(156, 39, 176, 0.2);
+  color: #cfcfcf;
+}
+
+/* 当前句：高亮 */
+.subtitle-line.active {
+  color: #ffffff;
+  background: rgba(156, 39, 176, 0.38);
+  border-left: 3px solid #9C27B0;
+  font-weight: 600;
+}
+
+.subtitle-line.active:hover {
+  background: rgba(156, 39, 176, 0.48);
 }
 
 .controls-section {
@@ -1696,13 +1761,14 @@ export default {
   }
 
   .subtitle-section {
-    min-height: 36px;
-    max-height: 56px;
+    /* 移动端：窗口行数与字号都收紧，避免吃掉控制条 */
+    height: min(32rem, 42vh);
     padding: 2px 8px;
   }
 
-  .subtitle-text {
+  .subtitle-line {
     font-size: 0.875rem;
+    min-height: 1.9rem;
     padding: 4px 10px;
   }
 
