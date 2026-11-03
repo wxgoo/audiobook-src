@@ -115,6 +115,12 @@ class ConverterService(AsyncService):
             logging.info("CMD: %s" % cmd)
             env = os.environ.copy()
             env["QTWEBENGINE_DISABLE_SANDBOX"] = "1"
+            # 容器以 root 运行，Chromium（QtWebEngine 的 PDF 渲染引擎）拒绝在
+            # root 下启用自身沙箱，直接报错退出：
+            #   Running as root without --no-sandbox is not supported
+            # 单设 QTWEBENGINE_DISABLE_SANDBOX=1 不够，必须显式 --no-sandbox。
+            # 容器内无外泄面，root 下关沙箱可接受（docx→pdf、epub 封面渲染都靠它）。
+            env["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox --disable-dev-shm-usage"
             env["XDG_RUNTIME_DIR"] = "/tmp/runtime-ubuntu"
             p = subprocess.Popen(args, stdout=log, stderr=subprocess.PIPE, env=env)
             try:
@@ -123,6 +129,16 @@ class ConverterService(AsyncService):
             except subprocess.TimeoutExpired:
                 logging.info("ebook-convert timeout: %s" % new_path)
                 p.kill()
+                return False
+            # 崩溃 ≠ 正常结束：glibc 熵源失败、Chromium 沙箱拒绝等都会让
+            # ebook-convert 非零退出且不产出文件。只判超时会让上游拿到
+            # FileNotFoundError（线上真实案例：docx→pdf 全军覆没却只报
+            # "No such file or directory"）。这里补两层判定。
+            if p.returncode != 0 or not os.path.exists(new_path):
+                logging.error(
+                    "ebook-convert failed (rc=%s, output exists=%s): %s",
+                    p.returncode, os.path.exists(new_path), new_path,
+                )
                 return False
             return True
 
