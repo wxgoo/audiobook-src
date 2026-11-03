@@ -4,16 +4,17 @@
     <div class="audio-upper-section">
       <!-- 左侧：封面 / 整篇字幕 双视图，可切换 -->
       <div class="cover-section" :class="{ 'lyrics-mode': showLyrics }">
-        <!-- 视图切换按钮 -->
+        <!-- 视图切换按钮：带文字，否则图标贴在播放列表旁边会被当成列表控件 -->
         <v-btn
           v-if="subtitleCues.length > 0"
-          icon
           small
+          rounded
           class="view-toggle-btn"
           :title="showLyrics ? $t('audio.showCover') : $t('audio.showLyrics')"
           @click="toggleLyricsView"
         >
-          <v-icon small>{{ showLyrics ? 'mdi-image' : 'mdi-format-list-bulleted' }}</v-icon>
+          <v-icon small left>{{ showLyrics ? 'mdi-image' : 'mdi-subtitles' }}</v-icon>
+          <span class="toggle-label">{{ showLyrics ? $t('audio.showCover') : $t('audio.showLyrics') }}</span>
         </v-btn>
 
         <!-- 封面视图 -->
@@ -1226,13 +1227,29 @@ export default {
 }
 
 /* 封面/字幕 视图切换按钮 */
+/* 视图切换按钮：原来的纯图标贴在播放列表左边，容易被当成列表控件，
+   这里改成带文字的胶囊按钮，并往封面区内部再挪一点，和列表拉开距离 */
 .view-toggle-btn {
   position: absolute;
-  top: 0;
-  right: 0;
+  top: 8px;
+  right: 8px;
   z-index: 2;
-  background-color: rgba(64, 64, 64, 0.85) !important;
+  background-color: rgba(64, 64, 64, 0.9) !important;
   color: #fff !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-size: 0.8rem !important;
+  padding: 0 10px !important;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.view-toggle-btn:hover {
+  background-color: rgba(156, 39, 176, 0.85) !important;
+}
+
+.view-toggle-btn .toggle-label {
+  margin-left: 2px;
+  white-space: nowrap;
 }
 
 /* 整篇字幕滚动区 */

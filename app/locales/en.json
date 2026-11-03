@@ -1668,7 +1668,9 @@
     "audioDelete": "Delete current audio book",
     "deleteDescription": "Are you sure you want to delete the <{title}> audio book?",
     "deleteSuccess": "Delete successful!",
-    "deleteFailed": "Delete failed, please try again later"
+    "deleteFailed": "Delete failed, please try again later",
+    "showLyrics": "Subtitles",
+    "showCover": "Cover"
   },
   "syslog": {
     "title": "System Log",

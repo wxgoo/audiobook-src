@@ -1673,7 +1673,9 @@
     "audioDelete": "删除当前有声书",
     "deleteDescription": "确定要删除《{title}》的有声书吗？删除后将无法恢复。",
     "deleteSuccess": "删除成功！",
-    "deleteFailed": "删除失败，请稍后重试"
+    "deleteFailed": "删除失败，请稍后重试",
+    "showLyrics": "看字幕",
+    "showCover": "看封面"
   },
   "syslog": {
     "title": "系统日志",

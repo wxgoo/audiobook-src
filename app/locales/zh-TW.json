@@ -1663,7 +1663,9 @@
     "audioDelete": "刪除當前的有聲書",
     "deleteDescription": "確定要刪除《{title}》的有聲書嗎？。",
     "deleteSuccess": "刪除成功！",
-    "deleteFailed": "刪除失敗，請稍後重試"
+    "deleteFailed": "刪除失敗，請稍後重試",
+    "showLyrics": "看字幕",
+    "showCover": "看封面"
   },
   "syslog": {
     "title": "系統日誌",
