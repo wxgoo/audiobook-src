@@ -14,6 +14,19 @@
 > **紧急修复：4.6.0-13 的有声书导入完全不可用**，请直接升级到本版，跳过 -13。
 > 只改后端 3 个文件，**不需要重建前端**。
 
+### 追记（2026-11-03 晚）：字幕工作流落地
+
+- **确认上游已内置「播放时显示字幕」**：`pages/audio/_id.vue`（正式播放器）与
+  `AudioListDialog`（试听弹窗）都会取音频同目录同名 `.srt/.vtt`，随播放滚动高亮、
+  点击字幕跳进度、可开关。后端 `AudioDetail` 接口同样会附 `subtitle` URL。
+  **无需改代码，只差 `.srt` 文件本身**。
+- 交付独立工具 [`srt-tool/`](../srt-tool/)（faster-whisper，PC 上跑，生成同目录同名
+  `.srt`），识别策略借鉴 v6.22：中文引导语、VAD 过滤、幻觉清洗、结果缓存。
+  用法见 `srt-tool/README.md`；完整工作流见 `docs/字幕生成与播放.md`。
+- 修复 `.gitignore` 通配 `audio/`、`book/` 误伤前端页面，导致 gitee 仓库丢失
+  `app/src/pages/audio/`、`app/src/pages/book/`（改根目录锚定 `/audio/`、`/book/`），
+  并补齐这两个目录与 `imports.vue` 的空导入提示（与 NAS 部署包对齐）。
+
 ### 严重 bug：`'LibraryDatabase' object has no attribute 'cache'`
 
 `4.6.0-13` 把音频路径改造收口到 `webserver/base/audio_dir.py` 后，导入链路里写成了：
