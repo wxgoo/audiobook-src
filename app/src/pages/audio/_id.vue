@@ -31,7 +31,7 @@
           </div>
         </div>
 
-        <!-- 整篇字幕滚动视图：当前句高亮，其余变暗，自动跟随滚动 -->
+        <!-- 整篇字幕滚动视图：当前句高亮，固定窗口（默认 20 行）内滚动跟随 -->
         <div v-show="showLyrics" class="lyrics-container" ref="lyricsBox">
           <div
             v-for="(cue, i) in subtitleCues"
@@ -43,7 +43,11 @@
               'past': i < currentCueIndex
             }"
             @click="seekToCue(cue)"
-          >{{ cue.text }}</div>
+          >
+            <!-- 20 行窗口外的句子不渲染文本：整章字幕动辄上千行，
+                 全量渲染会让每次滚动都触发上千个节点的布局计算 -->
+            <template v-if="i >= lyricWindowStart && i <= lyricWindowEnd">{{ cue.text }}</template>
+          </div>
         </div>
       </div>
 
@@ -401,6 +405,9 @@ export default {
       subtitleCache: {},
       // 整篇字幕视图（覆盖封面位置，当前句高亮 + 自动跟随滚动）
       showLyrics: false,
+      // 字幕窗口：只保留当前句前后若干行，避免整章上千行全量渲染。
+      // 设成奇数保证当前句正好落在窗口正中：10 上 + 1 当前 + 9 下 = 20 行。
+      lyricWindowSize: 20,
 
       // 定时器
       sleepTimer: null,
@@ -436,6 +443,21 @@ export default {
   computed: {
     currentAudio() {
       return this.audioFiles[this.currentTrackIndex];
+    },
+
+    // 字幕窗口边界：当前句居中，上下各 (size-1)/2 行。
+    // 还没定位到任何句（currentCueIndex=-1）时把窗口放在开头，避免一片空白。
+    lyricWindowStart() {
+      const half = Math.floor((this.lyricWindowSize - 1) / 2);
+      const center = this.currentCueIndex >= 0 ? this.currentCueIndex : half;
+      const start = Math.max(0, center - half);
+      // 快到底时整体上移，保证窗口始终满 size 行（除末尾不足的极少数情况）
+      const maxStart = Math.max(0, this.subtitleCues.length - this.lyricWindowSize);
+      return Math.min(start, maxStart);
+    },
+
+    lyricWindowEnd() {
+      return this.lyricWindowStart + this.lyricWindowSize - 1;
     },
 
     currentCue() {
@@ -791,11 +813,14 @@ export default {
     },
 
     /**
-     * 让当前句滚到字幕区的中线附近。
+     * 让当前句始终停在字幕区正中。
      *
-     * 用 scrollTop 手算而不是 scrollIntoView：后者会连带滚动最近的可滚动祖先，
-     * 把整个播放页顶上去。这里只在 lyricsBox 内部滚，且只滚「超出舒适区」的情况，
-     * 播放中每句都居中滚动会让人眼晕。
+     * 与旧版的区别：旧版「落在上下 35% 舒适区内就不动」，窗口位置会随句子长短
+     * 漂移，可见句数也不固定。现在改成固定窗口 —— 当前句永远居中，上下各挂
+     * (lyricWindowSize-1)/2 句，形成一条稳定的 20 行阅读带。
+     *
+     * 仍然用 scrollTop 手算而不是 scrollIntoView：后者会连带滚动最近的可滚动
+     * 祖先，把整个播放页顶上去。
      */
     scrollToActiveCue() {
       if (!this.showLyrics) return;  // 未展开时不滚，省掉无谓的布局计算
@@ -806,21 +831,18 @@ export default {
       const node = Array.isArray(el) ? el[0] : el;
       if (!node) return;
 
-      const boxH = box.clientHeight;
-      const nodeTop = node.offsetTop;
-      const nodeH = node.offsetHeight;
-      const cur = box.scrollTop;
+      // 当前句居中：offsetTop 是相对 lyricsBox 内容原点（含 32px 上 padding），
+      // 减去半个可视高度、再减去自身半个高度即为居中 scrollTop
+      const target = node.offsetTop - box.clientHeight / 2 + node.offsetHeight / 2;
+      const next = Math.max(0, target);
 
-      // 舒适区：中线上 35% ~ 下 35%，落在区间内就不动
-      const upper = cur + boxH * 0.35;
-      const lower = cur + boxH * 0.65;
-      if (nodeTop >= upper && nodeTop + nodeH <= lower) return;
+      // 已经在目标位置（误差 1px 内）就别折腾，避免每句都触发一次平滑动画
+      if (Math.abs(box.scrollTop - next) < 1) return;
 
-      const target = nodeTop - boxH / 2 + nodeH / 2;
       if (typeof box.scrollTo === 'function') {
-        box.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+        box.scrollTo({ top: next, behavior: 'smooth' });
       } else {
-        box.scrollTop = Math.max(0, target);
+        box.scrollTop = next;
       }
     },
 
@@ -1205,6 +1227,18 @@ export default {
   scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
 
+/* 上下各撑一段留白：窗口滚到开头/结尾时当前句仍能停在偏中位置，
+   否则 scrollTop 会被 0 / max 卡住，看起来像「提前停止跟随」。
+   用伪元素而不是 padding，是因为 padding 会影响 offsetTop 基准。
+   高度取 10 行（半窗口）的量级，正是首末句能居中的最大需求。 */
+.lyrics-container::before,
+.lyrics-container::after {
+  content: '';
+  display: block;
+  height: 26rem;
+  pointer-events: none;
+}
+
 .lyrics-container::-webkit-scrollbar {
   width: 6px;
 }
@@ -1226,6 +1260,10 @@ export default {
   white-space: pre-wrap;
   word-break: break-word;
   transition: color 0.25s ease, background 0.25s ease, transform 0.25s ease;
+  /* 固定最小高度：窗口外的行不渲染文字（避免上千节点布局开销），
+     没有这条它们会塌成 0 高，导致行距忽大忽小、scrollTop 算不准 */
+  min-height: 2.55rem;
+  box-sizing: border-box;
 }
 
 .lyric-line:hover {
