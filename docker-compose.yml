@@ -19,6 +19,13 @@ services:
       cache_from:
         - mybooks-local:latest
     image: mybooks-local:latest
+    # Synology 容器套件的默认 seccomp profile 会拦掉 glibc 2.4x 的
+    # getentropy 调用组合，QtWebEngine（docx→pdf 的渲染引擎）启动即
+    # "Fatal glibc error: cannot get entropy for arc4random" 直接 abort。
+    # 内网 NAS 环境放开 seccomp 是可接受的；有对外暴露需求的部署不要抄这行，
+    # 改用升级 DSM 容器套件解决。
+    security_opt:
+      - seccomp:unconfined
     volumes:
       # 数据目录：书库、音频、数据库、模型缓存、日志全部在这里。
       # ★ 与源码目录分离 ★ —— rm -rf audiobook 重装源码不会伤到任何数据。
