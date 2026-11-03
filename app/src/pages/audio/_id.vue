@@ -31,10 +31,12 @@
           </div>
         </div>
 
-        <!-- 整篇字幕滚动视图：当前句高亮，固定窗口（默认 20 行）内滚动跟随 -->
+        <!-- 整篇字幕滚动视图：当前句高亮，固定 20 行窗口跟随 -->
+        <!-- 只渲染窗口内的行：整章字幕动辄上千行，全量 v-for 会让每次滚动都
+             触发上千节点的布局计算。窗口由 flex 垂直居中。 -->
         <div v-show="showLyrics" class="lyrics-container" ref="lyricsBox">
           <div
-            v-for="(cue, i) in subtitleCues"
+            v-for="i in visibleCueIndexes"
             :key="i"
             :ref="'cue-' + i"
             class="lyric-line"
@@ -42,12 +44,8 @@
               'active': i === currentCueIndex,
               'past': i < currentCueIndex
             }"
-            @click="seekToCue(cue)"
-          >
-            <!-- 20 行窗口外的句子不渲染文本：整章字幕动辄上千行，
-                 全量渲染会让每次滚动都触发上千个节点的布局计算 -->
-            <template v-if="i >= lyricWindowStart && i <= lyricWindowEnd">{{ cue.text }}</template>
-          </div>
+            @click="seekToCue(subtitleCues[i])"
+          >{{ subtitleCues[i].text }}</div>
         </div>
       </div>
 
@@ -456,8 +454,13 @@ export default {
       return Math.min(start, maxStart);
     },
 
-    lyricWindowEnd() {
-      return this.lyricWindowStart + this.lyricWindowSize - 1;
+    // 窗口内实际渲染的下标数组。只渲染 20 行，DOM 规模恒定。
+    visibleCueIndexes() {
+      const out = [];
+      const end = Math.min(this.lyricWindowStart + this.lyricWindowSize - 1,
+                           this.subtitleCues.length - 1);
+      for (let i = this.lyricWindowStart; i <= end; i++) out.push(i);
+      return out;
     },
 
     currentCue() {
@@ -813,36 +816,44 @@ export default {
     },
 
     /**
-     * 让当前句始终停在字幕区正中。
+     * 20 行窗口跟随：当前句始终位于窗口正中。
      *
-     * 与旧版的区别：旧版「落在上下 35% 舒适区内就不动」，窗口位置会随句子长短
-     * 漂移，可见句数也不固定。现在改成固定窗口 —— 当前句永远居中，上下各挂
-     * (lyricWindowSize-1)/2 句，形成一条稳定的 20 行阅读带。
+     * 实现要点：
+     *   1. 只渲染窗口内的 20 行（visibleCueIndexes），DOM 规模恒定，
+     *      整章上千行也不拖慢布局；
+     *   2. 窗口内容由 CSS flex 垂直居中，20 行通常比可视区矮，天然居于视觉中心；
+     *   3. 只有句子长到撑满可视区时才需要滚动，此时把当前句滚到中部。
      *
-     * 仍然用 scrollTop 手算而不是 scrollIntoView：后者会连带滚动最近的可滚动
-     * 祖先，把整个播放页顶上去。
+     * 用 scrollTop 手算而不是 scrollIntoView：后者会连带滚动最近的可滚动祖先，
+     * 把整个播放页顶上去。
      */
     scrollToActiveCue() {
       if (!this.showLyrics) return;  // 未展开时不滚，省掉无谓的布局计算
       const box = this.$refs.lyricsBox;
       if (!box) return;
-      const el = this.$refs['cue-' + this.currentCueIndex];
-      // v-for 里 ref 可能是数组，取第一个
+      const idx = this.currentCueIndex;
+      if (idx < 0) return;
+
+      // 内容没超出可视区（20 行常态）：flex 已经居中，无需滚动
+      if (box.scrollHeight <= box.clientHeight + 1) {
+        box.scrollTop = 0;
+        return;
+      }
+
+      const el = this.$refs['cue-' + idx];
       const node = Array.isArray(el) ? el[0] : el;
       if (!node) return;
 
-      // 当前句居中：offsetTop 是相对 lyricsBox 内容原点（含 32px 上 padding），
-      // 减去半个可视高度、再减去自身半个高度即为居中 scrollTop
-      const target = node.offsetTop - box.clientHeight / 2 + node.offsetHeight / 2;
-      const next = Math.max(0, target);
+      const target = Math.max(
+        0, node.offsetTop - box.clientHeight / 2 + node.offsetHeight / 2);
 
       // 已经在目标位置（误差 1px 内）就别折腾，避免每句都触发一次平滑动画
-      if (Math.abs(box.scrollTop - next) < 1) return;
+      if (Math.abs(box.scrollTop - target) < 1) return;
 
       if (typeof box.scrollTo === 'function') {
-        box.scrollTo({ top: next, behavior: 'smooth' });
+        box.scrollTo({ top: target, behavior: 'smooth' });
       } else {
-        box.scrollTop = next;
+        box.scrollTop = target;
       }
     },
 
@@ -855,16 +866,12 @@ export default {
           console.error('Error saving lyrics view preference:', error);
         }
       }
-      // 展开后立刻定位到当前句，否则会停在上次的位置
+      // 展开后立刻定位到当前句（复用同一套居中逻辑，首次不做平滑动画）
       if (this.showLyrics) {
         this.$nextTick(() => {
           const box = this.$refs.lyricsBox;
-          const el = this.$refs['cue-' + this.currentCueIndex];
-          const node = Array.isArray(el) ? el[0] : el;
-          if (box && node) {
-            // 首次展开直接跳，不做平滑动画
-            box.scrollTop = Math.max(0, node.offsetTop - box.clientHeight / 2 + node.offsetHeight / 2);
-          }
+          if (box) box.scrollTop = 0;   // flex 居中，常态无需滚动
+          this.scrollToActiveCue();
         });
       }
     },
@@ -1220,6 +1227,12 @@ export default {
   /* 必须 relative：子句的 offsetTop 是相对 offsetParent 算的，不设这个会
      回溯到 .cover-section，滚动位置整体偏掉一整段 padding */
   position: relative;
+  /* 20 行窗口通常比可视区矮，用上下弹性留白垂直居中。
+     注意不能用 justify-content:center —— 内容一旦溢出，它会把顶部裁进
+     不可滚动区（scrollTop 到不了负值），开头的句子会缺行。
+     伪元素 flex-grow 空隙在无富余空间时自动归零，是安全的居中写法 */
+  display: flex;
+  flex-direction: column;
   /* 上下渐隐，看起来像"滚进视野"而不是硬边缘切断 */
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12%, #000 88%, transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 12%, #000 88%, transparent 100%);
@@ -1227,17 +1240,16 @@ export default {
   scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
 
-/* 上下各撑一段留白：窗口滚到开头/结尾时当前句仍能停在偏中位置，
-   否则 scrollTop 会被 0 / max 卡住，看起来像「提前停止跟随」。
-   用伪元素而不是 padding，是因为 padding 会影响 offsetTop 基准。
-   高度取 10 行（半窗口）的量级，正是首末句能居中的最大需求。 */
+/* 安全居中：有富余空间时上下各占一半（内容居中），溢出时自动归零（可正常滚动） */
 .lyrics-container::before,
 .lyrics-container::after {
   content: '';
-  display: block;
-  height: 26rem;
+  flex: 1 0 0;
   pointer-events: none;
 }
+
+/* 上下留白去掉：窗口只有 20 行，内容通常比可视区矮，靠 flex 垂直居中即可；
+   句子多到撑满时再退回滚动（overflow-y:auto 仍然生效）。 */
 
 .lyrics-container::-webkit-scrollbar {
   width: 6px;
