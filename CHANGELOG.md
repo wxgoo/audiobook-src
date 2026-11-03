@@ -9,7 +9,355 @@
 
 ---
 
-## 4.6.0-10（当前）
+## 4.6.0-14（当前）
+
+> **紧急修复：4.6.0-13 的有声书导入完全不可用**，请直接升级到本版，跳过 -13。
+> 只改后端 3 个文件，**不需要重建前端**。
+
+### 严重 bug：`'LibraryDatabase' object has no attribute 'cache'`
+
+`4.6.0-13` 把音频路径改造收口到 `webserver/base/audio_dir.py` 后，导入链路里写成了：
+
+```python
+audio_dir_for_read(self.db.cache, book_id)     # ← 错的
+```
+
+但 `AsyncService` 注入的 `self.db` 就是 calibre 的 `LibraryDatabase` 本身，
+它**没有 `cache` 属性**，cache 是 `db.new_api`。结果每一本书都在 `_check_audio_exists`
+第一步就抛 `AttributeError`，被外层 `except` 吞成一行「文件无效」：
+
+```
+[E] error processing .../1.哈利·波特与魔法石: 'LibraryDatabase' object has no attribute 'cache'
+```
+
+**所有 15 本书全军覆没**，界面上每一行都显示「文件无效」，看起来像文件坏了，
+实际是代码 bug。
+
+**修法**：新增 `audio_dir.cache_of(db)`，传 `LibraryDatabase` 还是 cache 都能正确工作；
+`audios_import.py` 三处 `.cache` 全部改为直接传 `self.db`。
+
+同时补了回归用例：`FakeLibraryDb` 刻意**不实现 `.cache`**，专门守住这条路。
+
+### 顺带修掉同一批暴露出来的三个问题
+
+#### 1. 「有声书目录里没有找到可导入的书」是误报
+
+`/admin/audio_import/status` 在任务结束后返回空 `status={}`，前端拿 `total=0`
+就判成「目录里没东西」。跑得快的任务（比如上面那种秒级全失败）第一次轮询时任务
+已经结束，于是弹出与事实完全相反的提示——用户明明看到列表里有 15 行。
+
+现在任务结束后也返回最后一次真实状态。
+
+#### 2. 书名乱码：GBK 标签被按 latin-1 读
+
+界面上出现 `¹þÀû²¨ÌØÓëËÀÍöÊ¥Æ÷` 这种书名，是很多老 mp3 的 ID3v1 标签
+没写编码声明，mutagen 按 latin-1 解码的经典结果。
+
+新增 `_fix_mojibake()`：检测到「字符全在 latin-1 高半区」的特征就按 GBK 重新解码，
+还原失败（出现替换字符）则保持原样，不会把正常的法语/德语标签改坏。
+
+验证：`¹þÀû²¨ÌØÓëËÀÍöÊ¥Æ÷ → 哈利波特与死亡圣器`，`café déjà vu` 原样不动。
+
+#### 3. 单个目录消失会把整个导入任务 abort
+
+`subdirs` 是开跑前一次性取的，中途你把某个目录移走/改名，`os.listdir` 就抛
+`FileNotFoundError`，整个任务终止，本轮剩下的书一本都处理不到，日志里只有
+一句 `failed: [Errno 2]`。
+
+现在单条目录消失只跳过这一条并记日志，其它书照常导入。
+
+### 新增 `scripts/hotfix.sh`：只改 Python 时不必重建镜像
+
+`upgrade.sh` 是「全量解压 + `docker compose build` + `up -d`」，NAS 上一次十几分钟。
+但绝大多数修复只动了 `webserver/` 下的 .py——这部分在 Dockerfile 里就是
+`COPY webserver/`，纯 Python，不参与编译。为它重建整个镜像纯属浪费。
+
+```sh
+sh scripts/hotfix.sh /volume1/docker/audiobook-deploy-4.6.0-14.tar.gz --restart
+```
+
+只从包里解出 `webserver/` + `tools/` + `server.py`（不解 197M 全包），
+`docker cp` 覆盖 → 容器内 `compileall` 预检 → 编译不过**自动回滚** →
+通过则重启并检查 4 个进程 + HTTP 200。全程约 10 秒，旧代码备份在
+`audiobook-hotfix-backup/<时间戳>/`，回滚命令脚本会打印出来。
+
+前端（`app/`）、阅读器产物（`myreader-dist/`）、Dockerfile、依赖这类改动
+仍然要走 `upgrade.sh`，脚本里有一张对照表。
+
+### 日志可诊断性
+
+导入失败时的日志以前只有一句异常，看不出是哪一步挂的（`db.cache` 那个 bug 就是
+这样被埋成「文件无效」的）。现在带上阶段名和 book_id：
+
+```
+[AUDIO_IMPORT] error processing <路径> [阶段=解析书目录 book_id=571]: xxx (AttributeError)
+```
+
+四个阶段：`查重` → `创建书籍记录` → `解析书目录` → `复制音频`。
+
+### 4.6.0-14 后续热修（NAS 上以小补丁包安装）
+
+**① BIG5 繁体标签修复**（线上首例：台湾版哈利波特有声书的 ID3 标签是 BIG5，
+GBK 解出来含替换符，`_fix_mojibake` 按设计放弃修改 → 书名作者乱码）：
+
+- `webserver/services/audios_import.py` `_fix_mojibake()` 加编码回退：
+  `for enc in ("gbk", "big5")`，谁解出来没有 `\ufffd` 用谁，都失败保持原样
+- 自测 5 类：GBK 样例（仍还原）、BIG5 繁体（新增命中）、真 latin-1（café 不动）、
+  ASCII、正常中文——全过
+- **同时把修复日志从 `logging.debug` 升到 `logging.info`**：默认级别下可见，
+  格式 `[AUDIO_IMPORT] fixed mojibake (gbk|big5): '...' -> '...'`，
+  出问题一眼能看出走的哪条编码路径
+
+**② P1 时区统计（上游 v4.6.1 方案移植）**：本月阅读统计按站点时区切月
+
+- `webserver/site_time.py` 新增 `site_month_bounds_server_local()`：
+  取站点时区的本月 1 号 00:00 / 下月 1 号 00:00，转成 **naive 服务器本地时刻**
+  ——因为 `read_date` 存的是 `datetime.now()`（容器本地 naive，见
+  `models.py` `ReadingState`），不是 UTC，比较口径必须一致
+- `webserver/handlers/book.py` `BookReadingStats.get` 三处
+  `extract('year'/'month', read_date)` 改为 `read_date >= start AND < end`
+  （半开区间）。原写法按容器时区切月：站点时区设成别的（如 UTC-5）时，
+  月初那几小时会被算进上个月
+- 单测验证了跨时区换算与 **DST 切换**：站点 NY 的 11-01 00:00（夏令时，
+  UTC-4）→ 上海 naive 12:00；12-01 00:00（冬令时，UTC-5）→ 上海 naive 13:00，
+  边界各自正确
+- 站点时区就是 Asia/Shanghai 时行为与之前完全一致（同口径），无感知
+
+**③ P0 长任务取消**：核对确认 4.6.0-14 已包含（`autofill.py` / `ai_fillinfo.py`
+的 `cancel_requested` + `cancel()`，`admin.py` 两个接口收 `{"cancel": true}`），
+无需改动。至此上游 v4.6.1 值得跟的 4 处已全部落地（详见上文「上游发了 v4.6.1」节）。
+
+安装方式：NAS 上用小补丁包 `audiobook-hotfix-big5-tz.tar.gz`（64KB，3 个文件）
+`docker cp` 覆盖 + 重启；源码目录同步覆盖。主部署包已包含全部改动。
+
+---
+
+## 4.6.0-13
+
+> 相对 `-12` 只改了后端 + 脚本 + Dockerfile，**前端无改动，不需要重建**。
+
+### 变更：有声书音频改为「跟着书目录走」
+
+用户的原始设想（也是这次改动的动机）：
+
+> 「imports/audiobooks/ 下的子目录，如果有书和音频，就全部归到一个目录，如 library/id，
+> 而不是书进了 library、音频去了 audios。」
+>
+> 「书和音频分家，多了都不知道是不是一家的。」
+
+以前音频统一堆在 `/data/books/audios/<book_id>/`，只用数字 id 跟书关联。书一多就有两个
+问题：删掉 library 里的书，`audios/<id>/` 变成没人认领的孤儿；从目录名完全看不出音频属于
+哪本书。
+
+**新位置**：
+
+| | 旧 | 新 |
+|---|---|---|
+| 电子书 | `library/<作者>/<书名> (id)/` | 同左（不动） |
+| 音频 | `audios/<id>/` | `library/<作者>/<书名> (id)/.audio/` |
+
+一本书的东西现在全在一个目录里。
+
+#### 为什么多一层 `.audio/` 而不是直接放书目录根
+
+用户的本意是「和书同目录」，这一点由「在书目录内部」满足。但书目录根是 calibre 的地盘，
+它按 `metadata.db` 里登记的 formats 维护格式文件，同层多出 mp3 有被当成「未登记文件」
+处理的风险（calibre 各版本行为不一致）。`.audio` 以点开头，calibre 遍历时按惯例忽略
+隐藏目录，风险最小。
+
+#### 路径必须动态解析——这是换布局丢掉的唯一好处
+
+旧布局 `audios/<id>/` 虽然难看，但路径**永不变**。新布局的目录名是 `书名 (id)`，
+**书改名 / 作者改名时目录名会跟着变**。所以路径绝对不能缓存成常量，每次都要走
+`cache.field_for("path", book_id)` 重新算。
+
+新增 `webserver/base/audio_dir.py` 统一收口这件事，原来散落在 9 个文件里的
+18 处路径拼接全部改走它：
+
+- `audio_dir_for_read(cache, id)` —— 读：优先新位置，没有音频再回退旧位置
+- `audio_dir_for_write(cache, id)` —— 写：一律新位置；书目录不存在返回 `None`
+- `find_audios_by_scanning_library()` —— 扫 library 找所有带音频的书
+- `legacy_audio_dirs()` —— 旧布局的 `<数字>/` 目录
+
+#### 三个容易踩的地方（都写了处理）
+
+1. **迁移期间双布局共存**。`_check_audio_exists` 必须两边都认，只认新布局会把还没迁的
+   旧数据判成「这本书没有音频」，导入时重复入库。
+2. **旧布局已有音频的书，写入继续走旧位置**。否则新导入的音频进 `.audio/`、老的还在
+   `audios/<id>/`，一本书的音频被劈成两半，播放器只认其中一处。等迁移脚本统一搬。
+3. **书目录不存在时不硬造**。否则 library 里会留下一堆空壳目录。导入时遇到这种情况
+   把该行标成 `INVALID` 并记日志，不静默跳过。
+
+#### 迁移脚本：`scripts/migrate-audio-dirs.py`
+
+```
+python3 scripts/migrate-audio-dirs.py           # 预演，只出清单
+python3 scripts/migrate-audio-dirs.py --apply   # 真搬
+```
+
+- 默认 dry-run，必须显式 `--apply` 才动文件
+- 目标已存在同名文件时**跳过而不覆盖**
+- 最前面的 `--book-id` 可只处理指定书
+- 库里找不到对应书的书目录（孤儿）**只报告不删**，等人工确认
+- 字幕 `.srt/.vtt` 和封面图跟着音频一起搬，否则播放器找不到
+- 搬空后才删源目录，源目录里还有别的东西就留着
+- 启动时先用 `field_for` 探一下 cache。cache 失效时 `book_dir_of` 会静默返回 `None`，
+  所有书都会被当成孤儿——清单看起来「没东西可迁」，其实一条都算不出来
+
+`upgrade.sh` 已接入：容器起来、进程全绿之后自动跑一次预演，**把清单打出来问你一句
+要不要搬**。迁移失败不阻断升级（代码本身兼容双布局，没迁成只是维持旧样子）。容器里
+没有这个脚本时跳过，不报错。
+
+#### 验证
+
+沙箱没有完整 calibre，`field_for` 无法真实调用，所以写了 `scripts/test-audio-dirs.py`：
+假 cache + 临时目录树，把 `audio_dir_for_read/write`、扫描、迁移计划、文件搬迁的分支
+全跑一遍，**47 项全通过**。
+
+这一步抓出了一个真 bug：最初的 `audio_dir_for_write` 无条件写新位置，导致「旧布局已有
+音频、又新导入了音频」的书被劈成两处。现在有专门用例守住它。
+
+```bash
+python3 scripts/test-audio-dirs.py   # 通过 47，失败 0
+```
+
+#### 已知未验证的部分
+
+calibre 对书目录里多出 `.audio/` 的实际反应**没有实测过**（沙箱缺 calibre）。
+缓解措施：点开头隐藏、`audio_output_folder` 配置仍指向旧路径可随时回退、迁移脚本
+不删源目录直到搬空。如果真出问题，把 `.audio/` 改名回 `audios/<id>/` 即可恢复。
+
+---
+
+## 4.6.0-12
+
+> 相对 `-11` 只改了播放页 + 3 个语言文件，**需要重建前端**（已重建）。
+
+### 新增：整篇字幕滚动视图（当前句高亮 + 自动跟随）
+
+原先播放页只有一个单句字幕条（`subtitle-section`），只显示正在播的那一句。
+看书时想上下文对照就很别扭，只能来回拖进度条。
+
+现在左侧封面区多了一个**视图切换按钮**（`mdi-format-list-bulleted` / `mdi-image`）：
+
+- **整篇模式**：把当前章的全部字幕竖排出来，当前句紫色高亮 + 左侧竖线 + 加粗，
+  已播过的句子略暗、未播的更暗，层级一眼能分清
+- **自动跟随**：当前句变化时自动滚动。但**不是每句都居中滚**——只有当前句掉出
+  「中线上 35% ~ 下 65%」这个舒适区才滚，否则播放时会一直晃、看着累
+- **点击任意句**跳到该句起点（复用原有的 `seekToCue`）
+- 上下边缘做了渐隐遮罩（`mask-image`），像歌词一样"滚进视野"而不是硬切
+- 开关状态记在 `localStorage`（`audio_lyrics_view`），下次进来保持
+
+**移动端**：原本 `.cover-section` 在 768px 以下被 `display: none` 隐藏（没封面可看）。
+现在改成——有字幕时显示字幕整篇，没字幕时才隐藏，避免留一块空白挤压播放列表。
+移动端首次进入默认就是整篇模式（没有封面视图，切换按钮也一并隐藏）。
+
+**几个实现上的坑**（都已验证）：
+
+1. 用 `scrollTop` 手算，不用 `scrollIntoView`。后者会连带滚动最近的**可滚动祖先**，
+   把整个播放页顶上去。
+2. `.lyrics-container` 必须 `position: relative`，否则子元素的 `offsetTop`
+   会相对 `.cover-section` 计算，滚动位置整体偏掉。
+3. 首次展开（`v-show` 从 false 变 true）时 `clientHeight` 还是 0，必须
+   `$nextTick` 后再定位，否则跳到顶部。
+4. 切到没有字幕的轨道时自动退回封面，避免留下一块空面板。
+
+**验证**（headless Chromium 实测）：
+
+- 滚动定位精度：当前句中心与容器中心偏差 **0px**（真实 flex 布局下）
+- 连续播放 60 句：滚动 30 次、跳过 30 次 —— 舒适区判定生效
+- 47 次跨句跳转：**0 次**落在视口外
+- 边界：首句 `scrollTop=0`（无负数），末句正好等于 `maxScroll`（无过度滚动）
+
+---
+
+## 4.6.0-11
+
+> 相对 `-10` 改了后端 2 个文件 + 前端 1 个页面 + 3 个语言文件，**需要重建前端**（已重建）。
+
+### 修复：有声书导入完全不能用（三个 bug 叠在一起）
+
+用户报的原话：「明明 imports 目录里有电子书和音频文件，点击导入有声书，只是扫描，
+实际一个都没导入，自动监听也没把有声书导入进去，界面有声书数量没有」。
+
+三个现象背后是**三个独立缺陷**，缺一个都表现为「什么都没发生」：
+
+#### 1. 自动监听根本没看 `audiobooks/` 目录
+
+`monitor_service.py` 里两处把有声书目录**主动跳过**：
+
+```python
+if base_name == constants.AUDIO_BOOK_IMPORTS:      # _add_watch_recursive
+    logging.info("[Monitor] Skipping imports folder: %s", entry.path)
+    continue
+```
+
+```python
+if name == constants.AUDIO_BOOK_IMPORTS:           # _monitor_loop
+    continue
+```
+
+结果：`imports/audiobooks/` 下不论放什么都不会产生任何事件。
+
+**修法**：去掉这两处跳过；事件按路径分流成两个队列——
+`_pending_audio`（走 `AudioBookImporter`）和原来的 `_pending_files`（走 `ScanService`）。
+新增 `is_audio_path()` / `is_audio_file()` 做判定，`_scheduler_loop` 对两个队列
+各自独立防抖、独立派发。
+
+即使以前把 `audiobooks/` 纳入监听，音频也进不了电子书链路——`_on_file_event` 用
+`SCAN_EXT`（epub/pdf/mobi…）过滤，mp3 会被当成「非书籍文件」丢掉。所以**光去掉跳过不够**。
+
+#### 2. 音频直接放 `audiobooks/` 根目录时一个都不导入
+
+`_do_import_internal()` 只遍历一级子目录：
+
+```python
+subdirs = sorted([d for d in os.listdir(import_dir) if os.path.isdir(...)])
+```
+
+说明文案写的是「有声书放到 `audiobooks/`」，用户把 mp3 直接扔进去完全合理，
+但这样 `subdirs` 是空列表 → `total = 0` → 循环一次都不跑 → 静默结束。
+`_update_progress` 在 `total=0` 时把 `progress` 设成 100，前端看到「已完成」，
+**既没报错也没提示**，所以看起来像「点了没反应」。
+
+**修法**：根目录存在音频文件时，把根目录本身当成「一本书」插到列表首位（`dir_name = "."`），
+书名依次退回 ID3 标签 → 第一个音频文件名，不会建出书名叫 `"."` 的书。
+同时忽略 `.` / `~` 开头的隐藏临时目录（以前会当成书处理）。
+
+#### 3. `total=0` 时界面毫无反馈
+
+前端 `importAudiobooks()` 拿到 `count_total === 0` 就正常收尾，什么都不提示。
+现在补一条 info 弹窗，明确指出该把音频放到哪、支持哪些格式。
+
+### 顺带修正
+
+- 导入说明文案只写了「音频文件为 **mp3** 格式」，实际支持 **mp3/m4a/m4b/wav/wma/opus** 六种；
+  文案改为「独立子目录（一本书一个目录，目录名即书名）」并列出全部格式，消除歧义。
+- `monitor_service` 的 `AUDIO_IMPORT_DIR` 原来在模块导入时按配置算死。设置页改过
+  `scan_upload_path` 后音频分流会指向旧目录，现在 `start()` 里重新解析。
+- 启动日志多打一行，明确「有声书目录一并监控」及其路径，方便排查。
+
+### 关于「界面有声书数量」
+
+`BaseHandler.get_audio_books_count()` 数的是 `audio_output_folder`（默认
+`/data/books/audios/`）下**以数字命名的子目录数**，跟 `imports/audiobooks/` 没有关系。
+导入一本都没成功，这个数当然是 0——它是 1 和 2 的结果，不是独立故障。
+
+### 验证
+
+- 目录枚举：子目录 2 个 + 根目录散装音频 → 识别出 `['.', '三体', '平凡的世界']` 3 个单元
+  （旧逻辑只有 2 个，散装音频全丢）
+- 路径分流 6 个用例全过：根目录音频 / 子目录音频 / 子目录本身 → 判为有声书；
+  普通电子书 / 电子书目录 / `audiobooks_bak` 同名前缀旁系目录 → 判为普通文件
+  （前缀匹配带 `os.sep`，不会误伤 `audiobooks_backup` 这类目录）
+- 调度线程实测：只放音频事件 → 触发 1 次 `AudioBookImporter.do_import`；
+  只放电子书事件 → 触发 `ScanService.do_import`；两类同时 → 各触发一次，互不阻塞
+- 书名兜底 5 种组合全对（无 ID3 / 有 ID3 / 根目录 / 子目录）
+- 配置变更后 `AUDIO_IMPORT_DIR` 重绑定生效，旧目录不再被认作音频目录
+
+---
+
+## 4.6.0-10
 
 > 相对 `-9` 只动了内嵌阅读器的 4 个 chunk，**不需要重建前端**，但仍需 `upgrade.sh` 重打镜像。
 

@@ -13,12 +13,15 @@
 | [`protect-custom.sh`](protect-custom.sh) | 跟随上游合并前后，保护 BOOK_NAV 与三语文案 | 不改运行环境，只读写源码文件 |
 | [`upgrade-upstream.sh`](upgrade-upstream.sh) | 上游 mybooks 发了新版，要跟 | 会。全链路，最后调 `upgrade.sh` 上线 |
 | [`watch-upstream.py`](watch-upstream.py) | 日常盯上游改动，**不等发版**。`--tags` 看有没有新版，`--between` 看两版之间改了什么 | 只读，只拉取上游仓库 |
+| [`hotfix.sh`](hotfix.sh) | **只改 Python 时用它，省掉十几分钟的镜像重建**。覆盖容器内 `webserver/` 并自动语法预检、可回滚 | 不动数据，只换代码文件 |
+| [`migrate-audio-dirs.py`](migrate-audio-dirs.py) | 有声书音频从 `audios/<id>/` 搬进书目录 `.audio/`。默认预演，`--apply` 才动 | **会**。搬文件不可逆，先看清单再决定 |
+| [`test-audio-dirs.py`](test-audio-dirs.py) | 音频路径逻辑自测（假 cache + 临时目录，47 项） | 不改数据，只在 /tmp 里折腾 |
 
 三个高频命令，照抄即可：
 
 ```sh
 # 升级到新包
-sh scripts/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-10.tar.gz
+sh scripts/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-14.tar.gz
 
 # 阅读器打不开书，先诊断（只读）
 sh scripts/check-reader.sh
@@ -112,6 +115,64 @@ audiobook./../../../node_modules/.pnpm/...     ← 全废，127 个链接全断
 
 需要类似能力时**新写一个**放 `scripts/` 根，别在这些文件上打补丁 —— 它们记录的是当时的状态，
 改了就不再是"当时的解法"，反而误导人。
+
+## 只改 Python？用 hotfix.sh，别等镜像
+
+`upgrade.sh` 是「全量重解压 + 重建镜像 + 重启」，NAS 上一次十几分钟。但项目里
+**绝大多数修复只动了 `webserver/` 下的 .py**——这部分在 Dockerfile 里就是
+`COPY webserver/`，纯 Python，不参与任何编译。
+
+```sh
+# 覆盖容器内代码 + 语法预检 + 重启（约 10 秒）
+sh audiobook/scripts/hotfix.sh /volume1/docker/audiobook-deploy-4.6.0-14.tar.gz --restart
+
+# 只覆盖不重启（想看 diff 或自己挑时间重启时用）
+sh audiobook/scripts/hotfix.sh /volume1/docker/audiobook-deploy-4.6.0-14.tar.gz
+```
+
+它做的事：从包里**只解出 `webserver/` + `tools/` + `server.py`**（不解 197M 全包）
+→ 备份容器内旧代码 → 覆盖 → 容器内 `python3 -m compileall` 预检 →
+编译不过自动回滚并退出 → 通过则按需重启并检查 4 个进程和 HTTP 200。
+
+**什么时候不能用它**（老实跑 `upgrade.sh`）：
+
+| 改了什么 | 需要重建镜像 |
+|---|---|
+| `webserver/` 下任意 .py | 不需要，用 hotfix.sh |
+| `app/` 前端源码 | 需要（要重新 build-spa） |
+| `myreader-dist/` | 需要（要重新导出 Next 产物） |
+| `Dockerfile` / `requirements` / 系统包 | 需要 |
+| `conf/nginx/` `conf/supervisor/` | 不需要镜像，但要 restart 容器或 reload |
+
+## 有声书音频迁移（4.6.0-13 起）
+
+4.6.0-13 把音频从 `audios/<id>/` 改成放在书自己的目录里
+（`library/<作者>/<书名> (id)/.audio/`），这样一本书的电子书和音频就在一处。
+**新代码两种位置都能读，不迁移也能正常播放**，迁移只是为了目录干净。
+
+`upgrade.sh` 已经接进去了：容器起来、四个进程全绿之后会自动跑一次预演，
+把清单打出来问你一句要不要搬。也可以单独跑：
+
+```sh
+# 预演，只出清单（不动文件）
+docker exec -it audiobook-mybooks-1 python3 /var/www/mybooks/scripts/migrate-audio-dirs.py
+
+# 确认清单没问题再执行
+docker exec -it audiobook-mybooks-1 python3 /var/www/mybooks/scripts/migrate-audio-dirs.py --apply
+
+# 只迁某几本
+docker exec -it audiobook-mybooks-1 python3 /var/www/mybooks/scripts/migrate-audio-dirs.py --book-id 12 --book-id 34 --apply
+```
+
+几条安全设计：
+
+- **默认 dry-run**，必须显式 `--apply`
+- 目标已有同名文件时**跳过，不覆盖**，会在日志里列出来
+- 字幕 `.srt/.vtt` 和封面图跟着音频一起搬，否则播放器找不到
+- 搬空才删源目录；源目录里还有别的东西就留着
+- 库里找不到对应书的 `audios/<id>/`（孤儿）**只报告不删**，等你人工确认
+- 必须用 **`docker exec` 在容器里跑**：书目录名要靠容器里的 calibre 算
+  （`field_for("path")`），宿主机上的 calibre 版本不一定对得上
 
 ## 约定
 

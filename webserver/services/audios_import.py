@@ -17,11 +17,11 @@ from webserver.services.background_service import BackgroundService, BackgroundT
 from webserver.services.scan_service import ScanService
 from webserver.base.meta_helper import guess_authors
 from webserver.base.author_norm import resolve_alias  # 4.6.0-9 作者归一化
+from webserver.base.audio_dir import audio_dir_for_read, audio_dir_for_write
 
 CONF = loader.get_settings()
 
 AUDIO_IMPORT_DIR = os.path.join(CONF.get("scan_upload_path", "/data/books/imports/"), constants.AUDIO_BOOK_IMPORTS)
-AUDIO_OUTPUT_DIR = CONF.get("audio_output_folder", "/data/books/audios/")
 
 COVER_NAMES = {"cover.jpg", "cover.jpeg", "cover.png"}
 
@@ -36,6 +36,29 @@ def _link_to_existing_enabled():
     if isinstance(value, str):
         return value.strip().lower() not in ("0", "false", "no", "off", "")
     return bool(value)
+
+
+def _warn_audio_outside_import_dir(import_dir):
+    """真导不进东西时，检查音频是不是放错了位置，并写进日志。
+
+    最常见的放错法：音频扔在 imports/ 根目录（跟电子书混一起），而不是
+    imports/audiobooks/ 下。这时导入结果就是「0 本」，日志里什么都不说，
+    用户只能盯着界面猜。这里主动数一下上层目录，命中就明确指出来。
+    """
+    try:
+        parent = os.path.dirname(os.path.normpath(import_dir))
+        if not parent or not os.path.isdir(parent):
+            return
+        ext = tuple(constants.SUPPORTED_AUDIO_FORMATS)
+        stray = [f for f in os.listdir(parent)
+                 if os.path.isfile(os.path.join(parent, f)) and f.lower().endswith(ext)]
+        if stray:
+            logging.warning(
+                "[AUDIO_IMPORT] 在 %s 里发现 %d 个音频文件，但它们必须放在 %s 下才会被导入"
+                "（例如 %s，或直接放到该目录）。示例：%s",
+                parent, len(stray), import_dir, import_dir, ", ".join(stray[:3]))
+    except OSError as err:
+        logging.debug("[AUDIO_IMPORT] scan parent dir failed: %s", err)
 
 
 def _find_cover(dir_path):
@@ -109,6 +132,38 @@ def _copy_or_convert_file(src_path, dst_dir):
         shutil.copy2(src_path, dst_path)
 
 
+def _fix_mojibake(text):
+    """修复被按 latin-1 误读的中文标签。
+
+    很多老 mp3 的 ID3v1 / 未声明编码的 ID3v2 里存的是 GBK 字节，mutagen 按
+    latin-1 解出来就是「lĐÆú'ìðŌËÆÚ」这种乱码。特征很明显：每个字符都在
+    U+0080~U+00FF 区间（latin-1 高半区）。把它按 latin-1 编回字节再用 GBK
+    解一次就能还原；还原出来还有替换字符（\ufffd）说明原本就不是 GBK，
+    保持原样别越修越坏。
+    """
+    if not text:
+        return text
+    try:
+        raw = text.encode("latin-1")
+    except UnicodeEncodeError:
+        # 有 latin-1 之外的字符，说明不是这个模式的乱码
+        return text
+    if not any(b >= 0x80 for b in raw):
+        return text  # 纯 ASCII，没有乱码空间
+
+    # GBK 优先，BIG5 兜底：台湾版繁体 mp3 的 ID3 标签是 BIG5 编码，
+    # 被 latin-1 误读后的形态和 GBK 一样（字符全落在 U+0080~U+00FF），
+    # 但按 GBK 解会出替换符或明显不通的怪字（如 «sÒÁ¶°T»…）。
+    for enc in ("gbk", "big5"):
+        fixed = raw.decode(enc, errors="replace")
+        if "\ufffd" in fixed:
+            continue
+        # 有替换符说明该编码对不上，试下一个；都失败就放弃
+        logging.info("[AUDIO_IMPORT] fixed mojibake (%s): %r -> %r", enc, text, fixed)
+        return fixed
+    return text
+
+
 def _extract_audio_metadata(audio_path, fallback_title):
     try:
         import mutagen
@@ -137,6 +192,9 @@ def _extract_audio_metadata(audio_path, fallback_title):
                     author_tag = raw_audio.tags.get("\x00\x00\x00\x02")
                     if author_tag:
                         author = str(author_tag[0]).strip() if isinstance(author_tag, list) else str(author_tag).strip()
+
+        title = _fix_mojibake(title)
+        author = _fix_mojibake(author)
 
         logging.debug("[AUDIO_IMPORT] Extracted metadata from %s: title=%s, author=%s", audio_path, title, author)
         return title or fallback_title, author
@@ -205,13 +263,13 @@ class AudioBookImporter(AsyncService):
         return book_id
 
     def _check_audio_exists(self, book_id):
-        audio_dir = os.path.join(AUDIO_OUTPUT_DIR, str(book_id))
-        if not os.path.isdir(audio_dir):
+        # 新布局（书目录内 .audio/）和旧布局（audios/<id>/）都算「有音频」，
+        # 迁移期间两种都可能出现，只认新布局会让旧数据被判成"没有音频"而重复导入。
+        path, _legacy = audio_dir_for_read(self.db, book_id)
+        if not os.path.isdir(path):
             return False
-        audio_files = [f for f in os.listdir(audio_dir) if f.lower().endswith(tuple(constants.SUPPORTED_AUDIO_FORMATS))]
-        if audio_files:
-            return True
-        return False
+        audio_files = [f for f in os.listdir(path) if f.lower().endswith(tuple(constants.SUPPORTED_AUDIO_FORMATS))]
+        return bool(audio_files)
 
     def _pick_linkable_book(self, ids):
         """同名电子书已存在但没有音频时，挑一本书把音频挂上去。
@@ -320,16 +378,36 @@ class AudioBookImporter(AsyncService):
     def _do_import_internal(self, user_id, task_id=None):
         from calibre.ebooks.metadata.book.base import Metadata
         import_dir = AUDIO_IMPORT_DIR
-        output_dir = AUDIO_OUTPUT_DIR
 
         if not os.path.isdir(import_dir):
             logging.warning("[AUDIO_IMPORT] import dir does not exist: %s", import_dir)
+            _warn_audio_outside_import_dir(import_dir)
             return
 
         subdirs = sorted([
             d for d in os.listdir(import_dir)
             if os.path.isdir(os.path.join(import_dir, d))
+            and not d.startswith(".") and not d.startswith("~")
         ])
+
+        # 兜底：imports/audiobooks/ 根目录下直接扔了音频文件（没建子目录）时，
+        # 把根目录本身当成「一本书」。说明文案写的是「有声书放到 audiobooks/」，
+        # 用户这么放完全合理，原先只遍历一级子目录会得到一个空列表、静默导入 0 本。
+        root_audios = sorted([
+            f for f in os.listdir(import_dir)
+            if os.path.isfile(os.path.join(import_dir, f))
+            and f.lower().endswith(tuple(constants.SUPPORTED_AUDIO_FORMATS))
+        ])
+        if root_audios:
+            logging.info("[AUDIO_IMPORT] found %d audio file(s) directly in %s, "
+                         "treating the folder itself as one book", len(root_audios), import_dir)
+            subdirs.insert(0, ".")
+
+        if not subdirs:
+            # 目录在、但确实没东西可导：把常见放错位置的情况写进日志，
+            # 免得用户只看到「已导入 0 本」不知道下一步该查哪里。
+            logging.warning("[AUDIO_IMPORT] nothing to import under %s", import_dir)
+            _warn_audio_outside_import_dir(import_dir)
 
         total = len(subdirs)
         AudioBookImporter.static_status["total"] = total
@@ -337,17 +415,31 @@ class AudioBookImporter(AsyncService):
         imported_without_cover = []
 
         for idx, dir_name in enumerate(subdirs):
-            dir_path = os.path.join(import_dir, dir_name)
+            dir_path = os.path.normpath(os.path.join(import_dir, dir_name))
             dir_hash = "audiodir:" + hashlib.md5(dir_path.encode("utf-8")).hexdigest()
             logging.info("[AUDIO_IMPORT] Processing directory %d/%d: %s", idx + 1, total, dir_path)
 
+            # 目录列表是开跑前一次性取的，中途被移走/改名很正常（用户正在整理文件）。
+            # 以前这种情况会抛 FileNotFoundError 把整个任务 abort，前面已导入的
+            # 记录虽然留着，但本轮剩余的书一本都处理不到，日志只有一句 Errno 2。
+            # 单条目录消失只跳过这一条，其它书照常处理。
+            if not os.path.isdir(dir_path):
+                logging.warning("[AUDIO_IMPORT] 目录已不存在，跳过（可能刚被移走/改名）：%s", dir_path)
+                AudioBookImporter.static_status["skipped"] += 1
+                self._update_progress(task_id, idx + 1, total)
+                continue
+
             existing = self.session.query(ScanFile).filter(ScanFile.hash == dir_hash).first()
             if existing and existing.status in (ScanFile.IMPORTED, ScanFile.EXIST):
-                # 存在已导入有声书时，检查当前音频目录中相对对应的有声书目录(/data/books/audios/<book_id>)是否有新增的音频文件
+                # 已导入过的书：把导入目录里新增的音频同步到该书目录下的 .audio/
                 if existing.status == ScanFile.IMPORTED:
                     book_id = existing.book_id
                     if book_id and self._check_audio_exists(book_id):
-                        self._synch_audio_files(dir_path, os.path.join(output_dir, str(book_id)))
+                        dest = audio_dir_for_write(self.db, book_id)
+                        if dest:
+                            self._synch_audio_files(dir_path, dest)
+                        else:
+                            logging.warning("[AUDIO_IMPORT] 找不到 book %s 的书目录，跳过同步", book_id)
 
                 AudioBookImporter.static_status["skipped"] += 1
                 self._update_progress(task_id, idx + 1, total)
@@ -364,10 +456,15 @@ class AudioBookImporter(AsyncService):
                 continue
 
             first_audio = os.path.join(dir_path, audio_files[0])
-            title, author = _extract_audio_metadata(first_audio, dir_name)
+            # dir_name 为 "." 表示音频直接放在 audiobooks/ 根目录（见上面的兜底）。
+            # 这时目录名不能当书名，依次退回：ID3 标签 → 第一个音频文件名。
+            fallback_title = "" if dir_name == "." else dir_name
+            title, author = _extract_audio_metadata(first_audio, fallback_title)
             if not author:
                 author = _("佚名")
-            title = utils.super_strip(title) if title else dir_name
+            title = utils.super_strip(title) if title else ""
+            if not title:
+                title = fallback_title or os.path.splitext(audio_files[0])[0]
             author = utils.super_strip(author) if author else _("佚名")
             # 4.6.0-9：有声书是作者名最脏的来源——ID3 的 artist 字段里
             # 常见 "某某听书"、"酷我音乐"、多歌手用逗号连写、带国籍前缀等。
@@ -392,6 +489,7 @@ class AudioBookImporter(AsyncService):
             mi.title_sort = utils.get_title_sort(title)
 
             try:
+                _stage = "查重"
                 ids = self.db.books_with_same_title(mi)
                 book_id = None
                 status = ScanFile.IMPORTED
@@ -421,6 +519,7 @@ class AudioBookImporter(AsyncService):
                                   title, ids, audio_exists, book_id)
                 if book_id is None:
                     # 确实没有可挂靠的书，才创建新书籍记录
+                    _stage = "创建书籍记录"
                     book_id = self._add_new_book(user_id, mi, cover_path)
                     if book_id is None:
                         logging.error("[AUDIO_IMPORT] failed to create book entry for %s", title)
@@ -430,9 +529,19 @@ class AudioBookImporter(AsyncService):
                         continue
 
                 if status == ScanFile.IMPORTED:
-                    dest_dir = os.path.join(output_dir, str(book_id))
-                    if not os.path.exists(dest_dir):
-                        os.makedirs(dest_dir)
+                    # 音频写进书自己的目录（library/<作者>/<书名> (id)/.audio/），
+                    # 不再往 audios/<id>/ 放。书目录不存在说明这本书还没真正进库，
+                    # 此时不硬造目录，避免在 library 里留下一堆空壳。
+                    _stage = "解析书目录"
+                    dest_dir = audio_dir_for_write(self.db, book_id)
+                    if not dest_dir:
+                        logging.error("[AUDIO_IMPORT] book %s 没有可用的书目录，跳过音频复制（%s）",
+                                      book_id, dir_path)
+                        row.status = ScanFile.INVALID
+                        self.save_or_rollback(row)
+                        self._update_progress(task_id, idx + 1, total)
+                        continue
+                    _stage = "复制音频"
                     for fname in os.listdir(dir_path):
                         src = os.path.join(dir_path, fname)
                         if os.path.isfile(src):
@@ -452,7 +561,10 @@ class AudioBookImporter(AsyncService):
                 row.book_id = book_id
                 row.status = status
             except Exception as err:
-                logging.error("[AUDIO_IMPORT] error processing %s: %s", dir_path, err)
+                # 带上阶段名，否则日志里只有一句异常，看不出是「查重」「建书」
+                # 还是「搬音频」挂的（4.6.0-13 的 db.cache 事故就是这样被埋住的）
+                logging.error("[AUDIO_IMPORT] error processing %s [阶段=%s book_id=%s]: %s (%s)",
+                              dir_path, _stage, book_id, err, type(err).__name__)
                 logging.error(traceback.format_exc())
                 row.status = ScanFile.INVALID
 

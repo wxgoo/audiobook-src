@@ -204,6 +204,35 @@ def site_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc).astimezone(get_tzinfo())
 
 
+def site_month_bounds_server_local():
+    """本月起止，返回可用于 SQL 过滤的服务器本地 naive datetime 边界。
+
+    上游 v4.6.1 的做法：阅读统计里的「本月」不能按容器时区切（``extract('month',
+    read_date)`` 用的就是容器时区），站点时区设成别的（比如 UTC-5）时，月初那几
+    小时会被算进上个月。这里取「站点时区的本月 1 号 00:00」和「下月 1 号 00:00」，
+    各自转回 **naive 的服务器本地时刻**——因为库里时刻列都是 naive UTC、
+    ``read_date`` 比较时用的也是这个口径，直接拿带 tzinfo 的量去比会错位。
+
+    返回 ``(start, end)``，半开区间：``start <= read_date < end``。
+    """
+    tz = get_tzinfo()
+    now = datetime.datetime.now(tz)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    year, month = month_start.year, month_start.month
+    if month == 12:
+        next_month = month_start.replace(year=year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month + 1)
+
+    def to_server_naive(aware):
+        # 站点时刻 → 服务器本地 naive。read_date 存的是 datetime.now()
+        # （容器本地、naive，见 models.py ReadingState），比较口径必须一致；
+        # astimezone() 不带参数即按服务器本地时区转换。
+        return aware.astimezone().replace(tzinfo=None)
+
+    return to_server_naive(month_start), to_server_naive(next_month)
+
+
 def timezone_label() -> str:
     """展示串，例如 ``UTC+08:00 (Asia/Shanghai)``，用于设置页提示与启动日志。"""
     offset = site_now().utcoffset() or datetime.timedelta(0)

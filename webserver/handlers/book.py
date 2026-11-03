@@ -1715,10 +1715,12 @@ class BookReadingStats(BaseHandler):
         user_id = self.user_id()
         logging.info("User %d is fetching reading statistics." % user_id)
 
-        # 获取当前月份和年份
-        now = datetime.datetime.now()
-        current_year = now.year
-        current_month = now.month
+        # 本月起止按站点时区切（上游 v4.6.1 的做法）。原来直接
+        # extract('year'/'month', read_date) 等于按容器时区切月：站点时区设成
+        # 其他时区时，月初那几小时会被算进上个月。site_month_bounds_server_local
+        # 返回与 read_date 存储口径一致（naive 服务器本地）的半开区间。
+        from webserver.site_time import site_month_bounds_server_local
+        _month_start, _month_end = site_month_bounds_server_local()
 
         # 总体统计
         total_reading = self.sqlite_session.query(ReadingState).filter(
@@ -1735,24 +1737,24 @@ class BookReadingStats(BaseHandler):
         month_reading = self.sqlite_session.query(ReadingState).filter(
             ReadingState.reader_id == user_id,
             ReadingState.read_state == 1,
-            extract('year', ReadingState.read_date) == current_year,
-            extract('month', ReadingState.read_date) == current_month
+            ReadingState.read_date >= _month_start,
+            ReadingState.read_date < _month_end
         ).count()
 
         # 本月统计 - 已读完（本月读完的书籍）
         month_read_done = self.sqlite_session.query(ReadingState).filter(
             ReadingState.reader_id == user_id,
             ReadingState.read_state == 2,
-            extract('year', ReadingState.read_date) == current_year,
-            extract('month', ReadingState.read_date) == current_month
+            ReadingState.read_date >= _month_start,
+            ReadingState.read_date < _month_end
         ).count()
 
         # 本月读完的书籍列表
         month_read_done_states = self.sqlite_session.query(ReadingState).filter(
             ReadingState.reader_id == user_id,
             ReadingState.read_state == 2,
-            extract('year', ReadingState.read_date) == current_year,
-            extract('month', ReadingState.read_date) == current_month
+            ReadingState.read_date >= _month_start,
+            ReadingState.read_date < _month_end
         ).order_by(ReadingState.read_date.desc()).limit(12).all()
 
         month_read_done_books = []
@@ -2240,7 +2242,11 @@ class BookDelete(BaseHandler):
             return {"err": "ok", "msg": _("删除成功")}
         BookDelete._deleting.add(bid)
         try:
-            await utils.run_in_threadpool(AudioUtils.clear_audio, bid)
+            # 书目录要在当前线程算（calibre Cache 不是线程安全的），
+            # 只把算好的路径字符串丢进线程池。
+            audio_dirs = AudioUtils.audio_dirs_of(bid, getattr(self, "calibre_db_cache", None))
+            await utils.run_in_threadpool(AudioUtils.clear_audio, bid,
+                                          extra_dirs=audio_dirs)
             if await self.delete_book_async(bid, book.get("title", "")):
                 return {"err": "ok", "msg": _("删除成功")}
             return {"err": "fail", "msg": _("删除失败, 请查看日志。如果一直出错，请联系管理员。")}
