@@ -12,7 +12,7 @@
 | 优先级 | 文件 | 一句话 |
 |---|---|---|
 | P0 | `handlers/static_files.py` | epub 插图撕裂 + 翻页慢，三个根因叠在一个函数里 |
-| P0 | `handlers/admin.py`、`main.py` | f-string 内嵌同种引号，3.11 直接 SyntaxError |
+| P0 | `handlers/admin.py`、`main.py` | f-string 内嵌同种引号，**源码用户**在 3.11 上直接 SyntaxError（注：上游 base 镜像是 ubuntu 24.04 / Python 3.12，所以上游自己跑不起来这个问题；影响的是 Debian 12 等 3.11 环境下自建/源码运行的用户） |
 | P0 | `handlers/podcast.py`、`podcast/podcast_provider.py` | 播客订阅源零权限校验，知道 book_id 就能下整本 |
 | P1 | `handlers/base.py`、`handlers/meta.py`、`webdav/dav_provider.py` | 管理员被自己的阅读限制拦住，三处漏了三遍 |
 | P2 | `services/autofill.py`、`services/ai_fillinfo.py`、`handlers/admin.py` | 长任务无法取消，只能重启容器 |
@@ -409,6 +409,9 @@ if req.get("cancel"):
 这意味着：
 
 - 用 Python 3.11 跑上游 v4.6.1，`admin.py` 和 `main.py` **依然会 SyntaxError**
+  - 2026-11-03 补充：我们的容器实测是 **Python 3.12.3**（base 镜像 ubuntu 24.04），
+    所以此问题不影响我们自己的运行；我们已在代码里修掉（`_not` 先取变量），
+    是为了源码级兼容 3.11 用户。issue 仍然值得提
 - 上游自己大概是 3.12+ 在跑，所以感知不到
 - **这条 P0 要照旧提给他们**
 
