@@ -19,11 +19,12 @@ services:
       cache_from:
         - mybooks-local:latest
     image: mybooks-local:latest
-    # Synology 容器套件的默认 seccomp profile 会拦掉 glibc 2.4x 的
-    # getentropy 调用组合，QtWebEngine（docx→pdf 的渲染引擎）启动即
-    # "Fatal glibc error: cannot get entropy for arc4random" 直接 abort。
-    # 内网 NAS 环境放开 seccomp 是可接受的；有对外暴露需求的部署不要抄这行，
-    # 改用升级 DSM 容器套件解决。
+    # 2026-11-03 实测修正：docx→pdf 崩溃（"Fatal glibc error: cannot get
+    # entropy for arc4random"）的根因是 **宿主机内核 3.10.108**（Braswell
+    # 平台被群晖锁死），低于 getrandom() 所需的 3.17；glibc ≥ 2.36 的
+    # arc4random 没有回退路径，直接 abort。与 seccomp 无关，此项**解决不了**
+    # 该问题，但保留无副作用。真正可行：VMM 虚拟机跑新内核，或降级基础镜像
+    # 的 glibc（calibre 连带风险大）。详见 docs/排障归档。
     security_opt:
       - seccomp:unconfined
     volumes:
