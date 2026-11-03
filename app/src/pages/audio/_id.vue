@@ -34,19 +34,21 @@
 
         <!-- 整篇字幕滚动视图：当前句高亮，固定 20 行窗口跟随 -->
         <!-- 只渲染窗口内的行：整章字幕动辄上千行，全量 v-for 会让每次滚动都
-             触发上千节点的布局计算。窗口由 flex 垂直居中。 -->
+             触发上千节点的布局计算。窗口项数恒定（越界为占位空行），
+             保证当前句永远落在正中。 -->
         <div v-show="showLyrics" class="lyrics-container" ref="lyricsBox">
           <div
-            v-for="i in visibleCueIndexes"
-            :key="i"
-            :ref="'cue-' + i"
+            v-for="(i, vi) in visibleCueIndexes"
+            :key="'cue-' + vi"
+            :ref="i === null ? 'lyric-empty-' + vi : 'cue-' + i"
             class="lyric-line"
             :class="{
-              'active': i === currentCueIndex,
-              'past': i < currentCueIndex
+              'placeholder': i === null,
+              'active': i !== null && i === currentCueIndex,
+              'past': i !== null && i < currentCueIndex
             }"
-            @click="seekToCue(subtitleCues[i])"
-          >{{ subtitleCues[i].text }}</div>
+            @click="i !== null && seekToCue(subtitleCues[i])"
+          >{{ i === null ? '' : subtitleCues[i].text }}</div>
         </div>
       </div>
 
@@ -164,16 +166,17 @@
       <!-- 字幕显示区：固定 20 行窗口，当前句高亮居中，随播放滚动 -->
       <div class="subtitle-section" v-if="showSubtitle && subtitleCues.length" ref="subtitleBox">
         <div
-          v-for="i in visibleCueIndexes"
-          :key="'sub-' + i"
-          :ref="'subcue-' + i"
+          v-for="(i, vi) in visibleCueIndexes"
+          :key="'sub-' + vi"
+          :ref="i === null ? 'sub-empty-' + vi : 'subcue-' + i"
           class="subtitle-line"
           :class="{
-            'active': i === currentCueIndex,
-            'past': i < currentCueIndex
+            'placeholder': i === null,
+            'active': i !== null && i === currentCueIndex,
+            'past': i !== null && i < currentCueIndex
           }"
-          @click="seekToCue(subtitleCues[i])"
-        >{{ subtitleCues[i].text }}</div>
+          @click="i !== null && seekToCue(subtitleCues[i])"
+        >{{ i === null ? '' : subtitleCues[i].text }}</div>
       </div>
 
       <!-- 控制按钮 -->
@@ -455,18 +458,23 @@ export default {
     lyricWindowStart() {
       const half = Math.floor((this.lyricWindowSize - 1) / 2);
       const center = this.currentCueIndex >= 0 ? this.currentCueIndex : half;
-      const start = Math.max(0, center - half);
-      // 快到底时整体上移，保证窗口始终满 size 行（除末尾不足的极少数情况）
-      const maxStart = Math.max(0, this.subtitleCues.length - this.lyricWindowSize);
-      return Math.min(start, maxStart);
+      // 始终以当前句为中心，允许负数：开头几句前面没有句子时，
+      // 由 visibleCueIndexes 渲染占位空行撑住，当前句才能稳定停在中线。
+      // （旧版用 maxStart 整体上移，导致快到底时当前句从第 10 行滑到第 17 行，
+      //   表现就是「越到后面字幕越往下走」）
+      return center - half;
     },
 
     // 窗口内实际渲染的下标数组。只渲染 20 行，DOM 规模恒定。
+    // 越界位置返回 null，模板渲染成占位空行（保持行高，撑住中线）。
     visibleCueIndexes() {
+      // 始终输出满 lyricWindowSize 项，越界位置为 null（占位空行）。
+      // 这样窗口总高度恒定，当前句永远落在窗口正中，不会因首尾不足而偏移。
       const out = [];
-      const end = Math.min(this.lyricWindowStart + this.lyricWindowSize - 1,
-                           this.subtitleCues.length - 1);
-      for (let i = this.lyricWindowStart; i <= end; i++) out.push(i);
+      const start = this.lyricWindowStart;
+      for (let i = start; i < start + this.lyricWindowSize; i++) {
+        out.push(i >= 0 && i < this.subtitleCues.length ? i : null);
+      }
       return out;
     },
 
@@ -848,31 +856,27 @@ export default {
      * @param {boolean} instant 是否禁用平滑动画
      */
     _centerCueIn(boxRef, cueRef, instant) {
-      const idx = this.currentCueIndex;
-      if (idx < 0) return;
+      if (this.currentCueIndex < 0) return;
       const box = this.$refs[boxRef];
       if (!box || !box.clientHeight) return;   // 隐藏容器：跳过
 
-      // 内容没超出可视区：flex 已居中，无需滚动
+      // 窗口内每行等高，配合 flex 留白即天然居中，无需滚动。
+      // 只有句子长到撑满可视区时才需要滚动，此时把当前行推到中线。
       if (box.scrollHeight <= box.clientHeight + 1) {
         box.scrollTop = 0;
         return;
       }
 
-      const el = this.$refs[cueRef + idx];
+      const el = this.$refs[cueRef + this.currentCueIndex];
       const node = Array.isArray(el) ? el[0] : el;
       if (!node) return;
 
-      const target = Math.max(
-        0, node.offsetTop - box.clientHeight / 2 + node.offsetHeight / 2);
-      if (Math.abs(box.scrollTop - target) < 1) return;
+      const maxScroll = box.scrollHeight - box.clientHeight;
+      const target = Math.max(0, Math.min(maxScroll,
+        node.offsetTop + node.offsetHeight / 2 - box.clientHeight / 2));
 
-      const smooth = !instant && typeof box.scrollTo === 'function';
-      if (smooth) {
-        box.scrollTo({ top: target, behavior: 'smooth' });
-      } else {
-        box.scrollTop = target;
-      }
+      // 直接赋值不做平滑动画：逐句跟随时平滑滚动会被下一句打断，表现为追不上
+      box.scrollTop = target;
     },
 
     toggleLyricsView() {
@@ -1275,16 +1279,9 @@ export default {
   scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
 
-/* 安全居中：有富余空间时上下各占一半（内容居中），溢出时自动归零（可正常滚动） */
-.lyrics-container::before,
-.lyrics-container::after {
-  content: '';
-  flex: 1 0 0;
-  pointer-events: none;
-}
-
-/* 上下留白去掉：窗口只有 20 行，内容通常比可视区矮，靠 flex 垂直居中即可；
-   句子多到撑满时再退回滚动（overflow-y:auto 仍然生效）。 */
+/* 不做 CSS 居中：伪元素留白（flex:1 自适应）会随内容伸缩，让中线漂移、
+   高亮句忽上忽下。居中完全由 _centerCueIn 精确设置 scrollTop 完成；
+   首尾句要能滚到中线，靠容器 padding 撑出半屏留白（padding 计入 scrollHeight）。 */
 
 .lyrics-container::-webkit-scrollbar {
   width: 6px;
@@ -1311,6 +1308,13 @@ export default {
      没有这条它们会塌成 0 高，导致行距忽大忽小、scrollTop 算不准 */
   min-height: 2.55rem;
   box-sizing: border-box;
+}
+
+.lyric-line.placeholder {
+  /* 占位行：不可点、不可见，只为撑住窗口总高度 */
+  background: transparent;
+  cursor: default;
+  pointer-events: none;
 }
 
 .lyric-line:hover {
@@ -1645,6 +1649,7 @@ export default {
 }
 
 /* 单句 */
+/* 单句 */
 .subtitle-line {
   flex: 0 0 auto;
   font-size: 1rem;
@@ -1661,6 +1666,12 @@ export default {
   cursor: pointer;
   box-sizing: border-box;
   transition: color 0.2s ease, background 0.2s ease;
+}
+
+.subtitle-line.placeholder {
+  background: transparent;
+  cursor: default;
+  pointer-events: none;
 }
 
 .subtitle-line.past {
