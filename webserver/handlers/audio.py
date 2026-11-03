@@ -21,6 +21,7 @@ from tornado import web
 
 from webserver import loader
 from webserver.base.formatter import BookFormatter
+from webserver.base.audio_dir import audio_dir_for_read
 from webserver.handlers.base import BaseHandler, auth, js, is_admin
 from webserver.models import BizKey, ReaderPaidBook, ReaderLog, Message
 from webserver.worker.epub2audio_worker import EpubToAudioWorker
@@ -45,6 +46,23 @@ def natural_sort_key(filename):
     return [int(chunk) if chunk.isdigit() else chunk.lower() for chunk in re.split(r"(\d+)", filename)]
 
 
+def resolve_audio_dir(db, book_id):
+    """解析某本书的音频目录（新布局 library/<作者>/<书名> (id)/.audio/ 优先，
+    旧布局 audios/<id>/ 回退）。
+
+    4.6.0-14 之前这里的接口全部硬编码 AUDIO_OUTPUT_FOLDER/<id>/，而导入端早在
+    4.6.0-13 就把音频写进了书目录内的 .audio/。结果：文件明明在，播放器列表空、
+    字幕也不显示——只有「导入说成功了」这一个假象。
+
+    返回 (path, is_legacy)，path 可能不存在。
+    """
+    try:
+        return audio_dir_for_read(db, book_id)
+    except Exception as err:
+        logging.warning("[AUDIO] resolve dir for book %s failed: %s", book_id, err)
+        return os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id)), True
+
+
 class AudioBooksCache:
     """音频书籍目录缓存工具类"""
 
@@ -55,23 +73,34 @@ class AudioBooksCache:
 
     @classmethod
     def _scan_audio_directory(cls):
-        """扫描音频目录并返回book_ids集合"""
+        """扫描音频目录并返回book_ids集合。
+
+        4.6.0-14 之前只扫旧布局 audios/<数字>/，而导入端早就把音频写进
+        library/<作者>/<书名> (id)/.audio/ 了。旧目录是空的，于是全库被判成
+        「没有有声书」——前端不显示有声书标识，播放页也拿不到音频和字幕。
+        现在两种布局都扫，取并集。
+        """
         start_time = time.time()
         book_ids = set()
 
-        if not os.path.exists(AUDIO_OUTPUT_FOLDER):
-            logging.warning(
-                f"Audio output folder does not exist: {AUDIO_OUTPUT_FOLDER}"
-            )
-            return book_ids
-
+        # 新布局：扫 library 各书目录下的 .audio/
         try:
-            for item in os.listdir(AUDIO_OUTPUT_FOLDER):
-                item_path = os.path.join(AUDIO_OUTPUT_FOLDER, item)
-                if os.path.isdir(item_path) and item.isdigit():
-                    book_ids.add(int(item))
+            from webserver.base.audio_dir import find_audios_by_scanning_library
+            new_layout = find_audios_by_scanning_library()
+            book_ids.update(new_layout.keys())
+            logging.info("Audio scan: %d books in new layout (.audio/)", len(new_layout))
         except Exception as e:
-            logging.error(f"Error scanning audio directory: {e}")
+            logging.error(f"Error scanning library for audio: {e}")
+
+        # 旧布局：audios/<数字>/
+        try:
+            if os.path.exists(AUDIO_OUTPUT_FOLDER):
+                for item in os.listdir(AUDIO_OUTPUT_FOLDER):
+                    item_path = os.path.join(AUDIO_OUTPUT_FOLDER, item)
+                    if os.path.isdir(item_path) and item.isdigit():
+                        book_ids.add(int(item))
+        except Exception as e:
+            logging.error(f"Error scanning legacy audio directory: {e}")
 
         elapsed_time = time.time() - start_time
         logging.info(
@@ -163,7 +192,15 @@ class AudioUtils:
             AudioUtils.site_url = BaseHandler.get_site_url()
 
         book_id = int(bid)
-        audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
+        # 静态方法没有 db，走 library 扫描反查新布局；扫不到再回退旧布局
+        audio_dir = None
+        try:
+            from webserver.base.audio_dir import find_audios_by_scanning_library
+            audio_dir = find_audios_by_scanning_library().get(book_id)
+        except Exception as err:
+            logging.debug("[AUDIO] scan library failed: %s", err)
+        if not audio_dir:
+            audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
         if not os.path.exists(audio_dir):
             return {
                 "status": "unavailable",
@@ -283,7 +320,8 @@ class AudioDetail(BaseHandler):
             enable_vip_quota = CONF.get(ENABLE_VIP_QUOTA_KEY, False)
 
             # Check if audio file already exists
-            audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
+            # 新布局（书目录内 .audio/）优先，回退旧布局 audios/<id>/
+            audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
             if os.path.exists(audio_dir) and os.listdir(audio_dir):
                 audio_files = [
                     f
@@ -855,10 +893,20 @@ class AudioFile(BaseHandler):
             if ".." in filename or "/" in filename:
                 raise web.HTTPError(403, "Invalid filename")
 
-            audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
+            # 新布局优先（书目录内 .audio/），找不到再回退旧布局。
+            # 以前这里硬编码 audios/<id>/，而导入端写的是 .audio/，
+            # 导致音频和字幕都 404。
+            audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
             file_path = os.path.join(audio_dir, filename)
             if not os.path.exists(file_path):
-                raise web.HTTPError(404, "Audio file not found")
+                legacy_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
+                alt = os.path.join(legacy_dir, filename)
+                if os.path.exists(alt):
+                    file_path = alt
+                else:
+                    logging.warning("[AUDIO] file not found: %s (dir tried: %s)",
+                                    filename, audio_dir)
+                    raise web.HTTPError(404, "Audio file not found")
 
             # 设置适当的Content-Type
             ext = os.path.splitext(filename)[1].lower()

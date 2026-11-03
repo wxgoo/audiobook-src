@@ -32,23 +32,23 @@
           </div>
         </div>
 
-        <!-- 整篇字幕滚动视图：当前句高亮，固定 20 行窗口跟随 -->
-        <!-- 只渲染窗口内的行：整章字幕动辄上千行，全量 v-for 会让每次滚动都
-             触发上千节点的布局计算。窗口项数恒定（越界为占位空行），
-             保证当前句永远落在正中。 -->
+        <!-- 整篇字幕：全量渲染，当前句高亮并自动跟随滚动。
+             以前是 20 行窗口，等于人为裁掉上下文，听书时想回看上一句很别扭。
+             全量渲染的顾虑是上千行节点的布局开销，这里用
+             content-visibility: auto 让浏览器跳过屏幕外行的排版，
+             配合按需分段加载（见字幕分段逻辑）控制首屏规模。 -->
         <div v-show="showLyrics" class="lyrics-container" ref="lyricsBox">
           <div
-            v-for="(i, vi) in visibleCueIndexes"
-            :key="'cue-' + vi"
-            :ref="i === null ? 'lyric-empty-' + vi : 'cue-' + i"
+            v-for="(cue, i) in renderedCues"
+            :key="'cue-' + i"
+            :ref="'cue-' + i"
             class="lyric-line"
             :class="{
-              'placeholder': i === null,
-              'active': i !== null && i === currentCueIndex,
-              'past': i !== null && i < currentCueIndex
+              'active': i === currentCueIndex,
+              'past': i < currentCueIndex
             }"
-            @click="i !== null && seekToCue(subtitleCues[i])"
-          >{{ i === null ? '' : subtitleCues[i].text }}</div>
+            @click="seekToCue(cue)"
+          >{{ cue.text }}</div>
         </div>
       </div>
 
@@ -161,22 +161,6 @@
           @mouseup="isDragging = false"
           class="progress-slider"
         ></v-slider>
-      </div>
-
-      <!-- 字幕显示区：固定 20 行窗口，当前句高亮居中，随播放滚动 -->
-      <div class="subtitle-section" v-if="showSubtitle && subtitleCues.length" ref="subtitleBox">
-        <div
-          v-for="(i, vi) in visibleCueIndexes"
-          :key="'sub-' + vi"
-          :ref="i === null ? 'sub-empty-' + vi : 'subcue-' + i"
-          class="subtitle-line"
-          :class="{
-            'placeholder': i === null,
-            'active': i !== null && i === currentCueIndex,
-            'past': i !== null && i < currentCueIndex
-          }"
-          @click="i !== null && seekToCue(subtitleCues[i])"
-        >{{ i === null ? '' : subtitleCues[i].text }}</div>
       </div>
 
       <!-- 控制按钮 -->
@@ -413,9 +397,10 @@ export default {
       subtitleCache: {},
       // 整篇字幕视图（覆盖封面位置，当前句高亮 + 自动跟随滚动）
       showLyrics: false,
-      // 字幕窗口：只保留当前句前后若干行，避免整章上千行全量渲染。
-      // 设成奇数保证当前句正好落在窗口正中：10 上 + 1 当前 + 9 下 = 20 行。
-      lyricWindowSize: 20,
+      // 整篇字幕的分段加载：首屏渲染 SEGMENT_SIZE 行，当前句接近已渲染末尾时
+      // 再追加一段。避免上千行一次性排版导致打开卡顿。
+      renderLimit: 300,
+      segmentSize: 300,
 
       // 定时器
       sleepTimer: null,
@@ -455,27 +440,18 @@ export default {
 
     // 字幕窗口边界：当前句居中，上下各 (size-1)/2 行。
     // 还没定位到任何句（currentCueIndex=-1）时把窗口放在开头，避免一片空白。
-    lyricWindowStart() {
-      const half = Math.floor((this.lyricWindowSize - 1) / 2);
-      const center = this.currentCueIndex >= 0 ? this.currentCueIndex : half;
-      // 始终以当前句为中心，允许负数：开头几句前面没有句子时，
-      // 由 visibleCueIndexes 渲染占位空行撑住，当前句才能稳定停在中线。
-      // （旧版用 maxStart 整体上移，导致快到底时当前句从第 10 行滑到第 17 行，
-      //   表现就是「越到后面字幕越往下走」）
-      return center - half;
-    },
-
-    // 窗口内实际渲染的下标数组。只渲染 20 行，DOM 规模恒定。
-    // 越界位置返回 null，模板渲染成占位空行（保持行高，撑住中线）。
-    visibleCueIndexes() {
-      // 始终输出满 lyricWindowSize 项，越界位置为 null（占位空行）。
-      // 这样窗口总高度恒定，当前句永远落在窗口正中，不会因首尾不足而偏移。
-      const out = [];
-      const start = this.lyricWindowStart;
-      for (let i = start; i < start + this.lyricWindowSize; i++) {
-        out.push(i >= 0 && i < this.subtitleCues.length ? i : null);
-      }
-      return out;
+    /** 整篇字幕：全量显示，不再裁成 20 行窗口。
+     *
+     * 分段加载：整章字幕可能上千行，一次性渲染会有明显卡顿（每行都要排版）。
+     * 这里按 SEGMENT_SIZE 段渲染，当前句进入后段时再追加下一段——
+     * 用户感觉不到，但首屏只排几百行。
+     *
+     * 关键：已渲染的段不回收。回收会让上方内容塌陷、滚动位置跳变，
+     * 已经滚过去的内容应该留着（用户可能往回翻）。
+     */
+    renderedCues() {
+      const end = Math.min(this.renderLimit, this.subtitleCues.length);
+      return this.subtitleCues.slice(0, end);
     },
 
     currentCue() {
@@ -774,6 +750,7 @@ export default {
     async loadSubtitle(url) {
       this.subtitleCues = [];
       this.currentCueIndex = -1;
+      this.renderLimit = this.segmentSize;
       // 切到没有字幕的轨道时，整篇字幕视图会是个空面板，退回封面
       // （不改持久化偏好：下一章有字幕时仍按用户习惯展开）
       if (!url) {
@@ -796,6 +773,8 @@ export default {
         // 防止快速切轨时旧请求覆盖新字幕
         const currentAudio = this.currentAudio;
         if (currentAudio && currentAudio.subtitle === url) {
+          // 换章要重置分段进度，否则会沿用上一章已展开的行数
+          this.renderLimit = Math.min(this.segmentSize, cues.length);
           this.subtitleCues = cues;
         }
       } catch (error) {
@@ -831,39 +810,29 @@ export default {
     },
 
     /**
-     * 20 行窗口跟随：当前句始终位于窗口正中。
+     * 整篇字幕跟随：当前句保持在可视区中上部，滚到就停。
      *
-     * 实现要点：
-     *   1. 只渲染窗口内的 20 行（visibleCueIndexes），DOM 规模恒定，
-     *      整章上千行也不拖慢布局；
-     *   2. 窗口内容由 CSS flex 垂直居中，20 行通常比可视区矮，天然居于视觉中心；
-     *   3. 只有句子长到撑满可视区时才需要滚动，此时把当前句滚到中部。
-     *
-     * 用 scrollTop 手算而不是 scrollIntoView：后者会连带滚动最近的可滚动祖先，
-     * 把整个播放页顶上去。
+     * 与 20 行窗口的区别：不再强行居中。整篇模式下用户需要看到上下文，
+     * 每句都居中会让画面持续上下跳（这正是之前「忽上忽下」的观感来源）。
+     * 现在用「舒适区」策略：当前句落在可视区 35%~65% 之间就不动，
+     * 越界才滚动到 45% 处（略偏上，给下文留更多空间）。
      */
     scrollToActiveCue() {
-      // 两个字幕视窗各自独立跟随：左侧整篇歌词面板 + 底部 20 行字幕区，
-      // 哪个展开着就滚哪个（另一个可能是 v-show 隐藏的，尺寸为 0，滚了也无害）
-      this._centerCueIn('lyricsBox', 'cue-', false);
-      this._centerCueIn('subtitleBox', 'subcue-', false);
+      this._followCue('lyricsBox', 'cue-');
     },
 
-    /**
-     * 把一个容器里的当前句滚到可视区正中。
-     * @param {string} boxRef   容器 ref 名
-     * @param {string} cueRef   每次句子的 ref 前缀
-     * @param {boolean} instant 是否禁用平滑动画
-     */
-    _centerCueIn(boxRef, cueRef, instant) {
+    _followCue(boxRef, cueRef) {
       if (this.currentCueIndex < 0) return;
       const box = this.$refs[boxRef];
-      if (!box || !box.clientHeight) return;   // 隐藏容器：跳过
+      if (!box || !box.clientHeight) return;
 
-      // 窗口内每行等高，配合 flex 留白即天然居中，无需滚动。
-      // 只有句子长到撑满可视区时才需要滚动，此时把当前行推到中线。
-      if (box.scrollHeight <= box.clientHeight + 1) {
-        box.scrollTop = 0;
+      // 分段加载：当前句快接近已渲染末尾时，追加下一段
+      if (this.currentCueIndex + 20 >= this.renderLimit
+          && this.renderLimit < this.subtitleCues.length) {
+        this.renderLimit = Math.min(this.renderLimit + this.segmentSize,
+                                    this.subtitleCues.length);
+        // 追加后 DOM 变了，等下一帧再定位
+        this.$nextTick(() => this._followCue(boxRef, cueRef));
         return;
       }
 
@@ -871,11 +840,20 @@ export default {
       const node = Array.isArray(el) ? el[0] : el;
       if (!node) return;
 
-      const maxScroll = box.scrollHeight - box.clientHeight;
-      const target = Math.max(0, Math.min(maxScroll,
-        node.offsetTop + node.offsetHeight / 2 - box.clientHeight / 2));
+      const boxH = box.clientHeight;
+      const nodeTop = node.offsetTop;
+      const nodeH = node.offsetHeight;
+      const cur = box.scrollTop;
 
-      // 直接赋值不做平滑动画：逐句跟随时平滑滚动会被下一句打断，表现为追不上
+      // 舒适区：可视区 35% ~ 65%，在当前范围内就不动，避免持续抖动
+      const upper = cur + boxH * 0.35;
+      const lower = cur + boxH * 0.65;
+      if (nodeTop >= upper && nodeTop + nodeH <= lower) return;
+
+      // 越界后滚动到 45% 处（略偏上，下文多留一点）
+      const maxScroll = box.scrollHeight - boxH;
+      const target = Math.max(0, Math.min(maxScroll,
+        nodeTop - boxH * 0.45 + nodeH / 2));
       box.scrollTop = target;
     },
 
@@ -888,13 +866,12 @@ export default {
           console.error('Error saving lyrics view preference:', error);
         }
       }
-      // 展开后立刻定位到当前句（复用同一套居中逻辑，首次不做平滑动画）
+      // 展开后立刻定位到当前句
       if (this.showLyrics) {
         this.$nextTick(() => {
           const box = this.$refs.lyricsBox;
-          if (box) box.scrollTop = 0;   // flex 居中，常态无需滚动
-          this._centerCueIn('lyricsBox', 'cue-', true);
-          this._centerCueIn('subtitleBox', 'subcue-', true);
+          if (box) box.scrollTop = 0;
+          this._followCue('lyricsBox', 'cue-');
         });
       }
     },
@@ -1257,26 +1234,24 @@ export default {
 }
 
 /* 整篇字幕滚动区 */
+/* 整篇字幕滚动区：自然流从上到下排，当前句高亮 + 跟随滚动。
+   不再用 flex 居中（窗口模式下才需要），整篇模式要的是连续阅读。 */
 .lyrics-container {
   flex: 1;
   width: 100%;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 32px 18px;
+  padding: 24px 18px;
   /* 必须 relative：子句的 offsetTop 是相对 offsetParent 算的，不设这个会
      回溯到 .cover-section，滚动位置整体偏掉一整段 padding */
   position: relative;
-  /* 20 行窗口通常比可视区矮，用上下弹性留白垂直居中。
-     注意不能用 justify-content:center —— 内容一旦溢出，它会把顶部裁进
-     不可滚动区（scrollTop 到不了负值），开头的句子会缺行。
-     伪元素 flex-grow 空隙在无富余空间时自动归零，是安全的居中写法 */
-  display: flex;
-  flex-direction: column;
   /* 上下渐隐，看起来像"滚进视野"而不是硬边缘切断 */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12%, #000 88%, transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 12%, #000 88%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 4%, #000 96%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 4%, #000 96%, transparent 100%);
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  /* 段落留白：首尾句也能滚到偏中位置（padding 计入 scrollHeight） */
+  scroll-padding-block: 40% 45%;
 }
 
 /* 不做 CSS 居中：伪元素留白（flex:1 自适应）会随内容伸缩，让中线漂移、
@@ -1303,20 +1278,15 @@ export default {
   cursor: pointer;
   white-space: pre-wrap;
   word-break: break-word;
-  transition: color 0.25s ease, background 0.25s ease, transform 0.25s ease;
-  /* 固定最小高度：窗口外的行不渲染文字（避免上千节点布局开销），
-     没有这条它们会塌成 0 高，导致行距忽大忽小、scrollTop 算不准 */
-  min-height: 2.55rem;
+  transition: color 0.25s ease, background 0.25s ease;
   box-sizing: border-box;
+  /* 长列表优化：屏幕外的行跳过排版/绘制，上千行也不卡。
+     contain-intrinsic-size 给出估算高度，避免滚动条长度跳动 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 2.55rem;
 }
 
-.lyric-line.placeholder {
-  /* 占位行：不可点、不可见，只为撑住窗口总高度 */
-  background: transparent;
-  cursor: default;
-  pointer-events: none;
-}
-
+/* 当前句：高亮，稍微放大一点引导视线 */
 .lyric-line:hover {
   background: rgba(255, 255, 255, 0.06);
   color: #cfcfcf;
@@ -1611,89 +1581,7 @@ export default {
   margin: 0;
 }
 
-/* 字幕区：固定 20 行窗口，当前句高亮居中，随播放滚动。
-   高度按 20 行行高算（2.2rem x 20 ≈ 44rem），上限 45vh 免得挤掉控制条。 */
-.subtitle-section {
-  height: min(44rem, 45vh);
-  overflow-y: auto;
-  overflow-x: hidden;
-  display: flex;
-  flex-direction: column;
-  /* 必须 relative：滚动定位用的是子句 offsetTop，不设会回溯到外层定位祖先，
-     目标位置整体算错（实测当前句被滚出可视区上方） */
-  position: relative;
-  padding: 4px 16px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
-  /* 上下渐隐，滚动带两端不硬切 */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10%, #000 90%, transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 10%, #000 90%, transparent 100%);
-}
 
-/* 安全居中：有富余空间时上下均分（内容居中），溢出时自动归零可滚动。
-   不能用 justify-content: center —— 溢出会把顶部裁进不可滚动区 */
-.subtitle-section::before,
-.subtitle-section::after {
-  content: '';
-  flex: 1 0 0;
-  pointer-events: none;
-}
-
-.subtitle-section::-webkit-scrollbar {
-  width: 6px;
-}
-
-.subtitle-section::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 3px;
-}
-
-/* 单句 */
-/* 单句 */
-.subtitle-line {
-  flex: 0 0 auto;
-  font-size: 1rem;
-  line-height: 1.6;
-  min-height: 2.2rem;
-  color: #7a7a7a;                 /* 未播到：暗 */
-  background: rgba(0, 0, 0, 0.28);
-  border-radius: 8px;
-  padding: 6px 14px;
-  margin-bottom: 2px;
-  text-align: center;
-  white-space: pre-wrap;
-  word-break: break-word;
-  cursor: pointer;
-  box-sizing: border-box;
-  transition: color 0.2s ease, background 0.2s ease;
-}
-
-.subtitle-line.placeholder {
-  background: transparent;
-  cursor: default;
-  pointer-events: none;
-}
-
-.subtitle-line.past {
-  color: #5c5c5c;
-}
-
-.subtitle-line:hover {
-  background: rgba(156, 39, 176, 0.2);
-  color: #cfcfcf;
-}
-
-/* 当前句：高亮 */
-.subtitle-line.active {
-  color: #ffffff;
-  background: rgba(156, 39, 176, 0.38);
-  border-left: 3px solid #9C27B0;
-  font-weight: 600;
-}
-
-.subtitle-line.active:hover {
-  background: rgba(156, 39, 176, 0.48);
-}
 
 .controls-section {
   flex: 1;
@@ -1786,18 +1674,6 @@ export default {
     flex-direction: column;
     height: 50%;
     padding: 10px;
-  }
-
-  .subtitle-section {
-    /* 移动端：窗口行数与字号都收紧，避免吃掉控制条 */
-    height: min(32rem, 42vh);
-    padding: 2px 8px;
-  }
-
-  .subtitle-line {
-    font-size: 0.875rem;
-    min-height: 1.9rem;
-    padding: 4px 10px;
   }
 
   .cover-section {
