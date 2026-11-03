@@ -1,0 +1,3655 @@
+<template>
+  <div>
+    <v-row align="start">
+        <v-col cols="12">
+            <MyNexusChatDialog :open.sync="mynexusChatOpen" :book="book" @unavailable="onMyNexusUnavailable" />
+            <v-dialog v-model="dialog_converting" persistent width="460">
+                <v-card class="dialog-border">
+                    <div style="height: 16px;"></div>
+                    <v-card-text class="d-flex align-center">
+                        <v-progress-circular indeterminate color="primary" class="mr-3"></v-progress-circular>
+                        <span>{{ $t(converting_format === 'txt' ? 'book.parseringPleaseWait' : 'book.convertingPleaseWait') }}</span>
+                    </v-card-text>
+                    <v-card-actions class="justify-center">
+                        <v-btn color="" text @click="cancelConvertingDialog()">{{ $t('common.cancel') }}</v-btn>
+                    </v-card-actions>
+                </v-card>
+            </v-dialog>
+
+            <AppDialog
+                v-model="dialog_epub2audio"
+                type="action"
+                :title="$t('book.convertToAudio')"
+                color="#003153"
+                confirm-dark
+                width="380"
+                :confirm-text="$t('common.start')"
+                @confirm="generateAudio()"
+            >
+                <p v-if="audios.status === AUDIO_STATUS.FAILED" style="color: red; font-weight: bold;">{{ $t('book.conversionFailed') }} <br/>
+                    {{ audios.progress && audios.progress.error_message ? audios.progress.error_message : $t('book.defaultFailedReason') }}
+                </p>
+                <p style="margin: 16px 0 10px 0;">{{ $t('book.convertToAudioNote') }}</p>
+                <v-select style="margin-top: 3px;"
+                    :items="voice_options"
+                    outlined
+                    dense
+                    v-model="voice_name"
+                    :label="$t('book.chooseVoice')"
+                    item-text="display_name"
+                    item-value="voice_name"
+                    required
+                >
+                    <template v-slot:selection="{ item }">
+                        {{ item.display_name }}
+                    </template>
+                    <template v-slot:item="{ item }">
+                        <v-list-item-content>
+                            <v-list-item-title style="font-size: 15px;">{{ item.display_name }}</v-list-item-title>
+                        </v-list-item-content>
+                        <v-list-item-action>
+                            <v-btn
+                                icon
+                                small
+                                @click.stop="playSampleVoice(item)"
+                                :loading="playing_sample === item.voice_name"
+                            >
+                                <v-icon>mdi-play</v-icon>
+                            </v-btn>
+                        </v-list-item-action>
+                    </template>
+                </v-select>
+            </AppDialog>
+
+            <AudioListDialog
+                :open.sync="dialog_audiolist"
+                :audios="audios"
+                :audio-status="AUDIO_STATUS"
+                @stop-sample-audio="stopCurrentAudio"
+                @clear-conversion="clearConversion"
+                @generate-audio="generateAudio"
+            />
+
+            <AppDialog
+                v-model="dialog_download"
+                type="action"
+                :title="$t('book.downloadBook')"
+                icon="mdi-download"
+                width="300"
+                :dismiss-label="$t('common.close')"
+                hide-footer-button
+            >
+                <v-list v-if="book.files.length > 0">
+                    <v-list-item :key="'file-'+file.format" v-for="file in book.files"
+                                 @click="openDownloadLink(file.href)">
+                        <v-list-item-avatar color='primary'>
+                            <v-icon dark>mdi-download</v-icon>
+                        </v-list-item-avatar>
+                        <v-list-item-content>
+                            <v-list-item-title>{{ file.format }}</v-list-item-title>
+                            <v-list-item-subtitle v-if="file.size>=1048576">{{
+                                    parseInt(file.size / 1048576)
+                                }}MB
+                            </v-list-item-subtitle>
+                            <v-list-item-subtitle v-else>{{
+                                    parseInt(file.size / 1024)
+                                }}KB
+                            </v-list-item-subtitle>
+                        </v-list-item-content>
+                    </v-list-item>
+                    <p v-if="noReadableFormat" class="caption grey--text mb-0 mt-2 px-4">{{ $t('book.noReadableFormat') }}</p>
+                </v-list>
+                <p v-else><br/>{{ $t('book.noDownloadableFiles') }}</p>
+            </AppDialog>
+
+            <v-card v-if="dialog_refer">
+                <v-toolbar flat dense dark color="primary">
+                    <v-toolbar-title>{{ $t('book.syncBookInfo') }}</v-toolbar-title>
+                    <v-spacer></v-spacer>
+                    <v-btn text :disabled="!!referSettingId" @click="dialog_refer = false">{{ $t('common.cancel') }}</v-btn>
+                </v-toolbar>
+                <v-card-text class="pt-4">
+                    <p class="py-6 text-center" v-if="refer_books_loading">
+                        <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                    </p>
+                    <p class="py-6 text-center" v-else-if="refer_books.length === 0">{{ $t('book.noMatchingInfo') }}</p>
+                    <template v-else>
+                        <p>{{ $t('book.selectMatchingRecord') }}</p>
+                        <book-cards :books="refer_books">
+                            <template #actions="{ book }">
+                                <v-card-actions>
+                                    <v-chip class="mr-1 chip-ellipsis" small v-if="book.author_sort" :title="book.author_sort">
+                                        {{ truncateText(book.author_sort, 14) }}
+                                    </v-chip>
+                                    <v-chip class="mr-1 chip-ellipsis" small v-if="book.publisher" :title="book.publisher">
+                                        {{ truncateText(book.publisher, 14) }}
+                                    </v-chip>
+                                    <v-chip class="chip-ellipsis" small v-if="book.pubyear" :title="String(book.pubyear)">
+                                        {{ truncateText(String(book.pubyear), 8) }}
+                                    </v-chip>
+                                </v-card-actions>
+                                <v-divider></v-divider>
+                                <v-card-actions>
+                                    <v-chip
+                                        small
+                                        dark
+                                        :href="book.website"
+                                        target="__blank"
+                                        :color="['douban', 'amazon', 'douban_v2'].includes(book.provider_key) ? '#064420' : '#003153'"
+                                    >{{ book.source }}
+                                    </v-chip
+                                    >
+                                    <v-spacer></v-spacer>
+                                    <v-menu offset-y right :disabled="book.title === 'BLOCKED' || !!referSettingId">
+                                        <template v-slot:activator="{ on }">
+                                            <v-btn color="primary" small rounded v-on="on"
+                                                   :disabled="book.title === 'BLOCKED' || (!!referSettingId && referSettingId !== referBookId(book))"
+                                                   :loading="referSettingId === referBookId(book)">
+                                                <v-icon small>mdi-check</v-icon>
+                                                {{ $t('common.set') }}
+                                            </v-btn>
+                                        </template>
+                                        <v-list dense>
+                                            <v-list-item @click="setRefer(book)">
+                                                <v-list-item-title>{{ $t('book.setBookInfoAndImage') }}</v-list-item-title>
+                                            </v-list-item>
+                                            <v-list-item
+                                                @click="setRefer(book, { only_meta: 'yes' })">
+                                                <v-list-item-title>{{ $t('book.setBookInfoOnly') }}</v-list-item-title>
+                                            </v-list-item>
+                                            <v-list-item
+                                                @click="setRefer(book, { only_cover: 'yes' })">
+                                                <v-list-item-title>{{ $t('book.setBookImageOnly') }}</v-list-item-title>
+                                            </v-list-item>
+                                            <v-list-item
+                                                @click="setRefer(book, { only_author_comments: 'yes' })">
+                                                <v-list-item-title>{{ $t('book.setAuthorAndCommentsOnly') }}</v-list-item-title>
+                                            </v-list-item>
+                                        </v-list>
+                                    </v-menu>
+                                </v-card-actions>
+                            </template>
+                        </book-cards>
+                    </template>
+                </v-card-text>
+            </v-card>
+
+            <v-card v-if="!dialog_refer">
+                <v-toolbar flat dense>
+                    <!-- back -->
+                    <v-btn v-if="!tiny && canGoBack" icon small fab @click="$router.back()">
+                        <v-icon>mdi-arrow-left-circle</v-icon>
+                    </v-btn>
+                    <!-- download -->
+                    <div class="book-action-btns">
+                        <v-btn icon small fab @click="downloadBook" :disabled="!hasDownloadableFiles">
+                            <v-icon>mdi-download</v-icon>
+                        </v-btn>
+                        <v-btn icon small fab :to="'/book/' + book.id + '/edit'">
+                            <v-icon>mdi-pencil-circle-outline</v-icon>
+                        </v-btn>
+                    </div>
+                    <v-spacer></v-spacer>
+                    <v-btn
+                        :small="tiny"
+                        dark
+                        color="primary"
+                        class="mx-2 d-flex d-sm-flex"
+                        :style="tiny ? { padding: '0px', margin: '0px 1px !important' } : {}"
+                        @click="handleReadingStateChange"
+                        :loading="readingStateLoading"
+                    >
+                        <v-icon>mdi-rotate-orbit</v-icon>
+                        <span v-if="!tiny">{{ readingStateButtonText }}</span>
+                    </v-btn>
+                    <v-btn
+                        :small="tiny"
+                        dark
+                        color="primary"
+                        class="mx-2 d-flex d-sm-flex"
+                        :style="tiny ? { padding: '0px', margin: '0px 1px !important' } : {}"
+                        @click="switchToAudioPlayer"
+                        v-if="hasEBooks"
+                    >
+                        <v-icon v-if="tiny">mdi-music-note</v-icon>
+                        <template v-else>
+                            <v-icon dark>{{ audios.status === AUDIO_STATUS.FAILED ? 'mdi-alert-circle' : 'mdi-playlist-music' }}</v-icon>
+                            {{ $t('book.convertToAudio') }}
+                            <span v-if="audios.status === AUDIO_STATUS.PROCESSING && audios.progress && audios.progress.converted_chapters !== undefined"
+                                  class="ml-1">
+                                ({{ audios.progress.converted_chapters }}/{{ audios.progress.total_chapters }})
+                            </span>
+                            <span v-if="audios.status === AUDIO_STATUS.CONVERTED && audios.count > 0"
+                                  class="ml-1">
+                                ({{ audios.count }})
+                            </span>
+                        </template>
+                    </v-btn>
+                    <div class="d-inline-flex" :class="tiny ? 'mx-1' : 'mx-2'">
+                        <v-btn :small="tiny" dark color="primary" class="d-flex d-sm-flex" :class="{ 'read-btn-grouped': needsReadFormatChoice }"
+                               :disabled="readBlocked"
+                               :style="tiny ? { padding: '0px', margin: '0px !important' } : { margin: '0px' }"
+                               :href="readHref" target="_blank" @click="onReadClick($event, defaultReadFormat)">
+                            <v-icon>mdi-book-open-blank-variant</v-icon>
+                            <span v-if="!tiny">{{ $t('book.read') }}</span>
+                        </v-btn>
+                        <v-menu v-if="needsReadFormatChoice" offset-y left>
+                            <template v-slot:activator="{ on, attrs }">
+                                <v-btn :small="tiny" dark color="primary" min-width="0" class="read-format-btn" :disabled="readBlocked"
+                                       :style="tiny ? { padding: '0px', margin: '0px !important' } : { padding: '0 6px', margin: '0px' }"
+                                       v-bind="attrs" v-on="on">
+                                    <v-icon small>mdi-dots-vertical</v-icon>
+                                </v-btn>
+                            </template>
+                            <v-list dense>
+                                <v-list-item v-for="fmt in extraReadFormats" :key="fmt.key" :href="fmt.href" target="_blank" @click="onReadClick($event, fmt)">
+                                    <v-list-item-title>{{ fmt.label }}</v-list-item-title>
+                                </v-list-item>
+                            </v-list>
+                        </v-menu>
+                    </div>
+                    <template v-if="book.is_owner">
+                        <v-menu offset-y>
+                            <template v-slot:activator="{ on }">
+                                <v-btn v-on="on" dark color="primary" class="mx-2 ml-2" :small="tiny" :style="tiny ? { padding: '0px',  margin: '0px 1px !important' } : {}">
+                                    {{ $t('book.process') }}
+                                    <v-icon small>mdi-dots-vertical</v-icon>
+                                </v-btn>
+                            </template>
+                            <v-list min-width="200">
+                                <v-list-item @click="saveMetaToFile" :disabled="!hasMetaWritableFormat">
+                                    <v-icon>mdi-file-sync</v-icon>
+                                    {{ $t('book.saveMetaToFile') }}
+                                </v-list-item>
+                                <v-list-item @click="addStampToCover" :disabled="!hasEpubAzw3 || !stamp_enabled">
+                                    <v-icon>mdi-picture-in-picture-bottom-right-outline</v-icon>
+                                    {{ $t('book.addStampToCover') }}
+                                </v-list-item>
+                                <v-list-item @click="convertBook" :disabled="!hasEBooks">
+                                    <v-icon>mdi-swap-horizontal</v-icon>
+                                    {{ $t('book.convert') }}
+                                </v-list-item>
+                                <v-list-item @click="convertToPdf" :disabled="!hasEBooks || hasPDF">
+                                    <v-icon>mdi-swap-horizontal</v-icon>
+                                    {{ $t('book.convertToPdf') }}
+                                </v-list-item>
+                                <v-list-item @click="separateBook" :disabled="book.files.length <= 1">
+                                    <v-icon>mdi-content-copy</v-icon>
+                                    {{ $t('book.seperate') }}
+                                </v-list-item>
+                                <v-list-item @click="showDeleteFormatDialog" :disabled="book.files.length <= 1">
+                                    <v-icon>mdi-file-document-remove-outline</v-icon>
+                                    {{ $t('book.deleteFormat') }}
+                                </v-list-item>
+                                <v-list-item @click="showUploadFormatDialog" :disabled="book.book_type === this.BOOK_TYPE.PHYSICAL">
+                                    <v-icon>mdi-file-upload-outline</v-icon>
+                                    {{ $t('book.uploadNewFormat') }}
+                                </v-list-item>
+                                <v-list-item @click="dialog_set_cover = true">
+                                    <v-icon>mdi-image</v-icon>
+                                    {{ $t('book.setCover') }}
+                                </v-list-item>
+                                <v-list-item @click="generateCover">
+                                    <v-icon>mdi-panorama-variant-outline</v-icon>
+                                    {{ $t('book.generateCover') }}
+                                </v-list-item>
+                                <v-list-item @click="cropCover">
+                                    <v-icon>mdi-crop-free</v-icon>
+                                    {{ $t('book.cropCover') }}
+                                </v-list-item>
+                            </v-list>
+                        </v-menu>
+                    </template>
+                    <template v-if="book.is_owner">
+                        <v-menu offset-y>
+                            <template v-slot:activator="{ on }">
+                                <v-btn v-on="on" dark color="primary" class="mx-2 ml-2" :small="tiny" :style="tiny ? { padding: '0px', margin: '0px 1px !important' } : {}">
+                                    {{ $t('book.manage') }}
+                                    <v-icon small>mdi-dots-vertical</v-icon>
+                                </v-btn>
+                            </template>
+                            <v-list min-width="200">
+                                <v-list-item :to="'/book/' + book.id + '/edit'">
+                                    <v-icon>mdi-application-cog</v-icon>
+                                    {{ $t('book.editBookInfo') }}
+                                </v-list-item>
+                                <v-list-item @click="dialog_send_to_device = true" :disabled="!hasCompatibleFormats">
+                                    <v-icon>mdi-devices</v-icon>
+                                    {{ $t('book.sendToDevice') }}
+                                </v-list-item>
+                                <v-list-item @click="getRefer">
+                                    <v-icon>mdi-apps</v-icon>
+                                    {{ $t('book.updateInfoFromInternet') }}
+                                </v-list-item>
+                                <v-list-item @click="updateTags">
+                                    <v-icon>mdi-bookmark-plus</v-icon>
+                                    {{ $t('book.updateTags') }}
+                                </v-list-item>
+                                <v-list-item @click="resetRefer">
+                                    <v-icon>mdi-apps</v-icon>
+                                    {{ $t('book.resetInfo') }}
+                                </v-list-item>
+                                <v-list-item @click="setSole">
+                                    <v-icon>{{ book.sole ? 'mdi-earth-off' : 'mdi-earth' }}</v-icon>
+                                    {{ book.sole ? $t('book.setPublic') : $t('book.setSole') }}
+                                </v-list-item>
+                                <v-list-item @click="aiFillBook">
+                                    <v-icon>mdi-robot</v-icon>
+                                    {{ $t('book.aiUpdate') }}
+                                </v-list-item>
+                                <v-list-item @click="extractCatalog" :disabled="!hasCatalogFormats || catalog_extracting">
+                                    <v-icon>mdi-format-list-bulleted</v-icon>
+                                    {{ $t('book.extractCatalog') }}
+                                </v-list-item>
+                                <v-list-item v-if="$store.state.user?.is_login" @click="openEmailDialog" :disabled="!hasCompatibleEmailFormats">
+                                    <v-icon>mdi-email-send</v-icon>
+                                    {{ $t('book.shareToEmail') }}
+                                </v-list-item>
+                                <v-list-item v-if="isAdmin && shareLinkEnabled" @click="dialog_book_share = true">
+                                    <v-icon>mdi-cloud-outline</v-icon>
+                                    {{ book.shared ? $t('share.manageShare') : $t('share.createShare') }}
+                                </v-list-item>
+                                <v-list-item @click="generateShareCard" :disabled="!hasEBooks">
+                                    <v-icon>mdi-card-bulleted-outline</v-icon>
+                                    {{ $t('book.generateShareCard') }}
+                                </v-list-item>
+                                <v-list-item @click="exchangeBookType">
+                                    <v-icon>mdi-swap-horizontal-bold</v-icon>
+                                    {{ book.book_type==this.BOOK_TYPE.PHYSICAL ? $t('book.exchangeToEbook') : $t('book.exchangeToPhysical') }}
+                                </v-list-item>
+                                <v-list-item @click="openReadingTimeBackfill" :disabled="!hasEBooks">
+                                    <v-icon>mdi-timer-plus-outline</v-icon>
+                                    {{ $t('book.readingTimeBackfill') }}
+                                </v-list-item>
+                                <v-list-item @click="dialog_delete_book = true">
+                                    <v-icon>mdi-delete-forever</v-icon>
+                                    {{ $t('book.deleteBook') }}
+                                </v-list-item>
+                            </v-list>
+                        </v-menu>
+
+                        <ReadingTimeBackfillDialog ref="reading_time_backfill" @saved="onReadingTimeSaved" />
+                        <BookShareDialog v-if="isAdmin && shareLinkEnabled" v-model="dialog_book_share" :book="book" @changed="onShareChanged" />
+                    </template>
+                </v-toolbar>
+                <v-row>
+                    <v-col class="mx-auto" cols="8" sm="4">
+                        <div style="position: relative; display: inline-block; width: 100%;">
+                            <v-img class="book-img" :src="book.img" :aspect-ratio="11 / 15" max-height="500px"
+                                   contain style="border-radius: 14px;"></v-img>
+                            <div v-if="book.state && book.state.read_state === READING_STATE.FINISHED" class="finished-mark">
+                                <img src="/icons/done.svg" :alt="$t('readingState.finished')" :title="$t('readingState.finished')" />
+                            </div>
+                        </div>
+                        <div v-if="book.reading_stats && book.reading_stats.length" class="reading-stats-block">
+                            <div v-for="stat in book.reading_stats" :key="stat.format" class="reading-stats-row">
+                                <span class="reading-stats-item">
+                                    <v-icon x-small>mdi-book-open-page-variant-outline</v-icon>
+                                    {{ stat.format.toUpperCase() }}
+                                </span>
+                                <span v-if="book.state && book.state.read_state === 0" class="reading-stats-item">
+                                    <v-icon x-small>mdi-chart-donut</v-icon>
+                                    {{ formatReadingProgress(stat) }}
+                                </span>
+                                <span class="reading-stats-item">
+                                    <v-icon x-small>mdi-clock-outline</v-icon>
+                                    {{ formatReadingDuration(stat.total_seconds) }}
+                                </span>
+                                <span v-if="stat.state === 1 && stat.finish_time" class="reading-stats-item">
+                                    <v-icon x-small>mdi-check-circle-outline</v-icon>
+                                    {{ formatReadingDate(stat.finish_time) }}
+                                </span>
+                                <span v-else-if="stat.start_time" class="reading-stats-item">
+                                    <v-icon x-small>mdi-flag-outline</v-icon>
+                                    {{ formatReadingDate(stat.start_time) }}
+                                </span>
+                            </div>
+                        </div>
+                    </v-col>
+                    <v-col cols="12" sm="8">
+                        <v-card-text>
+                            <div>
+                                <p class='title mb-0'>
+                                    {{ book.title }}
+                                    <v-icon v-if="isAdmin && shareLinkEnabled && book.shared" color="teal"
+                                        @click="dialog_book_share = true"
+                                        class="ml-1"
+                                        :title="$t('share.sharedBadge')">
+                                        mdi-cloud
+                                    </v-icon>
+                                    <v-tooltip bottom>
+                                        <template v-slot:activator="{ on, attrs }">
+                                            <v-btn
+                                                icon
+                                                small
+                                                class="ml-2"
+                                                @click="toggleFavorite"
+                                                :loading="favoriteLoading"
+                                                :color="isFavorite ? 'red' : 'grey'"
+                                                v-bind="attrs"
+                                                v-on="on"
+                                            >
+                                                <v-icon>
+                                                    {{ isFavorite ? 'mdi-heart' : 'mdi-heart-outline' }}
+                                                </v-icon>
+                                            </v-btn>
+                                        </template>
+                                        <span>{{ $t('readingState.favoriteHint') }}</span>
+                                    </v-tooltip>
+                                    <v-tooltip v-if="canSubmitReview" bottom>
+                                        <template v-slot:activator="{ on, attrs }">
+                                            <v-btn
+                                                icon
+                                                small
+                                                class="ml-1"
+                                                @click="openReviewDialog"
+                                                :color="hasOwnReview ? 'primary' : 'grey'"
+                                                v-bind="attrs"
+                                                v-on="on"
+                                            >
+                                                <v-icon>
+                                                    {{ hasOwnReview ? 'mdi-thumb-up' : 'mdi-thumb-up-outline' }}
+                                                </v-icon>
+                                            </v-btn>
+                                        </template>
+                                        <span>{{ $t('book.reviewHint') }}</span>
+                                    </v-tooltip>
+                                    <v-tooltip bottom>
+                                        <template v-slot:activator="{ on, attrs }">
+                                            <v-btn
+                                                icon
+                                                small
+                                                class="ml-1"
+                                                @click="toggleWants"
+                                                :loading="wantsLoading"
+                                                :color="isWants ? 'orange' : 'grey'"
+                                                v-bind="attrs"
+                                                v-on="on"
+                                            >
+                                                <v-icon>
+                                                    {{ isWants ? 'mdi-bookmark-plus' : 'mdi-bookmark-plus-outline' }}
+                                                </v-icon>
+                                            </v-btn>
+                                        </template>
+                                        <span>{{ $t('readingState.wantsHint') }}</span>
+                                    </v-tooltip>
+                                    <BookListQuickAddMenu v-if="$store.state.user?.is_login" :book-id="book.id">
+                                        <template v-slot:activator="{ on, attrs }">
+                                            <v-tooltip bottom>
+                                                <template v-slot:activator="{ on: onTooltip, attrs: attrsTooltip }">
+                                                    <v-btn icon small class="ml-1" color="grey"
+                                                        v-bind="{ ...attrs, ...attrsTooltip }"
+                                                        v-on="{ ...on, ...onTooltip }"
+                                                    >
+                                                        <v-icon>mdi-playlist-plus</v-icon>
+                                                    </v-btn>
+                                                </template>
+                                                <span>{{ $t('booklist.addToBooklist') }}</span>
+                                            </v-tooltip>
+                                        </template>
+                                    </BookListQuickAddMenu>
+                                    <v-tooltip bottom v-if="book.sole">
+                                        <template v-slot:activator="{ on, attrs }">
+                                            <v-btn icon small class="ml-1" v-bind="attrs" v-on="on">
+                                                <v-icon :color="book.sole ? 'red' : 'green'" class="mr-2">
+                                                    {{ book.sole ? 'mdi-earth-off' : 'mdi-earth' }}
+                                                </v-icon>
+                                            </v-btn>
+                                        </template>
+                                        <span>{{ $t('book.soledBooks') }}</span>
+                                    </v-tooltip>
+                                </p>
+                                <br />
+                                <div class="authors-container">
+                                    <template v-for="(author, index) in book.authors.slice(0, 5)">
+                                        <div :key="'author-' + index" class="author-item">
+                                            <nuxt-link v-if="showUserInfo" :to="{ path: '/author', query: { name: author } }" style="text-decoration: none;">
+                                                <v-img :src="authorAvatarUrl(author)" alt="author-avatar"
+                                                        class="author-avatar"></v-img>
+                                            </nuxt-link>
+                                            <v-tooltip bottom>
+                                                <template v-slot:activator="{ on, attrs }">
+                                                    <v-chip v-bind="attrs" v-on="on" rounded small dark color="#006400" :to="{ path: '/author', query: { name: author } }">
+                                                        <v-icon v-if="!showUserInfo">mdi-account-badge-outline</v-icon>
+                                                        {{ author }}
+                                                    </v-chip>
+                                                </template>
+                                                <span>{{ $t('book.authors') }}</span>
+                                            </v-tooltip>
+                                        </div>
+                                    </template>
+                                    <template v-for="(translator, index) in book.translators.slice(0, 2)">
+                                        <div :key="'translator-' + index" class="author-item">
+                                            <nuxt-link v-if="showUserInfo" :to="{ path: '/author', query: { name: translator } }" style="text-decoration: none;">
+                                                <v-img :src="authorAvatarUrl(translator)" alt="author-avatar"
+                                                        class="author-avatar"></v-img>
+                                            </nuxt-link>
+                                            <v-tooltip bottom>
+                                                <template v-slot:activator="{ on, attrs }">
+                                                    <v-chip v-bind="attrs" v-on="on" rounded small dark color="indigo" :to="{ path: '/author', query: { name: translator } }">
+                                                        {{ translator }}
+                                                    </v-chip>
+                                                </template>
+                                                <span>{{ $t('book.translators') }}</span>
+                                            </v-tooltip>
+                                        </div>
+                                    </template>
+                                </div>
+                                <br/>
+                                <span v-if="book.book_type==this.BOOK_TYPE.PHYSICAL">
+                                    <v-chip rounded small dark color="indigo">
+                                        <v-icon>mdi-bookshelf</v-icon>{{ $t('book.bookPhysical') }}
+                                    </v-chip>
+                                </span>
+                                <span v-if="book.book_type==this.BOOK_TYPE.PHYSICAL">{{ $t('book.bookCount') }}: {{book.book_count}}</span>
+                                <span v-if="book.book_type==this.BOOK_TYPE.PHYSICAL">
+                                    , {{ $t('book.location') }}:
+                                    <span v-if="!editing_location">
+                                        {{book.location || "*" }}
+                                        <v-icon small @click="startEditLocation">mdi-pencil</v-icon>
+                                    </span>
+                                    <v-text-field
+                                        v-else
+                                        v-model="location_input"
+                                        autofocus
+                                        dense
+                                        hide-details
+                                        single-line
+                                        maxlength="20"
+                                        style="display: inline-flex; width: 120px;"
+                                        @keyup.enter="confirmEditLocation"
+                                        @blur="cancelEditLocation"
+                                    ></v-text-field>
+                                </span>
+                                <template v-for="(file, index) in book.files.slice(0, 3)">
+                                    <span :key="'file-size-' + index"
+                                        color="grey--text"
+                                        style="font-weight: bold"
+                                    >{{ '&nbsp;&nbsp;' }}[{{ file.format }} - {{ file.size >= 1048576 ? parseInt(file.size / 1048576) + 'MB' : parseInt(file.size / 1024) + 'KB' }}]</span>
+                                </template>
+                            </div>
+                            <v-rating :value="toStars(book.rating)" color="yellow accent-4" length="5" readonly dense small></v-rating>
+                            <!-- 阅读信息：在读/收藏/推荐人数，三项都为 0 时组件本身不渲染 -->
+                            <book-social-info :book-id="book.id" ref="socialInfo"></book-social-info>
+                            <!-- Reading state display -->
+                            <div v-if="book.state && book.state.read_state === this.READING_STATE.READING" class="mt-2">
+                                <v-chip
+                                    small
+                                    color="indigo"
+                                    text-color="white"
+                                >
+                                    <v-icon small left>mdi-book-open</v-icon>
+                                    {{ readingDaysText }}
+                                </v-chip>
+                            </div>
+                            <div v-else-if="book.state && book.state.read_state === this.READING_STATE.FINISHED" class="mt-2">
+                                <v-chip
+                                    small
+                                    color="grey"
+                                    text-color="white"
+                                >
+                                    <v-icon small left>mdi-check</v-icon>
+                                    {{ completedReadingText }}
+                                </v-chip>
+                            </div>
+                            <div class="tag-chips" style="margin-top: 5px;">
+                                <v-chip rounded smallF color="indigo" class="white--text"
+                                        @click="aiFillBook" :loading="ai_filling">
+                                    <v-icon left>mdi-robot</v-icon>
+                                    {{ $t('book.aiUpdate') }}
+                                </v-chip>
+                                <v-chip v-if="isAdmin && shareLinkEnabled && book.shared" rounded smallF color="#006400" class="white--text"
+                                        @click="dialog_book_share = true">
+                                    <v-icon left>mdi-cloud-outline</v-icon>
+                                    {{ $t('share.manageShare') }}
+                                </v-chip>
+                                <v-chip
+                                    v-if="isAdmin && mynexusEnabled && !book.ai_companion_available"
+                                    rounded
+                                    color="deep-purple"
+                                    class="white--text"
+                                    :disabled="!mynexusHasSupportedFormat || mynexusRequesting || mynexusIsActive"
+                                    :title="mynexusHasSupportedFormat ? '' : $t('book.mynexusUnsupportedFormat')"
+                                    @click="startMyNexusAnalysis"
+                                >
+                                    <v-progress-circular v-if="mynexusRequesting" indeterminate size="16" width="2" class="mr-1"></v-progress-circular>
+                                    <v-icon v-else left>mdi-book-search</v-icon>
+                                    {{ $t('book.mynexusAnalyze') }}
+                                </v-chip>
+                                <v-chip
+                                    v-if="mynexusEnabled && book.ai_companion_available"
+                                    rounded
+                                    color="teal"
+                                    class="white--text"
+                                    :disabled="mynexusChecking"
+                                    @click="openMyNexusChat"
+                                >
+                                    <v-progress-circular v-if="mynexusChecking" indeterminate size="16" width="2" class="mr-1"></v-progress-circular>
+                                    <v-icon v-else left>mdi-forum-outline</v-icon>
+                                    {{ $t('book.mynexusCompanion') }}
+                                </v-chip>
+                                <v-menu offset-y :close-on-content-click="false" v-model="categoryMenu" content-class="mt-category-menu">
+                                    <template v-slot:activator="{ on, attrs }">
+                                        <v-chip rounded smallF color="green" class="white--text" v-bind="attrs" v-on="on" :disabled="categories.length === 0">
+                                            <v-icon>mdi-shape</v-icon>
+                                            {{ $t('book.category') }} : {{ book.category || $t('message.unclassified') }}
+                                            <v-icon color="white" class="ml-1">mdi-pencil</v-icon>
+                                        </v-chip>
+                                    </template>
+                                    <v-card>
+                                        <v-autocomplete
+                                            v-model="categorySelect"
+                                            :items="categories"
+                                            dense
+                                            filled
+                                            autofocus
+                                            hide-details
+                                            clearable
+                                            style="min-width: 220px;font-size: 14px;"
+                                            @change="onCategorySelected"
+                                        >
+                                            <template v-slot:item="{ item }">
+                                                <v-list-item-title :class="item === $t('book.clearCategory') ? 'red--text' : ''">{{ item }}</v-list-item-title>
+                                            </template>
+                                        </v-autocomplete>
+                                    </v-card>
+                                </v-menu>
+                                <v-menu v-if="folderEnabled" offset-y :close-on-content-click="false" v-model="folderMenu" @input="onFolderMenuToggle">
+                                    <template v-slot:activator="{ on, attrs }">
+                                        <v-chip rounded smallF color="amber darken-3" class="black--text" v-bind="attrs" v-on="on">
+                                            <v-icon>mdi-folder-outline</v-icon>
+                                            {{ $t('folder.label') }} : {{ book.folder || $t('folder.unset') }}
+                                            <v-icon color="white" class="ml-1">mdi-pencil</v-icon>
+                                        </v-chip>
+                                    </template>
+                                    <v-card class="pa-3" style="min-width: 300px; max-width: 420px;">
+                                        <FolderEditor v-if="folderMenu" v-model="folderDraft" dense autofocus @valid-change="folderValid = $event" />
+                                        <div class="d-flex justify-center mt-3">
+                                            <v-btn color="primary" small :disabled="!folderValid" :loading="folderSaving" @click="saveFolder">{{ $t('folder.save') }}</v-btn>
+                                        </div>
+                                    </v-card>
+                                </v-menu><v-menu offset-y>
+                                    <template v-slot:activator="{ on, attrs }">
+                                        <v-chip rounded smallF color="#006400" class="white--text" v-bind="attrs" v-on="on" :disabled="categories.length === 0">
+                                            <v-icon>mdi-web</v-icon>
+                                            {{ $t('book.languages') }} : {{ languageName(book.languages)}}
+                                            <v-icon color="white" class="ml-1">mdi-pencil</v-icon>
+                                        </v-chip>
+                                    </template>
+                                    <v-list dense>
+                                        <v-list-item v-for="(lang, index) in languageOptions" :key="index" @click="setLanguage(lang.code)">
+                                            <v-list-item-title>{{ lang.name }}</v-list-item-title>
+                                        </v-list-item>
+                                    </v-list>
+                                </v-menu>
+                                <v-chip v-if="book.ext_link" dark color="indigo" :href="book.ext_link" target="_blank" rel="noopener noreferrer">
+                                    <v-icon left>mdi-link-variant</v-icon>
+                                    {{ $t('book.ext_link')}}
+                                </v-chip>
+                                <v-chip rounded dark color="indigo"
+                                        :to="'/publisher/' + encodeURIComponent(book.publisher)">
+                                    <v-icon>mdi-account-group</v-icon>
+                                    {{ $t('book.publisher') }}：{{ book.publisher }}({{ pub_year }})
+                                </v-chip>
+                                <v-chip
+                                    rounded
+                                    dark
+                                    color="indigo"
+                                    v-if="book.series"
+                                    :to="{ path: '/series', query: { name: encodeURIComponent(book.series) } }"
+                                >
+                                    <v-icon>mdi-compass</v-icon>
+                                    {{ $t('book.series') }}: {{ book.series }} {{ book.series_index ? '(#' + book.series_index + ')' : '' }}
+                                </v-chip>
+                                <v-chip rounded dark color="grey" v-if="book.isbn">
+                                    <v-icon>mdi-compass</v-icon>
+                                    ISBN：{{ book.isbn }}
+                                </v-chip>
+                                <template v-for="tag in book.tags">
+                                    <v-chip :key="'tag-' + tag"
+                                        rounded
+                                        small
+                                        dark
+                                        color="grey"
+                                        v-if="tag"
+                                        :to="{ path: '/tag', query: { name: encodeURIComponent(tag) } }"
+                                    >
+                                    <v-icon>mdi-tag</v-icon>
+                                    {{ tag }}
+                                    </v-chip>
+                                </template>
+                            </div>
+                        </v-card-text>
+                        <v-card-text v-if="isAdmin && book.mynexus_error" class="pt-0 error--text">
+                            {{ book.mynexus_error }}
+                        </v-card-text>
+                        <v-card-text v-if="isAdmin && mynexusEnabled && (mynexusIsActive || mynexusStatus === 'failed')" class="pt-0">
+                            <div class="d-flex align-center mb-2">
+                                <v-icon small class="mr-2" :color="mynexusStatus === 'failed' ? 'error' : 'primary'">mdi-book-search</v-icon>
+                                <span>{{ mynexusStatusLabel }}</span>
+                            </div>
+                            <v-progress-linear
+                                v-if="mynexusIsActive"
+                                :value="book.mynexus_analysis && book.mynexus_analysis.progress || 0"
+                                color="primary"
+                                height="6"
+                            ></v-progress-linear>
+                            <div v-if="mynexusStatus === 'failed' && book.mynexus_analysis && book.mynexus_analysis.error_msg" class="error--text mt-2">
+                                {{ book.mynexus_analysis.error_msg }}
+                            </div>
+                        </v-card-text>
+                        <v-card-text>
+                            <div v-if="book.ai_reading_guide" class="mynexus-section-tabs">
+                                <button
+                                    type="button"
+                                    :class="{ active: mynexusDescriptionTab === 'description' }"
+                                    @click="mynexusDescriptionTab = 'description'"
+                                >{{ $t('book.mynexusDescriptionTab') }}</button>
+                                <button
+                                    type="button"
+                                    :class="{ active: mynexusDescriptionTab === 'guide' }"
+                                    @click="mynexusDescriptionTab = 'guide'"
+                                >{{ $t('book.mynexusGuideTab') }}</button>
+                            </div>
+                            <template v-if="mynexusDescriptionTab === 'guide' && book.ai_reading_guide">
+                                <client-only>
+                                <MyNexusMarkdown
+                                    class="mynexus-reading-guide"
+                                    :content="book.ai_reading_guide"
+                                />
+                                </client-only>
+                            </template>
+                            <template v-else>
+                                <p v-if="book.comments" v-html="book.comments"></p>
+                                <p v-else>{{ $t('book.clickToViewDetails') }}</p>
+                            </template>
+                        </v-card-text>
+                        <v-card-text v-if="book.catalog" class="pt-0">
+                            <div class="catalog-toggle" @click="catalogExpanded = !catalogExpanded">
+                                <v-icon small>{{ catalogExpanded ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+                                <span class="ml-1">{{ $t('book.catalogInfo') }}</span>
+                            </div>
+                            <v-expand-transition>
+                                <div v-if="catalogExpanded" class="catalog-content">
+                                    <div
+                                        v-for="(line, index) in catalogLines"
+                                        :key="index"
+                                        :style="{ paddingLeft: (line.depth * 16) + 'px' }"
+                                    >{{ line.title }}</div>
+                                </div>
+                            </v-expand-transition>
+                        </v-card-text>
+                    </v-col>
+                </v-row>
+                <v-card-text class="align-right book-footer">
+                    <span class="grey--text"> {{ book.collector }} @ {{ book.timestamp }} </span>
+                </v-card-text>
+            </v-card>
+        </v-col>
+        <v-col cols="12" sm="6" class="book-action-col">
+            <v-card outlined>
+                <v-list>
+                    <v-list-item :href="readHref" target="_blank" :disabled="!hasEBooks || readBlocked" @click="onReadClick($event, defaultReadFormat)">
+                        <v-list-item-avatar large :color="!hasEBooks || readBlocked ? 'grey' : 'primary'">
+                            <v-icon dark>mdi-book-open-page-variant</v-icon>
+                        </v-list-item-avatar>
+                        <v-list-item-content>
+                            <v-list-item-title :class="{ 'grey--text': !hasEBooks || readBlocked }">{{ $t('book.read') }}</v-list-item-title>
+                        </v-list-item-content>
+                        <v-list-item-action>
+                            <v-menu v-if="needsReadFormatChoice" offset-y left>
+                                <template v-slot:activator="{ on, attrs }">
+                                    <v-btn icon v-bind="attrs" v-on="on" @click.stop.prevent>
+                                        <v-icon>mdi-menu-down</v-icon>
+                                    </v-btn>
+                                </template>
+                                <v-list dense>
+                                    <v-list-item v-for="fmt in extraReadFormats" :key="fmt.key" :href="fmt.href" target="_blank" @click="onReadClick($event, fmt)">
+                                        <v-list-item-title>{{ fmt.label }}</v-list-item-title>
+                                    </v-list-item>
+                                </v-list>
+                            </v-menu>
+                            <v-icon v-else>mdi-arrow-right</v-icon>
+                        </v-list-item-action>
+                    </v-list-item>
+                </v-list>
+            </v-card>
+        </v-col>
+        <v-col cols="12" sm="6" class="book-action-col">
+            <v-card outlined>
+                <v-list>
+                    <v-list-item @click="downloadBook" :disabled="!hasDownloadableFiles">
+                        <v-list-item-avatar large :color="hasDownloadableFiles ? 'primary' : 'grey'">
+                            <v-icon dark>mdi-download</v-icon>
+                        </v-list-item-avatar>
+                        <v-list-item-content>
+                            <v-list-item-title :class="{ 'grey--text': !hasDownloadableFiles }">{{ $t('book.download') }}</v-list-item-title>
+                        </v-list-item-content>
+                        <v-list-item-action>
+                            <v-icon>mdi-arrow-right</v-icon>
+                        </v-list-item-action>
+                    </v-list-item>
+                </v-list>
+            </v-card>
+        </v-col>
+        <v-col cols="12" sm="6" class="book-action-col">
+            <v-card outlined>
+                <v-list>
+                    <v-list-item @click="switchAudioDialog" :disabled="!hasEBooks">
+                        <v-list-item-avatar large :color="!hasEBooks ? 'grey' : (audios.status === AUDIO_STATUS.FAILED ? 'red' : 'primary')">
+                            <v-icon dark>{{ audios.status === AUDIO_STATUS.FAILED ? 'mdi-alert-circle' : 'mdi-playlist-music' }}</v-icon>
+                        </v-list-item-avatar>
+                        <v-list-item-content>
+                            <v-list-item-title :class="{ 'grey--text': !hasEBooks }">
+                                {{ $t('book.convertToAudio') }}
+                                <span v-if="audios.status === AUDIO_STATUS.PROCESSING && audios.progress && audios.progress.converted_chapters !== undefined"
+                                      class="ml-1 text-caption">
+                                    ({{ audios.progress.converted_chapters }}/{{ audios.progress.total_chapters }})
+                                </span>
+                                <span v-if="audios.status === AUDIO_STATUS.CONVERTED && audios.count > 0"
+                                    class="ml-1 text-caption">
+                                    ({{ audios.count }})
+                                </span>
+                            </v-list-item-title>
+                        </v-list-item-content>
+                        <v-list-item-action>
+                            <v-icon>mdi-arrow-right</v-icon>
+                        </v-list-item-action>
+                    </v-list-item>
+                </v-list>
+            </v-card>
+        </v-col>
+        <v-col cols="12" sm="6" class="book-action-col">
+            <v-card outlined>
+                <v-list>
+                    <v-list-item @click="dialog_send_to_device = true" :disabled="!hasCompatibleFormats">
+                        <v-list-item-avatar large :color="!hasCompatibleFormats ? 'grey' : 'primary'">
+                            <v-icon dark>mdi-devices</v-icon>
+                        </v-list-item-avatar>
+                        <v-list-item-content>
+                            <v-list-item-title :class="{ 'grey--text': !hasCompatibleFormats }">
+                                {{ $t('book.sendToDevice') }}
+                            </v-list-item-title>
+                        </v-list-item-content>
+                        <v-list-item-action>
+                            <v-icon>mdi-arrow-right</v-icon>
+                        </v-list-item-action>
+                    </v-list-item>
+                </v-list>
+            </v-card>
+        </v-col>
+    </v-row>
+
+    <!-- 评论：一人一条，当前用户置顶，管理员可隐藏，见 plan/Social_Reading_Plan.md §2.4c -->
+    <book-review-list
+        v-if="canReview"
+        :book-id="book.id"
+        :is-admin="isAdmin"
+        :has-own-review="hasOwnReview"
+        :can-submit="canSubmitReview"
+        ref="reviewList"
+        @edit="openReviewDialog"
+        @add="openReviewDialog"
+    ></book-review-list>
+    <book-review-dialog
+        v-if="canSubmitReview"
+        v-model="reviewDialogOpen"
+        :book-id="book.id"
+        @saved="onReviewSaved"
+    ></book-review-dialog>
+
+    <!-- 推荐图书列表 -->
+    <v-row v-if="suggestionBooks.length > 0" class="mt-6">
+        <v-col cols="12">
+            <v-card>
+                <v-card-title class="headline">
+                    <v-icon left>mdi-book-multiple</v-icon>
+                    {{ $t('book.recommendedBooks') }}
+                </v-card-title>
+                <v-card-subtitle>
+                    {{ $t('book.recommendedBooksDesc') }}
+                </v-card-subtitle>
+                <v-card-text>
+                    <v-progress-circular
+                        v-if="suggestionBooksLoading"
+                        indeterminate
+                        color="primary"
+                        class="d-block mx-auto my-4"
+                    ></v-progress-circular>
+                    <book-cards v-else :books="suggestionBooks">
+                        <template #introduce="{ book }">
+                            <div class="text-caption grey--text mt-1 text-truncate">
+                                {{ book.author }}
+                            </div>
+                            <div v-if="similarReasonText(book)" class="text-caption primary--text text-truncate">
+                                {{ similarReasonText(book) }}
+                            </div>
+                        </template>
+                    </book-cards>
+                </v-card-text>
+            </v-card>
+        </v-col>
+    </v-row>
+
+    <!-- AI更新加载浮层 -->
+    <v-overlay :value="ai_filling" z-index="9999">
+        <div class="text-center">
+            <v-progress-circular indeterminate color="white" size="64"></v-progress-circular>
+            <p class="mt-4 white--text text-h6">{{ $t('book.aiUpdating') }}</p>
+        </div>
+    </v-overlay>
+
+    <!-- 同名图书列表 -->
+    <v-row v-if="sameNameBooks.length > 0" class="mt-6">
+        <v-col cols="12">
+            <v-card>
+                <v-card-title class="headline">
+                    <v-icon left>mdi-book-multiple</v-icon>
+                    {{ $t('book.sameNameBooks') }}
+                </v-card-title>
+                <v-card-text>
+                    <v-progress-circular
+                        v-if="sameNameBooksLoading"
+                        indeterminate
+                        color="primary"
+                        class="d-block mx-auto my-4"
+                    ></v-progress-circular>
+                    <book-cards v-else :books="sameNameBooks">
+                        <template #introduce="{ book }">
+                            <div class="text-caption grey--text mt-1">
+                                {{ book.author }}
+                            </div>
+                        </template>
+                    </book-cards>
+                </v-card-text>
+            </v-card>
+        </v-col>
+    </v-row>
+
+    <AppDialog
+      v-model="dialog_set_cover"
+      type="action"
+      :title="$t('book.setCover')"
+      icon="mdi-image-outline"
+      max-width="400"
+      :confirm-text="$t('common.ok')"
+      @confirm="uploadCover"
+    >
+      <v-file-input
+        v-model="cover_file"
+        :label="$t('book.selectCover')"
+        outlined
+        dense
+        show-size
+        accept="image/png,image/jpeg,image/webp"
+        prepend-icon="mdi-file-image"
+        :error-messages="cover_error"
+      ></v-file-input>
+    </AppDialog>
+
+    <!-- 添加实体书对话框 -->
+    <AppDialog
+        v-if="$store.state.sys.allow.physical_books"
+        v-model="isbn_dialog"
+        type="action"
+        :title="$t('upload.addPhysicalBook')"
+        icon="mdi-book-plus"
+        color="green"
+        width="410"
+        transition="dialog-bottom-transition"
+        :dismiss-label="$t('upload.close')"
+        :confirm-text="$t('upload.confirmAdd')"
+        confirm-color="green"
+        confirm-dark
+        :confirm-loading="adding_book"
+        :confirm-disabled="!isValidIsbn"
+        @dismiss="cancelAddBook"
+        @confirm="confirmAddBook"
+    >
+                <p class="body-1">{{ $t('upload.addPhysicalBookDesc') }}</p>
+                <v-text-field
+                    ref="isbnField"
+                    v-model="isbn"
+                    :label="$t('upload.isbnLabel')"
+                    :placeholder="$t('upload.isbnPlaceholder')"
+                    outlined
+                    :rules="isbnRules"
+                    counter
+                    maxlength="17"
+                    :hint="$t('upload.isbnHint')"
+                    persistent-hint
+                    autofocus
+                    @keyup.enter="confirmAddBook"
+                    @input="clearValidationErrors"
+                >
+                    <template v-slot:prepend-inner>
+                        <v-icon>mdi-barcode</v-icon>
+                    </template>
+                    <template v-slot:append>
+                        <v-tooltip bottom>
+                            <template v-slot:activator="{ on, attrs }">
+                                <v-btn
+                                    icon
+                                    small
+                                    @click="triggerImageUpload"
+                                    :loading="recognizing_barcode"
+                                    :disabled="recognizing_barcode"
+                                    color="primary"
+                                    v-bind="attrs"
+                                    v-on="on"
+                                >
+                                    <v-icon>mdi-camera</v-icon>
+                                </v-btn>
+                            </template>
+                            <span>{{ $t('upload.selectImageForBarcode') }}</span>
+                        </v-tooltip>
+                    </template>
+                </v-text-field>
+
+                <!-- 隐藏的文件输入框 -->
+                <input
+                    ref="barcodeImageInput"
+                    type="file"
+                    accept="image/*"
+                    style="display: none"
+                    @change="handleImageUpload"
+                />
+
+                <!-- 继续添加checkbox -->
+                <v-checkbox
+                    v-model="continueAdding"
+                    :label="$t('upload.continueAdding')"
+                    color="green"
+                    class="mt-4"
+                ></v-checkbox>
+    </AppDialog>
+
+    <!-- 拆分格式对话框 -->
+    <AppDialog
+        v-model="dialog_separate"
+        type="action"
+        :title="$t('book.seperate')"
+        icon="mdi-content-copy"
+        max-width="500"
+        :confirm-text="$t('common.ok')"
+        :confirm-loading="separating_book"
+        :confirm-disabled="!selectedSeparateFormat"
+        @confirm="confirmSeparate"
+    >
+        <p class="mb-4">{{ $t('book.selectFormatToSeparate') }}</p>
+        <v-radio-group v-model="selectedSeparateFormat">
+            <v-radio
+                v-for="file in book.files"
+                :key="'sep-' + file.format"
+                :value="file.format.toLowerCase()"
+                :label="`${file.format} - ${formatFileSize(file.size)}`"
+            ></v-radio>
+        </v-radio-group>
+        <v-alert type="info" text dense class="mt-4">
+            {{ $t('book.separateHint') }}
+        </v-alert>
+    </AppDialog>
+
+    <!-- MyNexus 解析结果失效，询问是否重新解读 -->
+    <AppDialog
+        v-model="dialog_mynexus_reanalyze"
+        type="confirm"
+        :title="$t('book.mynexusCompanion')"
+        icon="mdi-alert-circle-outline"
+        color="deep-purple"
+        confirm-dark
+        width="500"
+        :confirm-text="$t('book.mynexusReanalyze')"
+        :confirm-loading="mynexusRequesting"
+        @confirm="confirmMyNexusReanalyze"
+    >
+        <p>{{ $t('book.mynexusRemoteMissing') }}</p>
+    </AppDialog>
+
+    <!-- 删除书籍确认对话框 -->
+    <AppDialog
+        v-model="dialog_delete_book"
+        type="confirm"
+        :title="$t('book.deleteBook')"
+        color="deep-orange"
+        confirm-dark
+        width="500"
+        transition="dialog-bottom-transition"
+        :confirm-text="$t('book.confirmDeleteBook')"
+        :confirm-loading="deleting_book"
+        @confirm="confirmDeleteBook"
+    >
+        <p>{{ $t('book.deleteBookConfirm') }}</p>
+    </AppDialog>
+
+    <!-- 删除格式对话框 -->
+    <AppDialog
+        v-model="dialog_delete_format"
+        type="action"
+        :title="$t('book.deleteFormat')"
+        icon="mdi-delete-outline"
+        color="deep-orange"
+        confirm-dark
+        max-width="500"
+        :confirm-text="$t('common.ok')"
+        :confirm-loading="deleting_format"
+        :confirm-disabled="!selectedDeletedFormat"
+        @confirm="confirmDeleteFormat"
+    >
+        <p class="mb-4">{{ $t('book.selectFormatToDelete') }}</p>
+        <v-radio-group v-model="selectedDeletedFormat">
+            <v-radio
+                v-for="file in book.files"
+                :key="'del-' + file.format"
+                :value="file.format.toLowerCase()"
+                :label="`${file.format} - ${formatFileSize(file.size)}`"
+            ></v-radio>
+        </v-radio-group>
+        <v-alert type="info" text dense class="mt-4">
+            {{ $t('book.deleteFormatHint') }}
+        </v-alert>
+    </AppDialog>
+
+    <!-- 上传新格式对话框 -->
+    <AppDialog
+        v-model="dialog_upload_format"
+        type="action"
+        :title="$t('book.uploadNewFormat')"
+        icon="mdi-file-upload-outline"
+        max-width="500"
+        :confirm-text="$t('book.upload')"
+        :confirm-loading="uploading_format"
+        :confirm-disabled="!upload_format_file"
+        @confirm="confirmUploadFormat"
+    >
+        <p class="mb-4">{{ $t('book.uploadNewFormatDesc') }}</p>
+        <v-file-input
+            v-model="upload_format_file"
+            :label="$t('book.selectFile')"
+            outlined
+            dense
+            show-size
+            accept=".epub,.mobi,.azw,.azw3,.pdf,.txt,.fb2,.djvu,.uvz,.cbz"
+            prepend-icon="mdi-file-document"
+        ></v-file-input>
+        <v-checkbox v-model="upload_format_force" :label="$t('book.forceReplaceFormat')" dense hide-details class="mt-0"></v-checkbox>
+        <v-alert type="info" text dense class="mt-4">
+            {{ $t('book.supportedFormatsUpload') }}
+        </v-alert>
+    </AppDialog>
+
+    <SendToDeviceDialog
+        :open.sync="dialog_send_to_device"
+        :devices="devices"
+        :selected-format="selectedFormat"
+        :sending="sending_to_device"
+        @confirm="sendToDevice"
+        @dismiss="dialog_send_to_device = false"
+    />
+
+    <!-- 读书分享卡片对话框 -->
+    <AppDialog
+        v-model="dialog_share_card"
+        :persistent="false"
+        type="action"
+        :title="$t('book.generateShareCard')"
+        icon="mdi-card-bulleted-outline"
+        max-width="640"
+        :dismiss-label="$t('common.close')"
+        :confirm-text="$t('book.downloadShareCard')"
+        confirm-icon="mdi-download"
+        :hide-footer-button="!share_card_image_url || share_card_generating"
+        @confirm="downloadShareCard"
+    >
+        <ShareCardView :image-url="share_card_image_url" :generating="share_card_generating" :alt="book.title" />
+    </AppDialog>
+
+    <!-- 图章位置选择对话框 -->
+    <AppDialog
+        v-model="dialog_stamp_position"
+        type="action"
+        :title="$t('book.selectStampPosition')"
+        icon="mdi-postage-stamp"
+        max-width="500"
+        :confirm-text="$t('common.ok')"
+        :confirm-disabled="!stamp_selected_position"
+        @confirm="confirmAddStamp"
+    >
+        <p class="mb-4">{{ $t('book.selectStampPositionDesc') }}</p>
+        <v-row justify="center">
+            <v-col cols="auto">
+                <div style="display: inline-grid; grid-template-columns: repeat(3, 60px); grid-gap: 8px;">
+                    <v-btn
+                        v-for="pos in stampPositions"
+                        :key="pos.value"
+                        :color="stamp_selected_position === pos.value ? 'primary' : ''"
+                        @click="stamp_selected_position = pos.value"
+                        small
+                        outlined
+                        style="min-width: 60px; height: 60px;"
+                    >
+                        <v-icon small>{{ pos.icon }}</v-icon>
+                    </v-btn>
+                </div>
+            </v-col>
+        </v-row>
+    </AppDialog>
+
+    <SendToEmailDialog
+        ref="sendToEmailDialog"
+        :open.sync="dialog_send_to_email"
+        :compatible-files="compatibleEmailFormatFiles"
+        :sending="sending_to_email"
+        :last-share-email="$store.state.user?.last_share_email || ''"
+        @confirm="sendToEmail"
+    />
+  </div>
+</template>
+
+<script>
+import BookCards from "~/components/BookCards.vue";
+import MyNexusMarkdown from "~/components/MyNexusMarkdown.vue";
+import MyNexusChatDialog from "~/components/MyNexusChatDialog.vue";
+import AudioListDialog from "~/components/AudioListDialog.vue";
+import SendToDeviceDialog from "~/components/SendToDeviceDialog.vue";
+import SendToEmailDialog from "~/components/SendToEmailDialog.vue";
+import BookSocialInfo from "~/components/BookSocialInfo.vue";
+import BookReviewList from "~/components/BookReviewList.vue";
+import BookReviewDialog from "~/components/BookReviewDialog.vue";
+import BookListQuickAddMenu from "~/components/BookListQuickAddMenu.vue";
+import { downloadImage, renderBookShareCard, shareCardFileName } from "~/utils/bookShareCard";
+import { languageOptions } from "~/utils/languageCodes";
+import { toStars } from "~/utils/rating";
+import { siteBaseUrl } from "~/utils/siteUrl";
+
+export default {
+    components: {
+        BookCards,
+        MyNexusMarkdown,
+        MyNexusChatDialog,
+        AudioListDialog,
+        SendToDeviceDialog,
+        SendToEmailDialog,
+        BookSocialInfo,
+        BookReviewList,
+        BookReviewDialog,
+        BookListQuickAddMenu,
+    },
+    computed: {
+        folderEnabled() {
+            return !!this.$store.state.sys?.allow?.folder;
+        },
+        showUserInfo() {
+            return this.$store.state.showUserInfo === true;
+        },
+        is_txt(){
+          if(!this.book)return false
+          let formats=this.book.files.map(x=>x.format.toLowerCase())
+          return formats.includes("txt")
+        },
+        pub_year: function () {
+            if (this.book === null || this.book.pubdate == null) {
+                return "N/A";
+            }
+            return this.book.pubdate.split("-")[0];
+        },
+        tiny: function () {
+            return this.$vuetify.breakpoint.xsOnly;
+        },
+        isFavorite: function () {
+            return this.book.state && this.book.state.favorite === 1;
+        },
+        isWants: function () {
+            return this.book.state && this.book.state.wants === 1;
+        },
+        isAdmin: function () {
+            return this.$store.state.user?.is_admin === true;
+        },
+        shareLinkEnabled: function () {
+            return this.$store.state.sys?.allow?.share_link !== false;
+        },
+        mynexusStatus: function () {
+            return this.book.mynexus_analysis?.status || "not_started";
+        },
+        mynexusIsActive: function () {
+            return ["pending", "processing", "submitting"].includes(this.mynexusStatus);
+        },
+        mynexusStatusLabel: function () {
+            const keys = {
+                pending: "book.mynexusAnalysisPending",
+                processing: "book.mynexusAnalysisProcessing",
+                submitting: "book.mynexusAnalysisPending",
+                failed: "book.mynexusAnalysisFailed",
+                completed: "book.mynexusAnalysisCompleted",
+            };
+            return this.$t(keys[this.mynexusStatus] || "book.mynexusAnalysisPending");
+        },
+        mynexusHasSupportedFormat: function () {
+            return (this.book.files || []).some((file) => ["epub", "txt"].includes(file.format.toLowerCase()));
+        },
+        mynexusEnabled: function () {
+            return this.$store.state.sys?.mynexus_enabled === true;
+        },
+        canReview: function () {
+            // 评价功能总开关（管理员在"浏览与阅读"里关闭时，整个评论区都不展示）
+            return this.$store.state.sys?.allow?.book_review !== false;
+        },
+        allowReview: function () {
+            return this.$store.state.user?.allow_review !== false;
+        },
+        canSubmitReview: function () {
+            // 已被禁止发表评论：评论区仍展示（含自己的历史评论），但不能再新增/编辑，
+            // 见 plan/Social_Reading_Plan.md §2.4b
+            return this.canReview && this.allowReview;
+        },
+        hasOwnReview: function () {
+            return !!(this.myReview && this.myReview.id);
+        },
+        readingStateButtonText: function () {
+            if (!this.book.state) return this.$t('readingState.setReading');
+            const readState = this.book.state.read_state;
+            if (readState === 0) {
+                return this.$t('readingState.setReading');
+            } else if (readState === 1) {
+                return this.$t('readingState.setDone');
+            } else {
+                return this.$t('readingState.setUnRead');
+            }
+        },
+        readingDaysText: function () {
+            if (!this.book.state || !this.book.state.read_date) return '';
+
+            const readDate = new Date(this.book.state.read_date);
+            const today = new Date();
+            const diffTime = Math.abs(today - readDate);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            if (diffDays <= 1) {
+                return this.$t('readingState.readingWithinOneDay');
+            } else {
+                return this.$t('readingState.readingDays', { days: diffDays });
+            }
+        },
+        completedReadingText: function () {
+            if (!this.book.state || !this.book.state.read_date) return '';
+
+            const readDate = new Date(this.book.state.read_date);
+            const dateStr = readDate.toLocaleDateString();
+            return this.$t('readingState.completedReading', { date: dateStr });
+        },
+        isValidIsbn: function() {
+            if (!this.isbn) return false;
+            // 移除连字符和空格
+            const cleanIsbn = this.isbn.replace(/[-\s]/g, '');
+            // 检查是否为10位或13位数字（可能包含X）
+            return /^[0-9]{9}[0-9X]$/.test(cleanIsbn) || /^[0-9]{13}$/.test(cleanIsbn);
+        },
+
+        // 检查是否有兼容的文件格式
+        hasCompatibleFormats: function() {
+            if (!this.book || !this.book.files) return false;
+            const supportedFormats = ['epub', 'azw3', 'pdf', 'txt'];
+            return this.book.files.some(file =>
+                supportedFormats.includes(file.format.toLowerCase())
+            );
+        },
+
+        // 是否存在可下载的文件
+        hasDownloadableFiles: function() {
+            if (!this.book || !this.book.files) return false;
+            return this.book.files.length > 0;
+        },
+
+        // 有文件但没有任何可在线阅读的格式（如仅含 UVZ），下载对话框给出提示
+        noReadableFormat: function() {
+            return this.hasDownloadableFiles && this.readFormats.length === 0;
+        },
+
+        // 获取要发送的文件格式（优先级：epub > azw3 > pdf）
+        selectedFormat: function() {
+            if (!this.book || !this.book.files) return '';
+            const formatPriority = ['epub', 'azw3', 'pdf'];
+            for (const format of formatPriority) {
+                const file = this.book.files.find(f =>
+                    f.format.toLowerCase() === format
+                );
+                if (file) return format.toUpperCase();
+            }
+            return '';
+        },
+
+        // ISBN验证规则
+        isbnRules() {
+            return [
+                v => {
+                    // 如果没有输入内容且没有手动触发验证，不显示错误
+                    if (!v && !this.showValidationErrors) {
+                        return true;
+                    }
+                    return !!v || this.$t('upload.isbnRequired');
+                },
+                v => {
+                    // 如果没有输入内容且没有手动触发验证，不显示错误
+                    if (!v && !this.showValidationErrors) {
+                        return true;
+                    }
+                    return (v && v.length >= 10) || this.$t('upload.isbnMinLength');
+                },
+                v => {
+                    // 如果没有输入内容且没有手动触发验证，不显示错误
+                    if (!v && !this.showValidationErrors) {
+                        return true;
+                    }
+                    return (v && /^[0-9\-X]+$/.test(v)) || this.$t('upload.isbnInvalidFormat');
+                }
+            ];
+        },
+
+        hasEpubAzw3() {
+            if (!this.book || !this.book.files) return false;
+            return this.book.files.some(file => {
+                const format = file.format.toLowerCase();
+                return format === 'epub' || format === 'azw3';
+            });
+        },
+
+        hasEpubAzw3OrPDF() {
+            if (!this.book || !this.book.files) return false;
+            return this.book.files.some(file => {
+                const format = file.format.toLowerCase();
+                return format === 'epub' || format === 'azw3' || format === 'pdf';
+            });
+        },
+
+        // 与后端 webserver/constants.py 的 META_WRITABLE_FORMATS 保持一致
+        hasMetaWritableFormat() {
+            if (!this.book || !this.book.files) return false;
+            const writableFormats = ['epub', 'azw3', 'pdf', 'djvu', 'cbz', 'fb2'];
+            return this.book.files.some(file => writableFormats.includes(file.format.toLowerCase()));
+        },
+
+        readBlocked() {
+            return this.$store.state.user?.is_login !== true && !this.$store.state.sys.allow.read && !this.guest_access;
+        },
+        hasEBooks() {
+            if (!this.book || !this.book.files) {
+                return false;
+            }
+            if (this.book.files.length === 0) {
+                return false;
+            }
+            return true;
+        },
+
+        hasTxt() {
+            if (!this.book || !this.book.files) return false;
+            return this.book.files.some(file => file.format.toLowerCase() === 'txt');
+        },
+
+        hasPDF() {
+            if (!this.book || !this.book.files) return false;
+            return this.book.files.some(file => file.format.toLowerCase() === 'pdf');
+        },
+
+        hasDjvu() {
+            if (!this.book || !this.book.files) return false;
+            return this.book.files.some(file => file.format.toLowerCase() === 'djvu');
+        },
+
+        hasCbz() {
+            if (!this.book || !this.book.files) return false;
+            return this.book.files.some(file => file.format.toLowerCase() === 'cbz');
+        },
+
+        hasFb2() {
+            if (!this.book || !this.book.files) return false;
+            return this.book.files.some(file => file.format.toLowerCase() === 'fb2');
+        },
+
+        // 与后端 EPUB_VIEWER 默认值一致：未配置时视为 MyReader
+        isMyReader() {
+            const sys = this.$store.state.sys || {};
+            return (sys.epub_viewer || 'MyReader') === 'MyReader';
+        },
+
+        // 目录提取当前仅支持从 EPUB/PDF/TXT 中解析
+        hasCatalogFormats() {
+            if (!this.book || !this.book.files) return false;
+            return this.book.files.some(file => {
+                const format = file.format.toLowerCase();
+                return format === 'epub' || format === 'pdf' || format === 'txt';
+            });
+        },
+
+        // 将 markdown 嵌套列表（"  - 标题"）解析为带缩进层级的行，用于目录面板展示
+        catalogLines() {
+            if (!this.book || !this.book.catalog) return [];
+            return this.book.catalog.split('\n').filter(line => line.trim() !== '').map(line => {
+                const match = line.match(/^(\s*)-\s?(.*)$/);
+                if (!match) return { depth: 0, title: line.trim() };
+                return { depth: Math.floor(match[1].length / 2), title: match[2] };
+            });
+        },
+
+        // 是否存在按 EPUB 阅读的格式（epub/azw3/mobi/azw/docx 均按 EPUB 处理，内部自动转换）
+        hasEpubFormat() {
+            if (!this.book || !this.book.files) return false;
+            const formats = this.book.files.map(f => f.format.toLowerCase());
+            return ['epub', 'azw3', 'mobi', 'azw', 'docx'].some(format => formats.includes(format));
+        },
+
+        // 可供在线阅读的格式列表，按优先级排列：EPUB > TXT > PDF > DJVU > CBZ > FB2（CBZ/FB2 仅 MyReader 支持）
+        // 同时有 EPUB 与 TXT 时默认打开 EPUB，原生 TXT 阅读器放到「更多格式」菜单里
+        readFormats() {
+            if (!this.book) return [];
+            const formats = [];
+            if (this.hasEpubFormat) formats.push({ key: 'epub', label: this.$t('book.epubReader'), href: '/read/' + this.book.id + '?format=epub' });
+            if (this.is_txt) formats.push({ key: 'txt', label: this.$t('book.txtReader'), href: '/book/' + this.book.id + '/readtxt' });
+            // 纯 TXT 书仍额外提供转换为 EPUB 的阅读入口
+            if (!this.hasEpubFormat && this.is_txt) formats.push({ key: 'epub', label: this.$t('book.epubReader'), href: '/read/' + this.book.id + '?format=epub' });
+            if (this.hasPDF) formats.push({ key: 'pdf', label: this.$t('book.pdfReader'), href: '/read/' + this.book.id + '?format=pdf' });
+            if (this.hasDjvu) formats.push({ key: 'djvu', label: this.$t('book.djvuReader'), href: '/read/' + this.book.id + '?format=djvu' });
+            if (this.hasCbz && this.isMyReader) formats.push({ key: 'cbz', label: this.$t('book.cbzReader'), href: '/read/' + this.book.id + '?format=cbz' });
+            if (this.hasFb2 && this.isMyReader) formats.push({ key: 'fb2', label: this.$t('book.fb2Reader'), href: '/read/' + this.book.id + '?format=fb2' });
+            return formats;
+        },
+
+        // 默认阅读格式（优先级最高的一项）
+        defaultReadFormat() {
+            return this.readFormats.length ? this.readFormats[0] : null;
+        },
+
+        // 除默认格式外，可在菜单中选择的其它格式
+        extraReadFormats() {
+            return this.readFormats.slice(1);
+        },
+
+        // 存在多个可阅读格式时，阅读按钮右侧显示格式选择菜单
+        needsReadFormatChoice() {
+            return this.readFormats.length > 1;
+        },
+
+        // 阅读按钮的默认跳转地址
+        readHref() {
+            return this.defaultReadFormat ? this.defaultReadFormat.href : '/read/' + (this.book ? this.book.id : '');
+        },
+
+        // 邮箱发送兼容的文件格式列表（EPUB/AZW3/PDF/MOBI/TXT），按优先级排序，供邮箱对话框中的格式选择使用
+        compatibleEmailFormatFiles: function() {
+            if (!this.book || !this.book.files) return [];
+            const formatPriority = ['epub', 'azw3', 'pdf', 'mobi', 'txt'];
+            return formatPriority
+                .map(format => this.book.files.find(f => f.format.toLowerCase() === format))
+                .filter(Boolean);
+        },
+
+        // 检查是否有兼容邮箱发送的文件格式（EPUB/AZW3/PDF/MOBI/TXT）
+        hasCompatibleEmailFormats: function() {
+            return this.compatibleEmailFormatFiles.length > 0;
+        },
+
+        voice_options() {
+            return [
+                {
+                    voice_name: "zh-CN-liaoning-XiaobeiNeural",
+                    display_name: this.$t('voice.xiaobei'),
+                    gender: "female",
+                    sample_file: "chinese/female/zh-CN-liaoning-XiaobeiNeural.mp3"
+                },
+                {
+                    voice_name: "zh-CN-XiaoxiaoNeural",
+                    display_name: this.$t('voice.xiaoxiao'),
+                    gender: "female",
+                    sample_file: "chinese/female/zh-CN-XiaoxiaoNeural.mp3"
+                },
+                {
+                    voice_name: "zh-CN-XiaoyiNeural",
+                    display_name: this.$t('voice.xiaoyi'),
+                    gender: "female",
+                    sample_file: "chinese/female/zh-CN-XiaoyiNeural.mp3"
+                },
+                {
+                    voice_name: "zh-HK-HiuGaaiNeural",
+                    display_name: this.$t('voice.xiaojia'),
+                    gender: "female",
+                    sample_file: "chinese/female/zh-HK-HiuGaaiNeural.mp3"
+                },
+                {
+                    voice_name: "zh-CN-YunjianNeural",
+                    display_name: this.$t('voice.yunjian'),
+                    gender: "male",
+                    sample_file: "chinese/male/zh-CN-YunjianNeural.mp3"
+                },
+                {
+                    voice_name: "zh-CN-YunxiNeural",
+                    display_name: this.$t('voice.yunxi'),
+                    gender: "male",
+                    sample_file: "chinese/male/zh-CN-YunxiNeural.mp3"
+                },
+                {
+                    voice_name: "zh-CN-YunyangNeural",
+                    display_name: this.$t('voice.yunyang'),
+                    gender: "male",
+                    sample_file: "chinese/male/zh-CN-YunyangNeural.mp3"
+                },
+                {
+                    voice_name: "zh-HK-WanLungNeural",
+                    display_name: this.$t('voice.yunlong'),
+                    gender: "male",
+                    sample_file: "chinese/male/zh-HK-WanLungNeural.mp3"
+                },
+                {
+                    voice_name: "en-US-AndrewNeural",
+                    display_name: this.$t('voice.andrew'),
+                    gender: "male",
+                    lang: "en-US",
+                    sample_file: "english/male/en-US-AndrewNeural.mp3"
+                },
+                {
+                    voice_name: "en-GB-RyanNeural",
+                    display_name: this.$t('voice.ray'),
+                    gender: "male",
+                    lang: "en-US",
+                    sample_file: "english/male/en-GB-RyanNeural.mp3"
+                },
+                {
+                    voice_name: "en-GB-SoniaNeural",
+                    display_name: this.$t('voice.sonia'),
+                    gender: "female",
+                    lang: "en-GB",
+                    sample_file: "english/female/en-GB-SoniaNeural.mp3"
+                },
+                {
+                    voice_name: "en-US-AnaNeural",
+                    display_name: this.$t('voice.ana'),
+                    gender: "female",
+                    lang: "en-US",
+                    sample_file: "english/female/en-US-AnaNeural.mp3"
+                },
+                {
+                    voice_name: "en-US-EmmaNeural",
+                    display_name: this.$t('voice.emma'),
+                    gender: "female",
+                    lang: "en-US",
+                    sample_file: "english/female/en-US-EmmaNeural.mp3"
+                }
+            ];
+        }
+    },
+    data: () => ({
+        // 新窗口打开时没有历史记录可后退，此时隐藏后退按钮（mounted 里赋值）
+        canGoBack: true,
+        err: "",
+        msg: "",
+        categories: [],
+        categoryMenu: false,
+        categorySelect: null,
+        folderMenu: false,
+        folderDraft: '',
+        folderValid: true,
+        folderSaving: false,
+        book: {id: 0, title: "", files: [], tags: [], pubdate: "", state: {favorite: 0, wants: 0, read_state: 0}},
+        audios: {count: 0, files: [], status: "ok"},
+        suggestionBooks: [],
+        suggestionBooksLoading: false,
+        sameNameBooks: [],
+        sameNameBooksLoading: false,
+        // Audio status constants
+        AUDIO_STATUS: {
+            UNAVAILABLE: "unavailable",
+            AVAILABLE: "available",
+            PROCESSING: "processing",
+            CONVERTED: "converted",
+            FAILED: "failed",
+            OK: "ok"
+        },
+        READING_STATE: {
+            UNREAD: 0,
+            READING: 1,
+            FINISHED: 2
+        },
+        BOOK_TYPE: {
+            EBOOK: 0,
+            PHYSICAL: 1
+        },
+        debug: false,
+        loaded: false,
+        mynexusPollTimer: null,
+        mynexusRequesting: false,
+        mynexusChecking: false,
+        mynexusChatOpen: false,
+        dialog_mynexus_reanalyze: false,
+        mynexusDescriptionTab: "description",
+        ai_filling: false,
+        catalog_extracting: false,
+        catalogExpanded: false,
+        editing_location: false,
+        location_input: "",
+        mail_to: "",
+        kindle_sender: "",
+        guest_access: null,
+        favoriteLoading: false,
+        wantsLoading: false,
+        reviewDialogOpen: false,
+        myReview: null,
+        readingStateLoading: false,
+        dialog_download: false,
+        // 转换中等待对话框
+        dialog_converting: false,
+        converting_poll_timer: null,
+        converting_target_href: '',
+        converting_format: '',
+        dialog_epub2audio: false,
+        dialog_audiolist: false,
+        dialog_refer: false,
+        dialog_msg: false,
+        dialog_set_cover: false,
+        // 拆分格式对话框
+        dialog_separate: false,
+        selectedSeparateFormat: null,
+        separating_book: false,
+        // 删除格式对话框
+        dialog_delete_book: false,
+        dialog_delete_format: false,
+        deleting_book: false,
+        selectedDeletedFormat: null,
+        deleting_format: false,
+        // 上传新格式对话框
+        dialog_upload_format: false,
+        upload_format_file: null,
+        upload_format_force: false,
+        uploading_format: false,
+        // 添加实体书对话框
+        isbn_dialog: false,
+        // 发送到设备对话框
+        dialog_send_to_device: false,
+        sending_to_device: false,
+        devices: [],
+
+        // 读书分享卡片
+        dialog_share_card: false,
+        dialog_book_share: false,
+        share_card_generating: false,
+        share_card_image_url: null,
+        // 发送到邮箱对话框
+        dialog_send_to_email: false,
+        sending_to_email: false,
+        // 图章位置选择对话框
+        dialog_stamp_position: false,
+        stamp_selected_position: '',
+        stamp_enabled: false,
+        stamp_default_position: 'bottom-right',
+        stampPositions: [
+            { value: 'top-left', icon: 'mdi-format-align-top' },
+            { value: 'top-center', icon: 'mdi-format-align-top' },
+            { value: 'top-right', icon: 'mdi-format-align-top' },
+            { value: 'center-left', icon: 'mdi-format-align-middle' },
+            { value: 'center', icon: 'mdi-format-align-middle' },
+            { value: 'center-right', icon: 'mdi-format-align-middle' },
+            { value: 'bottom-left', icon: 'mdi-format-align-bottom' },
+            { value: 'bottom-center', icon: 'mdi-format-align-bottom' },
+            { value: 'bottom-right', icon: 'mdi-format-align-bottom' },
+        ],
+        adding_book: false,
+        isbn: "",
+        continueAdding: false,
+        // 条形码识别相关
+        recognizing_barcode: false,
+        // 控制是否显示验证错误（仅在点击添加按钮时显示）
+        showValidationErrors: false,
+        cover_file: null,
+        cover_error: '',
+        refer_books_loading: false,
+        referSettingId: null,
+        refer_books: [],
+        epub2audio_processing: false,
+        voice_name: "", // 语音名称，将从localStorage加载
+        playing_sample: null,
+        currentAudio: null,
+        // Progress polling timer
+        progressTimer: null,
+        languageOptions,
+        email_rules: function (email) {
+            var re = /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+            return (email !== this.kindle_sender && re.test(email)) || "Invalid email format";
+        },
+    }),
+    async asyncData({params, app, res}) {
+        if (res !== undefined) {
+            res.setHeader("Cache-Control", "no-cache");
+        }
+        return app.$backend(`/book/${params.bookid}`);
+    },
+    head() {
+        return {
+            title: this.book.title,
+        };
+    },
+    async created() {
+        this.init(this.$route);
+        this.mail_to = this.$store.state.user.kindle_email;
+
+        if (process.client) {
+            this.mail_to = this.$cookies.get("last_mailto");
+            // 从localStorage获取上次使用的语音名称
+            const lastUsedVoice = localStorage.getItem("last_used_voice_name");
+            this.voice_name = lastUsedVoice || "zh-CN-XiaoxiaoNeural"; // 如果没有保存的语音，使用默认的晓晓
+
+            // 检查URL参数，如果有continue_adding=true则自动弹出添加对话框
+            if (this.$route.query.continue_adding === 'true' && this.$store.state.sys.allow.physical_books) {
+                this.$nextTick(() => {
+                    this.isbn_dialog = true;
+                    this.continueAdding = true;
+                });
+            }
+        } else {
+            // 服务端渲染时使用默认语音
+            this.voice_name = "zh-CN-XiaoxiaoNeural";
+        }
+    },
+    async mounted() {
+        this.canGoBack = window.history.length > 1;
+        // 异步加载推荐图书
+        this.loadSuggestionBooks();
+        this.loadSameNameBooks();
+        this.loadMyReview();
+        // 先加载设备列表，等待完成后再加载设备偏好
+        await this.getSettings();
+        if (this.isAdmin) this.loadMyNexusAnalysis();
+        else this.loadMyNexusAvailability();
+    },
+    watch: {
+        // 监听audios数据变化，当数据加载完成后检查是否需要启动进度轮询
+        audios: {
+            handler(newValue, oldValue) {
+                if (!newValue || (oldValue && newValue && newValue.status === oldValue.status)) return;
+                if (!process.client) return;
+                if (this.loaded) return;
+                this.loaded = true;
+                if (newValue && newValue.status === this.AUDIO_STATUS.PROCESSING) {
+                    // 如果音频状态是正在处理中，启动进度轮询
+                    this.startAudioProgressPolling();
+                }
+            },
+            immediate: true, // 立即执行一次，用于初始数据检查
+            deep: true // 深度监听对象变化
+        },
+        // 监听用户登录状态变化，当用户登录后重新加载设置
+        '$store.state.user.is_login': {
+            handler(newValue) {
+                if (newValue === true) {
+                    this.getSettings();
+                }
+            }
+        },
+    },
+    beforeRouteUpdate(to, from, next) {
+    clearInterval(this.mynexusPollTimer);
+    this.mynexusDescriptionTab = "description";
+    this.init(to, next);
+    this.$nextTick(() => {
+        if (this.isAdmin) this.loadMyNexusAnalysis();
+    });
+    },
+    beforeDestroy() {
+        // 清理音频资源
+        this.stopCurrentAudio();
+        this.stopAudioProgressPolling();
+        this.stopConvertingPolling();
+        clearInterval(this.mynexusPollTimer);
+    },
+    methods: {
+        toStars,
+        async loadMyNexusAnalysis() {
+            if (!this.isAdmin || !this.mynexusEnabled || !this.book.id || !this.book.mynexus_configured) return;
+            try {
+                const response = await this.$backend(`/book/${this.book.id}/mynexus/analysis`);
+                if (response.err !== "ok") {
+                    this.$set(this.book, "mynexus_error", response.msg || this.$t("book.mynexusAnalysisFailed"));
+                    return;
+                }
+                this.$set(this.book, "mynexus_error", "");
+                this.$set(this.book, "mynexus_analysis", response.analysis);
+                if (response.analysis.status === "completed") {
+                    this.$set(this.book, "ai_companion_available", true);
+                    this.$set(this.book, "ai_reading_guide", response.analysis.reading_guide || "");
+                }
+                if (["pending", "processing", "submitting"].includes(response.analysis.status)) {
+                    if (!this.mynexusPollTimer) {
+                        this.mynexusPollTimer = setInterval(this.loadMyNexusAnalysis, 5000);
+                    }
+                } else {
+                    clearInterval(this.mynexusPollTimer);
+                    this.mynexusPollTimer = null;
+                }
+            } catch (error) {
+                this.$set(this.book, "mynexus_error", error.message || this.$t("book.mynexusChatFailed"));
+            }
+        },
+        async loadMyNexusAvailability() {
+            if (this.isAdmin || !this.mynexusEnabled || this.$store.state.user?.is_login !== true || !this.book.id || this.book.ai_companion_available) return;
+            try {
+                const response = await this.$backend(`/book/${this.book.id}/mynexus/availability`);
+                if (response.err === "ok" && response.available) {
+                    this.$set(this.book, "ai_companion_available", true);
+                    this.$set(this.book, "ai_reading_guide", response.reading_guide || "");
+                }
+            } catch (error) {
+                console.error("Failed to refresh MyNexus availability:", error);
+            }
+        },
+        async openMyNexusChat() {
+            if (!this.mynexusEnabled || this.mynexusChecking) return;
+            this.mynexusChecking = true;
+            try {
+                // Ask MyNexus whether the book still exists and is ready before
+                // opening the companion session.
+                const response = await this.$backend(`/book/${this.book.id}/mynexus/availability?verify=1`);
+                if (response.err !== "ok") {
+                    this.$alert("error", response.msg || this.$t("book.mynexusChatFailed"));
+                    return;
+                }
+                if (response.available) {
+                    this.mynexusChatOpen = true;
+                    return;
+                }
+                this.onMyNexusUnavailable(response.reason || "missing");
+            } catch (error) {
+                this.$alert("error", error.message || this.$t("book.mynexusChatFailed"));
+            } finally {
+                this.mynexusChecking = false;
+            }
+        },
+        onMyNexusUnavailable() {
+            this.$set(this.book, "ai_companion_available", false);
+            this.$set(this.book, "ai_reading_guide", "");
+            this.dialog_mynexus_reanalyze = true;
+        },
+        confirmMyNexusReanalyze() {
+            this.dialog_mynexus_reanalyze = false;
+            if (!this.isAdmin) {
+                this.$alert("warning", this.$t("book.mynexusReanalyzeAdminOnly"));
+                return;
+            }
+            this.startMyNexusAnalysis();
+        },
+        async startMyNexusAnalysis() {
+            if (!this.mynexusEnabled) return;
+            if (!this.book.mynexus_configured) {
+                this.$alert("warning", this.$t("book.mynexusNotConfigured"));
+                return;
+            }
+            this.mynexusRequesting = true;
+            try {
+                const response = await this.$backend(`/book/${this.book.id}/mynexus/analysis`, { method: "POST" });
+                if (response.err !== "ok") {
+                    this.$alert("error", response.msg || this.$t("book.mynexusAnalysisFailed"));
+                    this.loadMyNexusAnalysis();
+                } else {
+                    this.$set(this.book, "mynexus_analysis", response.analysis);
+                    if (["pending", "processing", "submitting"].includes(response.analysis.status)) {
+                        if (!this.mynexusPollTimer) {
+                            this.mynexusPollTimer = setInterval(this.loadMyNexusAnalysis, 5000);
+                        }
+                    } else if (response.analysis.status === "completed") {
+                        this.$set(this.book, "ai_companion_available", true);
+                        this.$set(this.book, "ai_reading_guide", response.analysis.reading_guide || "");
+                    }
+                }
+            } catch (error) {
+                this.$alert("error", error.message || this.$t("book.mynexusAnalysisFailed"));
+            } finally {
+                this.mynexusRequesting = false;
+            }
+        },
+        authorAvatarUrl(author) {
+            const ts = Math.floor(Date.now() / 10000) * 10000;
+            return `/get/author/avatar/${author}?t=${ts}`;
+        },
+        // 分格式阅读时长/进度统计的展示格式化
+        formatReadingDuration(totalSeconds) {
+            const seconds = totalSeconds || 0;
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            if (hours <= 0) {
+                return this.$t('book.readingStats.durationMinutes', { minutes });
+            }
+            return this.$t('book.readingStats.durationHoursMinutes', { hours, minutes });
+        },
+        formatReadingProgress(stat) {
+            if (stat.state === 1) return '100%';
+            if (stat.progress_percent === null || stat.progress_percent === undefined) return '-';
+            return `${stat.progress_percent}%`;
+        },
+        formatReadingDate(isoString) {
+            if (!isoString) return '';
+            return new Date(isoString).toLocaleDateString();
+        },
+        downloadBook() {
+            if (this.book.files && this.book.files.length === 1) {
+                this.openDownloadLink(this.book.files[0].href);
+            } else {
+                this.dialog_download = true;
+            }
+        },
+        async freshDownloadUrl(url) {
+            const target = new URL(url, window.location.href);
+            const match = target.pathname.match(/\/api\/book\/(\d+)\.([^/]+)$/);
+            if (!match || !target.searchParams.has('dl')) return url;
+            try {
+                const rsp = await this.$backend(`/book/${match[1]}/download_sign?fmt=${encodeURIComponent(match[2])}`);
+                if (rsp.err === 'ok' && rsp.sign) {
+                    target.searchParams.set('dl', rsp.sign);
+                    return target.toString();
+                }
+            } catch (e) {
+                console.error('Failed to refresh download sign:', e);
+            }
+            return url;
+        },
+        async openDownloadLink(url) {
+            // 与 $store.state.sys.allow.physical_books 相同的用法：功能开关关闭时不做任何检查，直接下载
+            if (this.$store.state.sys.allow.download_quota) {
+                try {
+                    const rsp = await this.$backend('/book/download_quota');
+                    if (rsp.err !== 'ok' || !rsp.allowed) {
+                        this.$alert('error', rsp.msg || this.$t('book.downloadQuotaExceeded'));
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Failed to query download quota:', e);
+                    this.$alert('error', this.$t('book.downloadQuotaCheckFailed'));
+                    return;
+                }
+            }
+            const target = await this.freshDownloadUrl(url);
+            // 异步等待后若被浏览器拦截弹窗，则在当前页触发下载（响应为附件，不会离开页面）
+            if (!window.open(target, '_blank')) {
+                window.location.href = target;
+            }
+            this.dialog_download = false;
+        },
+        async loadMyReview() {
+            if (!this.canReview || this.$store.state.user?.is_login !== true) return;
+            try {
+                const rsp = await this.$backend(`/book/${this.book.id}/review`);
+                if (rsp.err === 'ok') {
+                    this.myReview = rsp.review || null;
+                }
+            } catch (e) {
+                // 静默失败，只影响 like 图标的高亮状态，不影响其它功能
+            }
+        },
+        openReviewDialog() {
+            if (!this.canSubmitReview) return;
+            this.reviewDialogOpen = true;
+        },
+        onReviewSaved(review) {
+            this.myReview = review || this.myReview;
+            this.$nextTick(() => {
+                this.$refs.socialInfo?.refresh();
+                this.$refs.reviewList?.refresh();
+            });
+        },
+        async toggleFavorite() {
+            if (this.favoriteLoading) return;
+            this.favoriteLoading = true;
+            try {
+                const newFavoriteStatus = !this.isFavorite;
+                const response = await this.$backend(`/book/${this.book.id}/favorite`, {
+                    method: 'POST',
+                    body: JSON.stringify({ favorite: newFavoriteStatus }),
+                });
+
+                if (response.err === 'ok') {
+                    // 更新本地状态
+                    if (!this.book.state) {
+                        this.book.state = {};
+                    }
+                    this.book.state.favorite = newFavoriteStatus ? 1 : 0;
+                    this.book.state.favorite_date = newFavoriteStatus ? new Date().toISOString() : null;
+
+                    // 显示成功提示
+                    const message = newFavoriteStatus ? this.$t('message.favorited') : this.$t('message.unfavorited');
+                    this.$alert('success', message);
+                } else {
+                    this.$alert('error', response.msg || this.$t('message.operationFailed'));
+                }
+            } catch (error) {
+                console.error('收藏操作失败:', error);
+                this.$alert('error', this.$t('message.networkError'));
+            } finally {
+                this.favoriteLoading = false;
+            }
+        },
+        async toggleWants() {
+            if (this.wantsLoading) return;
+
+            this.wantsLoading = true;
+            try {
+                const newWantsStatus = !this.isWants;
+                const response = await this.$backend(`/book/${this.book.id}/wants`, {
+                    method: 'POST',
+                    body: JSON.stringify({ wants: newWantsStatus }),
+                });
+
+                if (response.err === 'ok') {
+                    // 更新本地状态
+                    if (!this.book.state) {
+                        this.book.state = {};
+                    }
+                    this.book.state.wants = newWantsStatus ? 1 : 0;
+                    this.book.state.wants_date = newWantsStatus ? new Date().toISOString() : null;
+
+                    // 显示成功提示
+                    const message = newWantsStatus ? this.$t('message.addedToWants') : this.$t('message.removedFromWants');
+                    this.$alert('success', message);
+                } else {
+                    this.$alert('error', response.msg || this.$t('message.operationFailed'));
+                }
+            } catch (error) {
+                console.error('待读操作失败:', error);
+                this.$alert('error', this.$t('message.networkError'));
+            } finally {
+                this.wantsLoading = false;
+            }
+        },
+        async handleReadingStateChange() {
+            if (this.readingStateLoading) return;
+
+            this.readingStateLoading = true;
+            try {
+                // 确定要设置的新状态
+                let newReadState;
+                let successMessage;
+                const oldReadState = this.book.state ? this.book.state.read_state : this.READING_STATE.UNREAD;
+
+                if (!this.book.state || this.book.state.read_state === this.READING_STATE.UNREAD) {
+                    // 未读 -> 设为在读
+                    newReadState = this.READING_STATE.READING;
+                    successMessage = this.$t('message.setToReading');
+                } else if (this.book.state.read_state === this.READING_STATE.READING) {
+                    // 在读 -> 设为读完
+                    newReadState = this.READING_STATE.FINISHED;
+                    successMessage = this.$t('message.markedAsRead');
+                } else if (this.book.state.read_state === this.READING_STATE.FINISHED) {
+                    // 读完 -> 设为未读
+                    newReadState = this.READING_STATE.UNREAD;
+                    successMessage = this.$t('message.markedAsUnread');
+                }
+
+                const response = await this.$backend(`/book/${this.book.id}/readstate`, {
+                    method: 'POST',
+                    body: JSON.stringify({ read_state: newReadState }),
+                });
+
+                if (response.err === 'ok') {
+                    // 更新本地状态
+                    if (!this.book.state) {
+                        this.book.state = {};
+                    }
+                    this.book.state.read_state = newReadState;
+                    this.book.state.read_date = new Date().toISOString();
+                    if (newReadState === this.READING_STATE.READING) {
+                        this.book.state.wants = 0; // 在读后自动移除待读状态
+                    }
+                    // 按状态变化量直接修正右侧"在读/读完"人数展示，不必重新查后台
+                    this.$refs.socialInfo?.applyReadStateDelta(oldReadState, newReadState);
+
+                    // 显示成功提示
+                    this.$alert('success', successMessage);
+                } else {
+                    this.$alert('error', response.msg || this.$t('message.operationFailed'));
+                }
+            } catch (error) {
+                console.error('设置阅读状态失败:', error);
+                this.$alert('error', this.$t('message.networkError'));
+            } finally {
+                this.readingStateLoading = false;
+            }
+        },
+        init(route, next) {
+            this.$store.commit("navbar", true);
+            var rsp = this;
+            if (rsp.err !== "ok") {
+                this.$alert("error", rsp.msg, "/");
+            }
+            if (next) next();
+        },
+        onShareChanged(shared) {
+            this.$set(this.book, "shared", shared);
+        },
+        switchToAudioPlayer() {
+            if (this.audios.status === this.AUDIO_STATUS.CONVERTED && this.audios.count > 0) {
+                // 切换到音频播放页面, /audio/<bid>
+                this.$router.push("/audio/" + this.book.id);
+            } else {
+                this.switchAudioDialog();
+            }
+        },
+        switchAudioDialog() {
+            // 如果没有电子书，则不允许转换音频
+            if (!this.hasEBooks) {
+                return;
+            }
+
+            if (this.audios.status === this.AUDIO_STATUS.UNAVAILABLE || this.audios.status === this.AUDIO_STATUS.FAILED) {
+                this.dialog_epub2audio = !this.dialog_epub2audio
+            } else {
+                this.dialog_audiolist = !this.dialog_audiolist
+                // Start progress polling when opening audio list dialog
+                if (this.dialog_audiolist && this.audios.status === this.AUDIO_STATUS.PROCESSING) {
+                    this.startAudioProgressPolling();
+                } else {
+                    this.stopAudioProgressPolling();
+                }
+            }
+        },
+        truncateText(value, maxLength = 14) {
+            if (value === null || value === undefined) return '';
+            const text = String(value);
+            if (text.length <= maxLength) return text;
+            return text.slice(0, maxLength) + '...';
+        },
+        sendToKindle() {
+            if (process.client) {
+                this.$cookies.set("last_mailto", this.mail_to);
+            }
+            this.$backend("/book/" + this.book.id + "/push", {
+                method: "POST",
+                body: "mail_to=" + this.mail_to,
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+            }).then((rsp) => {
+                this.dialog_epub2audio = false;
+                if (rsp.err === "ok") {
+                    this.$alert("success", rsp.msg, "#");
+                } else {
+                    this.$alert("error", rsp.msg, "#");
+                }
+            });
+        },
+        generateAudio() {
+            // 保存选择的语音名称到localStorage
+            if (process.client) {
+                localStorage.setItem("last_used_voice_name", this.voice_name);
+            }
+
+            // Get the voice in voiceOptions according to the voice name
+            const selectedVoice = this.voice_options.find(v => v.voice_name === this.voice_name);
+            const voiceLang = (selectedVoice && selectedVoice.lang) || "zh-CN";
+
+            this.$backend(`/audio/${this.book.id}/conversion`, {
+                method: "POST",
+                body: JSON.stringify({voice: this.voice_name, language: voiceLang}),
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.epub2audio_processing = true;
+                    this.dialog_epub2audio = false;
+                    this.dialog_audiolist = false;
+                    this.startAudioProgressPolling();
+                    this.$alert("success", this.$t('book.audioGenerated'));
+                } else {
+                    this.stopAudioProgressPolling();
+                    this.$alert("error", rsp.msg);
+                }
+            });
+        },
+        getRefer() {
+            this.dialog_refer = true;
+            this.refer_books_loading = true;
+            // 构造查询参数，传递书籍信息避免后端重复查询数据库
+            const params = new URLSearchParams();
+            if (this.book.title) params.append('title', this.book.title);
+            if (this.book.isbn) params.append('isbn', this.book.isbn);
+            if (this.book.publisher) params.append('publisher', this.book.publisher);
+            const queryString = params.toString();
+            const url = `/book/${this.book.id}/refer${queryString ? '?' + queryString : ''}`;
+
+            this.$backend(url)
+                .then((rsp) => {
+                    this.refer_books = rsp.books.map((b) => {
+                        b.href = "";
+                        b.img = b.cover_url && b.cover_url.startsWith("/")
+                            ? b.cover_url
+                            : "/get/pcover?url=" + encodeURIComponent(b.cover_url);
+                        return b;
+                    });
+                })
+                .finally(() => {
+                    this.refer_books_loading = false;
+                });
+        },
+        referBookId(book) {
+            return `${book.provider_key}:${book.provider_value}`;
+        },
+        setRefer(book, opt) {
+            // 防止多次重复点击
+            if (this.referSettingId) return;
+            const providerKey = book.provider_key
+            const providerValue = book.provider_value
+            // 只有被点击的那条显示 loading，其它条目的"设置"按钮置灰
+            this.referSettingId = this.referBookId(book);
+            var data = new URLSearchParams(opt);
+            data.append("provider_key", providerKey);
+            data.append("provider_value", providerValue);
+            data.append("metadata", JSON.stringify(book));
+            this.$backend("/book/" + this.book.id + "/refer", {
+                method: "POST",
+                body: data,
+            }).then((rsp) => {
+                this.dialog_refer = false;
+                if (rsp.err === "ok") {
+                    this.$router.push("/book/" + this.book.id);
+                    location.reload();
+                    this.$alert("success", this.$t('message.settingSuccess'));
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+                this.init(this.$route);
+            }).finally(()=>{
+               this.referSettingId = null;
+            });
+        },
+        resetRefer() {
+            // 使用本地书籍信息覆盖
+            this.$backend("/book/" + this.book.id + "/refer", {
+                method: "POST",
+                body: new URLSearchParams({reset: "yes"}),
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.$alert("success", this.$t('book.resetSuccessful'));
+                    this.$router.push("/book/" + this.book.id);
+                    location.reload();
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+            });
+        },
+        generateCover() {
+            this.$backend("/book/" + this.book.id + "/cover", {
+                method: "POST"
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    location.reload();
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+            });
+        },
+        cropCover() {
+            this.$backend("/book/crop_cover", {
+                method: "POST",
+                body: JSON.stringify({id: this.book.id}),
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    var updated = rsp.data.updated || 0;
+                    if (updated > 0) {
+                        location.reload();
+                    } else {
+                        this.$alert("success", this.$t('book.noNeedCrop'));
+                    }
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+            });
+        },
+        openReadingTimeBackfill() {
+            this.$refs.reading_time_backfill.open(this.book.id);
+        },
+        onReadingTimeSaved() {
+            location.reload();
+        },
+        updateTags() {
+            this.$backend("/book/" + this.book.id + "/tags", {
+                method: "POST"
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.$alert("success", this.$t('book.updateTagsSuccessful'));
+                    location.reload();
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+            });
+        },
+        aiFillBook() {
+            if (this.ai_filling) return;
+            this.ai_filling = true;
+            this.$backend("/book/" + this.book.id + "/aifill", {
+                method: "POST",
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.$alert("success", this.$t('book.aiUpdateSuccess'));
+                    location.reload();
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+            }).finally(() => {
+                this.ai_filling = false;
+            });
+        },
+        extractCatalog() {
+            if (this.catalog_extracting) return;
+            this.catalog_extracting = true;
+            this.$backend("/book/" + this.book.id + "/catalog", {
+                method: "POST",
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.book.catalog = rsp.catalog || "";
+                    this.catalogExpanded = true;
+                    this.$alert("success", rsp.msg || this.$t('book.extractCatalogSuccess'));
+                } else {
+                    this.$alert("error", rsp.msg || this.$t('book.extractCatalogFailed'));
+                }
+            }).catch(() => {
+                this.$alert("error", this.$t('book.extractCatalogFailed'));
+            }).finally(() => {
+                this.catalog_extracting = false;
+            });
+        },
+        convertBook() {
+            // 转换书籍格式
+            this.$backend("/book/" + this.book.id + "/convert", {
+                method: "POST",
+                body: new URLSearchParams({reset: "yes"}),
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.$alert("success", this.$t('book.convertSuccessful'));
+                    this.$router.push("/book/" + this.book.id);
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+            });
+        },
+        convertToPdf() {
+            // 转换为PDF
+            this.$backend("/book/" + this.book.id + "/topdf", {
+                method: "POST",
+                body: new URLSearchParams({reset: "yes"}),
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.$alert("success", this.$t('book.convertSuccessful'));
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+            });
+        },
+        setSole() {
+            // 设置为私藏
+            this.$backend("/book/" + this.book.id + "/setsole", {
+                method: "POST",
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.$alert("success", this.$t('message.success'));
+                    this.$router.push("/book/" + this.book.id);
+                    location.reload();
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+            });
+        },
+        exchangeBookType() {
+            this.$backend("/book/exchange_type", {
+                method: "POST",
+                body: JSON.stringify({"idlist": [this.book.id]}),
+            }).then((rsp) => {
+                if (rsp.err !== "ok") {
+                    this.$alert("error", rsp.msg);
+                    return;
+                }
+                const result = rsp.results && rsp.results[0];
+                if (result && result.status === "success") {
+                    this.$alert("success", result.msg);
+                    location.reload();
+                } else {
+                    this.$alert("error", (result && result.msg) || rsp.msg);
+                }
+            });
+        },
+        separateBook() {
+            // 检查是否有多个格式
+            if (!this.book.files || this.book.files.length <= 1) {
+                this.$alert("error", this.$t('book.needMultipleFormats'));
+                return;
+            }
+
+            // 默认选择第一个格式
+            this.selectedSeparateFormat = this.book.files[0].format.toLowerCase();
+            this.dialog_separate = true;
+        },
+        saveMetaToFile() {
+            // 保存元数据到书籍文件
+            if (!this.hasMetaWritableFormat) {
+                this.$alert("error", this.$t('book.needEpubOrAzw3'));
+                return;
+            }
+
+            this.$backend("/book/" + this.book.id + "/savemeta", {
+                method: "POST",
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.$alert("success", rsp.msg || this.$t('book.saveMetaSuccess'));
+                } else {
+                    this.$alert("error", rsp.msg || this.$t('book.saveMetaFailed'));
+                }
+            }).catch((_err) => {
+                this.$alert("error", this.$t('book.saveMetaFailed'));
+            });
+        },
+        addStampToCover() {
+            // 为封面加盖图章
+            if (!this.hasEpubAzw3OrPDF) {
+                this.$alert("error", this.$t('book.needEpubOrAzw3'));
+                return;
+            }
+
+            // 设置默认位置（从settings获取，或使用默认值）
+            this.stamp_selected_position = this.stamp_default_position;
+            // 显示位置选择对话框
+            this.dialog_stamp_position = true;
+        },
+        confirmAddStamp() {
+            // 确认添加图章
+            if (!this.stamp_selected_position) {
+                return;
+            }
+
+            this.dialog_stamp_position = false;
+
+            this.$backend("/book/" + this.book.id + "/addstamp", {
+                method: "POST",
+                body: JSON.stringify({ position: this.stamp_selected_position }),
+            }).then((rsp) => {
+                if (rsp.err === "ok") {
+                    this.$alert("success", rsp.msg || this.$t('book.addStampSuccess'));
+                } else {
+                    this.$alert("error", rsp.msg || this.$t('book.addStampFailed'));
+                }
+            }).catch((_err) => {
+                this.$alert("error", this.$t('book.addStampFailed'));
+            });
+        },
+        showDeleteFormatDialog() {
+            // 检查是否有多个格式
+            if (!this.book.files || this.book.files.length <= 1) {
+                this.$alert("error", this.$t('book.needMultipleFormats'));
+                return;
+            }
+            // 默认选择第一个格式
+            this.selectedDeletedFormat = this.book.files[0].format.toLowerCase();
+            this.dialog_delete_format = true;
+        },
+        confirmSeparate() {
+            if (!this.selectedSeparateFormat) {
+                this.$alert("error", this.$t('book.selectFormat'));
+                return;
+            }
+
+            this.separating_book = true;
+            this.$backend("/book/" + this.book.id + "/separate", {
+                method: "POST",
+                body: JSON.stringify({ format: this.selectedSeparateFormat }),
+            }).then((rsp) => {
+                this.separating_book = false;
+                if (rsp.err === "ok") {
+                    this.dialog_separate = false;
+                    this.$alert("success", rsp.msg || this.$t('book.separateSuccess'));
+                    // 跳转到新创建的书籍页面
+                    if (rsp.new_book_id) {
+                        setTimeout(() => {
+                            this.$router.push("/book/" + rsp.new_book_id);
+                        }, 1500);
+                    } else {
+                        // 如果没有返回新书ID，则刷新当前页面
+                        setTimeout(() => {
+                            location.reload();
+                        }, 1000);
+                    }
+                } else {
+                    this.$alert("error", rsp.msg || this.$t('book.separateFailed'));
+                }
+            }).catch((_err) => {
+                this.separating_book = false;
+                this.$alert("error", this.$t('book.separateFailed'));
+            });
+        },
+        confirmDeleteFormat() {
+            if (!this.selectedDeletedFormat) {
+                this.$alert("error", this.$t('book.selectFormat'));
+                return;
+            }
+
+            this.deleting_format = true;
+            this.$backend("/book/" + this.book.id + "/delete_format", {
+                method: "POST",
+                body: JSON.stringify({ format: this.selectedDeletedFormat }),
+            }).then((rsp) => {
+                this.deleting_format = false;
+                if (rsp.err === "ok") {
+                    this.dialog_delete_format = false;
+                    this.$alert("success", rsp.msg || this.$t('book.deleteFormatSuccess'));
+                    // remove the deleted format from files
+                    this.book.files = this.book.files.filter((f) => f.format.toLowerCase() !== this.selectedDeletedFormat);
+                } else {
+                    this.$alert("error", rsp.msg || this.$t('book.deleteFormatFailed'));
+                }
+            }).catch((_err) => {
+                this.deleting_format = false;
+                this.$alert("error", this.$t('book.deleteFormatFailed'));
+            });
+        },
+        showUploadFormatDialog() {
+            this.upload_format_file = null;
+            this.upload_format_force = false;
+            this.dialog_upload_format = true;
+        },
+        async confirmUploadFormat() {
+            if (!this.upload_format_file) {
+                this.$alert("error", this.$t('book.selectFileToUpload'));
+                return;
+            }
+
+            this.uploading_format = true;
+            try {
+                const data = new FormData();
+                data.append("ebook", this.upload_format_file);
+                data.append("bid", this.book.id);
+                if (this.upload_format_force) {
+                    data.append("force", "1");
+                }
+
+                const rsp = await this.$backend("/book/upload?bid=" + this.book.id + (this.upload_format_force ? "&force=1" : ""), {
+                    method: 'POST',
+                    body: data
+                });
+
+                this.uploading_format = false;
+
+                if (rsp.err === "ok") {
+                    this.dialog_upload_format = false;
+                    this.$alert("success", rsp.msg || this.$t('book.uploadSuccess'));
+                    // 刷新页面以显示新格式
+                    setTimeout(() => {
+                        location.reload();
+                    }, 1000);
+                } else if (rsp.err === "format.already_exists") {
+                    this.$alert("error", rsp.msg || this.$t('book.formatAlreadyExists'));
+                } else {
+                    this.$alert("error", rsp.msg || this.$t('book.uploadFailed'));
+                }
+            } catch (err) {
+                this.uploading_format = false;
+                console.error("Upload error:", err);
+                this.$alert("error", this.$t('book.uploadFailed') + ": " + (err.message || this.$t('book.uploadFailedNetwork')));
+            }
+        },
+        formatFileSize(size) {
+            if (size >= 1048576) {
+                return parseInt(size / 1048576) + 'MB';
+            } else {
+                return parseInt(size / 1024) + 'KB';
+            }
+        },
+        confirmDeleteBook() {
+            if (this.deleting_book) {
+                return;
+            }
+            this.deleting_book = true;
+            this.$backend("/book/" + this.book.id + "/delete", {
+                method: "POST",
+            }).then((rsp) => {
+                this.dialog_delete_book = false;
+                if (rsp.err === "ok") {
+                    this.$alert("success", this.$t('message.deleteSuccess'));
+                    this.$router.push("/");
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+            }).finally(() => {
+                this.deleting_book = false;
+            });
+        },
+        playSampleVoice(voiceOption) {
+            if (this.playing_sample === voiceOption.voice_name) {
+                // 如果正在播放相同的样本，则停止播放
+                this.stopCurrentAudio();
+                return;
+            }
+
+            // 停止当前播放的音频
+            this.stopCurrentAudio();
+
+            // 设置正在播放状态
+            this.playing_sample = voiceOption.voice_name;
+
+            // 创建音频对象并播放
+            const audioUrl = `/static/epub_to_audio/samples/${voiceOption.sample_file}`;
+            this.currentAudio = new Audio(audioUrl);
+
+            this.currentAudio.addEventListener('ended', () => {
+                this.playing_sample = null;
+                this.currentAudio = null;
+            });
+
+            this.currentAudio.addEventListener('error', () => {
+                this.playing_sample = null;
+                this.currentAudio = null;
+                this.$alert("error", this.$t('message.audioLoadFailed'));
+            });
+
+            this.currentAudio.play().catch(() => {
+                this.playing_sample = null;
+                this.currentAudio = null;
+                this.$alert("error", this.$t('message.audioPlayFailed'));
+            });
+        },
+        stopCurrentAudio() {
+            if (this.currentAudio) {
+                this.currentAudio.pause();
+                this.currentAudio = null;
+            }
+            this.playing_sample = null;
+        },
+        startAudioProgressPolling() {
+            this.stopAudioProgressPolling(); // Clear any existing timer
+            this.progressTimer = setInterval(() => {
+                this.updateAudioProgress();
+            }, 10000); // Poll every 10 seconds
+        },
+        stopAudioProgressPolling() {
+            if (this.progressTimer) {
+                clearInterval(this.progressTimer);
+                this.progressTimer = null;
+            }
+        },
+        // 启动目标格式的解析/转换任务（如已就绪则后端直接返回就绪状态）
+        async startReadConversion(formatKey) {
+            try {
+                if (formatKey === 'txt') {
+                    return await this.$backend(`/book/txt/parser?id=${this.book.id}&test=0`);
+                }
+                return await this.$backend(`/book/${this.book.id}/read`, {
+                    method: 'POST',
+                    body: JSON.stringify({ format: formatKey }),
+                });
+            } catch (e) {
+                return null;
+            }
+        },
+        // 轮询目标格式的解析/转换状态
+        async pollReadConversion(formatKey) {
+            try {
+                if (formatKey === 'txt') {
+                    return await this.$backend(`/book/txt/parser?id=${this.book.id}&test=1`);
+                }
+                return await this.$backend(`/book/${this.book.id}/read`, {
+                    method: 'POST',
+                    body: JSON.stringify({ format: formatKey }),
+                });
+            } catch (e) {
+                return null;
+            }
+        },
+        // 判断目标格式是否已就绪
+        isReadConversionReady(formatKey, rsp) {
+            if (!rsp || rsp.err !== 'ok') return false;
+            if (formatKey === 'txt') return rsp.msg === 'parsed';
+            return !!(rsp.data && rsp.data.status === 'ready');
+        },
+        // 阅读按钮点击：epub/txt格式需要先检查解析/转换状态，其它格式直接打开
+        async onReadClick(event, fmt) {
+            event.preventDefault();
+            if (fmt.key === 'txt') {
+                // 只做一次只读状态查询（test=1）：校验登录/权限，但不在这里入队解析。
+                // 解析交给阅读器自己——它先渲染开头正文、再启动目录扫描；若在点开的
+                // 瞬间就入队，整本扫描会和首屏请求并发，把「加载中」拉长数秒。
+                const txtRsp = await this.pollReadConversion(fmt.key);
+                if (txtRsp && txtRsp.err === "user.need_login") {
+                    this.$router.push("/login");
+                    return;
+                }
+                if (!txtRsp || txtRsp.err !== "ok") {
+                    this.$alert("error", (txtRsp && txtRsp.msg) || '');
+                    return;
+                }
+                window.open(fmt.href, '_blank');
+                return;
+            }
+            const rsp = await this.startReadConversion(fmt.key);
+            if (rsp.err === "user.need_login") {
+                this.$router.push("/login");
+                return;
+            }
+            if (rsp.err !== "ok") {
+                this.$alert("error", rsp.msg);
+                return;
+            }
+
+            if (this.isReadConversionReady(fmt.key, rsp)) {
+                window.open(fmt.href, '_blank');
+                return;
+            }
+
+            this.converting_target_href = fmt.href;
+            this.converting_format = fmt.key;
+            this.dialog_converting = true;
+            this.startConvertingPolling();
+        },
+        startConvertingPolling() {
+            this.stopConvertingPolling();
+            this.converting_poll_timer = setInterval(() => {
+                this.pollConvertingStatus();
+            }, 3000);
+        },
+        stopConvertingPolling() {
+            if (this.converting_poll_timer) {
+                clearInterval(this.converting_poll_timer);
+                this.converting_poll_timer = null;
+            }
+        },
+        async pollConvertingStatus() {
+            const rsp = await this.pollReadConversion(this.converting_format);
+            if (this.isReadConversionReady(this.converting_format, rsp)) {
+                const href = this.converting_target_href;
+                this.cancelConvertingDialog();
+                window.location.href = href;
+            }
+        },
+        // 取消转换轮询等待
+        cancelConvertingDialog() {
+            this.stopConvertingPolling();
+            this.dialog_converting = false;
+            this.converting_target_href = '';
+            this.converting_format = '';
+        },
+        async updateAudioProgress() {
+            try {
+                const response = await this.$backend(`/book/${this.book.id}`);
+                if (response.audios) {
+                    this.audios = response.audios;
+
+                    // Stop polling if conversion is complete or failed
+                    if (this.audios.status !== this.AUDIO_STATUS.PROCESSING) {
+                        this.stopAudioProgressPolling();
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to update audio progress:', error);
+                // Continue polling even if one request fails
+            }
+        },
+        async clearConversion() {
+            this.stopCurrentAudio();
+            try {
+                let endpoint;
+                let successMessage;
+                let isDelete = false;
+
+                if (this.audios.status === this.AUDIO_STATUS.PROCESSING) {
+                    // Cancel the conversion
+                    endpoint = `/audio/${this.book.id}/cancel`;
+                    successMessage = this.$t('book.conversionCancelled');
+                } else if (this.audios.status === this.AUDIO_STATUS.CONVERTED) {
+                    // Delete the audio files
+                    endpoint = `/audio/${this.book.id}/delete`;
+                    successMessage = this.$t('book.audioFilesDeleted');
+                    isDelete = true;
+                } else {
+                    return; // No action needed for other statuses
+                }
+
+                const response = await this.$backend(endpoint, {
+                    method: "POST"
+                });
+
+                if (response.err === 'ok') {
+                    this.$alert('success', successMessage);
+                    // Stop any ongoing polling
+                    this.stopAudioProgressPolling();
+                    // Close the dialog
+                    this.dialog_audiolist = false;
+                    if (isDelete) {
+                        // Reset audio status
+                        this.audios = {count: 0, files: [], status: "unavailable"};
+                    } else {
+                        this.audios.status = this.AUDIO_STATUS.CONVERTED;
+                    }
+                } else {
+                    this.$alert("error", response.msg || this.$t('message.operationFailed'));
+                }
+            } catch (error) {
+                console.error('Failed to clear conversion:', error);
+                this.$alert("error", this.$t('message.operationFailed'));
+            }
+        },
+        uploadCover() {
+          this.cover_error = '';
+          if (!this.cover_file) {
+            this.cover_error = this.$t('book.noCoverSelected');
+            return;
+          }
+          const file = this.cover_file;
+          if (file.size > 3 * 1024 * 1024) {
+            this.cover_error = this.$t('book.coverTooLarge');
+            return;
+          }
+          const type = file.type;
+          if (type !== 'image/jpeg' && type !== 'image/png' && type !== 'image/webp') {
+            this.cover_error = this.$t('book.coverTypeInvalid');
+            return;
+          }
+          const form = new FormData();
+          form.append('cover_data', file);
+          this.$backend(`/book/${this.book.id}/cover`, {
+            method: 'POST',
+            body: form,
+          }).then(resp => {
+            if (resp.err === 'ok') {
+              this.dialog_set_cover = false;
+              location.reload();
+            } else {
+              this.cover_error = resp.msg || this.$t('book.coverUploadFailed');
+            }
+          });
+        },
+
+        // 添加实体书相关方法
+        cancelAddBook() {
+            this.isbn_dialog = false;
+            this.isbn = "";
+            this.continueAdding = false; // 重置checkbox状态
+            // 重置验证状态
+            this.showValidationErrors = false;
+        },
+
+        confirmAddBook() {
+            // 触发验证显示
+            this.showValidationErrors = true;
+
+            // 等待下一个tick让验证生效，然后检查表单有效性
+            this.$nextTick(() => {
+                // 检查ISBN是否有效
+                if (!this.isbn) {
+                    this.$alert("error", this.$t('upload.isbnRequired'));
+                    return;
+                }
+
+                if (!this.isValidIsbn) {
+                    this.$alert("error", this.$t('upload.invalidIsbn'));
+                    return;
+                }
+
+                this.adding_book = true;
+                // 清理ISBN号（移除连字符和空格）
+                const cleanIsbn = this.isbn.replace(/[-\s]/g, '');
+
+                this.$backend("/book/add", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        isbn: cleanIsbn,
+                    }),
+                })
+                .then((rsp) => {
+                    this.isbn_dialog = false;
+                    if (rsp.err != "ok") {
+                        this.$alert("error", rsp.msg);
+                    } else {
+                        // 如果勾选了继续添加，则跳转时携带参数，否则直接跳转
+                        if (this.continueAdding) {
+                            this.$router.push(`/book/${rsp.book_id}?continue_adding=true`);
+                        } else {
+                            this.$alert("success", rsp.msg || this.$t('upload.bookAdded'));
+                            this.$router.push(`/book/${rsp.book_id}`);
+                        }
+                    }
+                })
+                .catch((error) => {
+                    this.$alert("error", "添加图书时发生错误: " + error.message);
+                })
+                .finally(() => {
+                    this.adding_book = false;
+                    this.isbn = "";
+                    // 只有在不继续添加的情况下才重置checkbox
+                    if (!this.continueAdding) {
+                        this.continueAdding = false;
+                    }
+                });
+            });
+        },
+
+        // 清除验证错误显示状态
+        clearValidationErrors() {
+            // 如果用户开始重新输入，重置验证错误显示状态
+            if (this.isbn && this.showValidationErrors) {
+                this.showValidationErrors = false;
+            }
+        },
+
+        // 触发图片上传
+        triggerImageUpload() {
+            this.$refs.barcodeImageInput.click();
+        },
+
+        // 处理图片上传和条形码识别
+        handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // 检查文件类型
+            if (!file.type.startsWith('image/')) {
+                this.$alert("error", "请选择图片文件");
+                return;
+            }
+
+            // 检查文件大小（限制为10MB）
+            if (file.size > 10 * 1024 * 1024) {
+                this.$alert("error", "图片文件不能超过10MB");
+                return;
+            }
+
+            this.recognizing_barcode = true;
+
+            // 创建FormData对象
+            const formData = new FormData();
+            formData.append('barcode_image', file);
+
+            // 调用后端API识别条形码
+            this.$backend('/admin/barcode', {
+                method: 'POST',
+                body: formData,
+            })
+            .then(response => {
+                if (response.err === 'ok') {
+                    // 识别成功，填充ISBN字段
+                    this.isbn = response.isbn;
+                    // 触发验证
+                    this.$nextTick(() => {
+                        this.$refs.isbnField && this.$refs.isbnField.validate();
+                    });
+                } else if (response.err === 'no_barcode') {
+                    this.$alert("error", "未在图片中识别到条形码，请确保图片清晰且包含条形码");
+                } else if (response.err === 'no_isbn') {
+                    this.$alert("warning", response.msg);
+                } else {
+                    this.$alert("error", response.msg || "条形码识别失败");
+                }
+            })
+            .catch(error => {
+                console.error('条形码识别错误:', error);
+                this.$alert("error", "条形码识别服务出错，请稍后重试");
+            })
+            .finally(() => {
+                this.recognizing_barcode = false;
+                // 清空文件输入框，允许重复选择同一文件
+                event.target.value = '';
+            });
+        },
+        similarReasonText(book) {
+            const reason = book.reason;
+            if (!reason || !this.$te('book.similarReason.' + reason.type)) {
+                return '';
+            }
+            return this.$t('book.similarReason.' + reason.type, { value: reason.value });
+        },
+        async loadSuggestionBooks() {
+            if (!this.book || !this.book.id) return;
+
+            this.suggestionBooksLoading = true;
+            try {
+                const response = await this.$backend(`/book/${this.book.id}/suggestion`);
+                if (response.err === 'ok' && response.books) {
+                    // 后端已经通过 self.fmt(b) 格式化了数据，直接使用即可
+                    this.suggestionBooks = response.books;
+                }
+            } catch (error) {
+                console.error('加载推荐图书失败:', error);
+            } finally {
+                this.suggestionBooksLoading = false;
+            }
+        },
+        async loadSameNameBooks() {
+            if (!this.book || !this.book.id) return;
+            this.sameNameBooksLoading = true;
+            try {
+                const response = await this.$backend(`/search?title=${this.book.title.trim()}&exclude=${this.book.id}`);
+                if (response.err === 'ok' && response.books) {
+                    this.sameNameBooks = response.books;
+                }
+            } catch (error) {
+                console.error('加载同名图书失败:', error);
+            } finally {
+                this.sameNameBooksLoading = false;
+            }
+        },
+
+        // 加载设置（设备列表和分类列表）
+        async getSettings() {
+            if (this.$store.state.user?.is_login !== true) {
+                this.devices = [];
+                this.categories = [];
+                return;
+            }
+            try {
+                const [settingsResponse, devicesResponse] = await Promise.all([
+                    this.$backend('/admin/settings').catch(() => null),
+                    this.$backend('/user/devices').catch(() => null),
+                ]);
+                const personalDevices = (devicesResponse?.err === 'ok' ? devicesResponse.devices : null) || [];
+                const globalDevices = (settingsResponse?.err === 'ok' ? settingsResponse.settings?.DEVICES : null) || [];
+                // Merge: personal devices first, then global devices not already present by name
+                const usedNames = new Set(personalDevices.map(d => d.name));
+                const extraGlobal = globalDevices.filter(d => !usedNames.has(d.name));
+                this.devices = [...personalDevices, ...extraGlobal];
+                if (settingsResponse?.err === 'ok' && settingsResponse.settings?.BOOK_NAV) {
+                    this.categories = settingsResponse.settings.BOOK_NAV.split('\n').map(line => {
+                        const parts = line.split('=');
+                        return parts[0].trim();
+                    }).filter(c => c);
+                    // 添加国际化的"清除"选项
+                    this.categories.push(this.$t('book.clearCategory'));
+                }
+                // 获取图章默认位置
+                if (settingsResponse?.err === 'ok') {
+                    this.stamp_default_position = settingsResponse.settings.STAMP_POSITION || 'bottom-right';
+                    this.stamp_enabled = settingsResponse.settings?.ENABLE_STAMP_FEATURE;
+                }
+            } catch (error) {
+                console.error('Failed to get settings:', error);
+            }
+        },
+
+        onCategorySelected(category) {
+            this.categoryMenu = false;
+            this.categorySelect = null;
+            if (category) {
+                this.setCategory(category);
+            }
+        },
+
+        async setCategory(category) {
+            try {
+                // 如果category是国际化的"清除"选项，则传空值到接口
+                let categoryToSend = category;
+                if (categoryToSend === this.$t('book.clearCategory')) {
+                    categoryToSend = '';
+                }
+
+                const response = await this.$backend(`/book/${this.book.id}/category`, {
+                    method: 'POST',
+                    body: JSON.stringify({ category: categoryToSend }),
+                });
+                if (response.err === 'ok') {
+                    this.book.category = categoryToSend;
+                    this.$alert('success', '分类更新成功');
+                } else {
+                    this.$alert('error', response.msg || '更新失败');
+                }
+            } catch (error) {
+                console.error('更新分类失败:', error);
+                this.$alert('error', this.$t('message.networkError'));
+            }
+        },
+
+        onFolderMenuToggle(opened) {
+            if (opened) {
+                this.folderDraft = this.book.folder || '';
+            }
+        },
+
+        async saveFolder() {
+            this.folderSaving = true;
+            try {
+                const response = await this.$backend(`/book/${this.book.id}/folder`, {
+                    method: 'POST',
+                    body: JSON.stringify({ folder: this.folderDraft }),
+                });
+                if (response.err === 'ok') {
+                    this.book.folder = this.folderDraft;
+                    this.folderMenu = false;
+                    this.$alert('success', this.$t('folder.updated'));
+                } else {
+                    this.$alert('error', response.msg || this.$t('folder.invalid'));
+                }
+            } catch (error) {
+                console.error('更新目录失败:', error);
+                this.$alert('error', this.$t('message.networkError'));
+            } finally {
+                this.folderSaving = false;
+            }
+        },
+
+        startEditLocation() {
+            this.location_input = this.book.location || "";
+            this.editing_location = true;
+        },
+
+        cancelEditLocation() {
+            this.editing_location = false;
+        },
+
+        async confirmEditLocation() {
+            const location = this.location_input.trim();
+            try {
+                const response = await this.$backend(`/book/${this.book.id}/location`, {
+                    method: 'POST',
+                    body: JSON.stringify({ location }),
+                });
+                if (response.err === 'ok') {
+                    this.book.location = location;
+                    this.editing_location = false;
+                } else {
+                    this.$alert('error', response.msg || '更新失败');
+                }
+            } catch (error) {
+                console.error('更新位置失败:', error);
+                this.$alert('error', this.$t('message.networkError'));
+            }
+        },
+
+        async setLanguage(lang) {
+            this.book.languages = lang;
+            this.$backend("/book/" + this.book.id + "/edit", {
+                method: "POST",
+                body: JSON.stringify({ languages: lang }),
+            })
+
+            .then(rsp => {
+                if (rsp.err === 'ok') {
+                    this.$alert("success", this.$t('book.edit.saveSuccess'));
+                    this.$router.push("/book/" + this.book.id);
+                } else {
+                    this.$alert("error", rsp.msg);
+                }
+            });
+        },
+
+        languageName(code) {
+            const found = this.languageOptions.find(opt => opt.code === code);
+            return found ? found.name : code;
+        },
+
+        // 发送到设备
+        async sendToDevice({ deviceInfo, deviceName }) {
+            this.sending_to_device = true;
+            try {
+                let requestBody;
+                if (deviceInfo.type === 'kindle') {
+                    requestBody = {
+                        device_type: 'kindle',
+                        mailbox: deviceInfo.mailbox,
+                    };
+                } else if (deviceInfo.type === 'ftp') {
+                    const url = `${deviceInfo.ip}:${deviceInfo.port}`;
+                    requestBody = {
+                        device_type: 'ftp',
+                        device_url: url,
+                        ftp_username: deviceInfo.ftp_username || '',
+                        ftp_password: deviceInfo.ftp_password || '',
+                        ftp_path: deviceInfo.ftp_path || '',
+                    };
+                } else {
+                    const url = `${deviceInfo.schema || 'http'}://${deviceInfo.ip}:${deviceInfo.port}`;
+                    requestBody = {
+                        device_type: deviceInfo.type,
+                        device_url: url,
+                    };
+                }
+
+                const response = await this.$backend(`/book/${this.book.id}/send_to_device`, {
+                    method: 'POST',
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (response.err === 'ok') {
+                    this.$alert('success', this.$t('message.sendDeviceSuccess', { name: deviceName }));
+                    this.dialog_send_to_device = false;
+                } else {
+                    this.$alert('error', response.msg || this.$t('message.sendDeviceFailed'));
+                }
+            } catch (error) {
+                this.$alert('error', this.$t('message.sendDeviceFailed'));
+            } finally {
+                this.sending_to_device = false;
+            }
+        },
+
+        // 邮箱地址验证
+        isValidEmail(email) {
+            const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+            return emailPattern.test(email);
+        },
+
+        // 生成读书分享卡片
+        async generateShareCard() {
+            this.share_card_image_url = null;
+            this.share_card_generating = true;
+            this.dialog_share_card = true;
+
+            try {
+                this.share_card_image_url = await renderBookShareCard({
+                    title: this.book.title,
+                    comments: this.book.comments,
+                    coverUrl: this.book.img,
+                    qrUrl: `${siteBaseUrl(this.$store)}/read/${this.book.id}`,
+                    siteTitle: localStorage.getItem('sys_title') || 'MyBooks',
+                });
+            } catch (err) {
+                console.error('生成读书卡片失败:', err);
+                this.$alert('error', this.$t('book.shareCardFailed'));
+                this.dialog_share_card = false;
+            } finally {
+                this.share_card_generating = false;
+            }
+        },
+
+        // 下载读书分享卡片
+        downloadShareCard() {
+            if (!this.share_card_image_url) return;
+            downloadImage(this.share_card_image_url, `${shareCardFileName(this.book.title)}.png`);
+        },
+
+        // 打开邮箱对话框
+        openEmailDialog() {
+            this.dialog_send_to_email = true;
+        },
+
+        // 发送到邮箱
+        async sendToEmail({ email, format }) {
+            this.sending_to_email = true;
+            try {
+                const response = await this.$backend(`/book/${this.book.id}/mailto`, {
+                    method: 'POST',
+                    body: JSON.stringify({ email, format })
+                });
+
+                if (response.err === 'ok') {
+                    if (this.$store.state.user) {
+                        this.$store.state.user.last_share_email = email;
+                    }
+                    this.$alert('success', this.$t('book.sendToEmailSuccess', { email }));
+                    this.dialog_send_to_email = false;
+                } else {
+                    if (response.err === 'file.too_large') {
+                        this.$refs.sendToEmailDialog?.setWarning(response.msg);
+                    } else {
+                        this.$alert('error', response.msg || this.$t('book.sendToEmailFailed'));
+                    }
+                }
+            } catch (error) {
+                console.error('发送邮件失败:', error);
+                this.$alert('error', this.$t('book.sendToEmailFailed'));
+            } finally {
+                this.sending_to_email = false;
+            }
+        },
+    },
+};
+</script>
+
+<style>
+/* 分类下拉外层 v-menu 的 .v-menu__content 会渲染出一个无法使用的滚动条；
+   通过 content-class 只给这个外层菜单加类名，避免影响 v-autocomplete 自身
+   建议列表所用的（无类名）.v-menu__content，否则会连带隐藏建议列表的滚动条。 */
+.mt-category-menu.v-menu__content {
+    overflow-y: hidden !important;
+}
+
+.finished-mark {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+    width: 40%;
+    opacity: 0.8;
+    pointer-events: none;
+    line-height: 0;
+}
+.finished-mark img {
+    width: 100%;
+    height: auto;
+}
+.reading-stats-block {
+    margin-top: 8px;
+    width: 100%;
+}
+.reading-stats-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 4px 10px;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: rgba(0, 0, 0, 0.6);
+    padding: 2px 0;
+}
+.theme--dark .reading-stats-row {
+    color: rgba(255, 255, 255, 0.7);
+}
+.reading-stats-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    white-space: nowrap;
+}
+
+.book-action-btns {
+    display: flex;
+    gap: 8px;
+}
+@media (max-width: 600px) {
+    .book-action-btns {
+        gap: 0;
+    }
+    .book-action-btns .v-btn {
+        width: 30px !important;
+        height: 30px !important;
+        min-width: 30px !important;
+        min-height: 30px !important;
+    }
+}
+
+/* Scrollbar for audio list, matching the app-navigation-drawer scrollbar in AppHeader.vue */
+.audio-scroll-container {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(102, 126, 234, 0.55) #F7FAF7;
+}
+
+.theme--dark .audio-scroll-container {
+    scrollbar-color: rgba(102, 126, 234, 0.55) #363636;
+}
+
+.audio-scroll-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.audio-scroll-container::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 6px;
+}
+
+.audio-scroll-container::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.55) 0%, rgba(118, 75, 162, 0.55) 100%);
+    border-radius: 6px;
+    transition: all 0.3s ease;
+}
+
+.audio-scroll-container::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, rgba(118, 75, 162, 0.55) 0%, rgba(102, 126, 234, 0.55) 100%);
+    box-shadow: 0 0 10px rgba(102, 126, 234, 0.425);
+}
+
+.audio-scroll-container::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+
+.align-right {
+    text-align: right;
+}
+
+.book-footer {
+    padding-top: 0;
+    padding-bottom: 3px;
+}
+
+.tag-chips a {
+    margin: 4px 2px;
+}
+
+.book-comments {
+    /*text-indent: 2em;*/
+    overflow: hidden;
+    display: -webkit-box;
+    line-clamp: 3;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    text-overflow: clip;
+    margin-top: 6px;
+    text-align: left;
+}
+
+.book-comments p {
+    font-size: small;
+    margin-bottom: 0;
+}
+
+h1.book-detail-title {
+    line-height: inherit;
+}
+
+/* Specificity must beat appearance.css's ".v-application .v-btn:not(...):not(...)" (0,4,0)
+   rule, which also uses !important and otherwise wins the border-radius tug-of-war. */
+.v-application .v-btn.read-btn-grouped.read-btn-grouped {
+    border-top-right-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+}
+
+.v-application .v-btn.read-format-btn.read-format-btn {
+    border-top-left-radius: 0 !important;
+    border-bottom-left-radius: 0 !important;
+    border-left: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+/* Dialog border styles */
+.dialog-border {
+    border: 0px solid;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+    border-radius: 8px !important;
+}
+
+.dialog-border .v-card__title {
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.dialog-toolbar.dialog-toolbar {
+    border-radius: 6px 6px 0 0 !important;
+    overflow: hidden;
+}
+
+.book-action-col {
+    display: flex;
+}
+
+.book-action-col > .v-card {
+    width: 100%;
+}
+
+.chip-ellipsis {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.avatar {
+    max-width: 80px;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    overflow: hidden;
+}
+.avatar .v-image__image {
+    background-size: cover !important;
+}
+.authors-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.author-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.author-avatar {
+    max-width: 48px;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    overflow: hidden;
+    margin-bottom: 4px;
+}
+.author-avatar .v-image__image {
+    background-size: cover !important;
+}
+
+@media (min-width: 960px) {
+    .book-action-col {
+        flex: 0 0 25%;
+        max-width: 25%;
+    }
+}
+
+.catalog-toggle {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 500;
+}
+.catalog-content {
+    margin-top: 8px;
+    font-size: 0.9rem;
+    line-height: 1.7;
+    max-height: 360px;
+    overflow-y: auto;
+}
+.mynexus-section-tabs {
+    display: flex;
+    max-width: 100%;
+    padding: 4px;
+    margin: 0 auto 2px;
+    border-radius: 12px;
+    background: rgba(128, 128, 128, 0.3);
+}
+.mynexus-section-tabs button {
+    min-width: 120px;
+    padding: 1px 16px;
+    border: 0;
+    border-radius: 9px;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+.mynexus-section-tabs button.active {
+    background: var(--v-primary-base);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.mynexus-reading-guide {
+    overflow-wrap: anywhere;
+    line-height: 1.75;
+}
+@media (max-width: 600px) {
+    .mynexus-section-tabs {
+        width: 100%;
+    }
+    .mynexus-section-tabs button {
+        flex: 1;
+        min-width: 0;
+        padding: 8px 6px;
+    }
+}
+</style>

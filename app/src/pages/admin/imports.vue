@@ -900,6 +900,12 @@ export default {
                         this.audioImporting = rsp.audio_importing || false;
                         if (!rsp.audio_importing) {
                             this.loading = false;
+                            // total 为 0 说明 audiobooks 目录下没找到可导入的书。
+                            // 原先这种情况界面什么都不提示，看着像"点了没反应"，
+                            // 这里给一条明确说明，指出该把音频放到哪。
+                            if (this.count_total === 0) {
+                                this.$alert("info", this.$t('imports.audio_import_empty', { scan_dir: this.scan_dir }));
+                            }
                             return false;
                         }
                         this.loading = true;
