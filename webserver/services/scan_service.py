@@ -70,6 +70,7 @@ from webserver.constants import CALIBRE_COLUMN_BOOK_TYPE, CALIBRE_COLUMN_CATEGOR
 from webserver.constants import BOOK_TYPE_EBOOK, BOOK_TYPE_PHYSICAL, CALIBRE_COLUMN_DYNAMIC_COVER, CALIBRE_COLUMN_TRANSLATORS
 from webserver.constants import SCANNED_DOCUMENT_FORMATS
 from webserver.base.book_files import InvalidBookFileError, read_book_metadata, validate_book_file
+from webserver.base.audio_dir import audio_dir_for_write
 from webserver.services.background_service import BackgroundService, BackgroundTask
 from webserver import loader
 
@@ -1514,6 +1515,13 @@ class ScanService(AsyncService):
                     else:
                         logging.warning("[IMPORT] Skipping category for '%s': invalid dir name", first_dir)
 
+            if row.status == ScanFile.IMPORTED and row.book_id:
+                # §同目录音频随书导入§（4.6.0-15）见 _sync_sidecar_audio
+                try:
+                    self._sync_sidecar_audio(fpath, row.book_id)
+                except Exception as side_err:
+                    logging.warning("[IMPORT] sidecar audio sync failed for %s: %s", fpath, side_err)
+
             if CONF.get("REMOVE_IMPORTED_FILE", False) and (not existed_ebook or row.status == ScanFile.EXIST):
                 self._remove_imported_file(fpath)
         except Exception as err:
@@ -1537,6 +1545,66 @@ class ScanService(AsyncService):
         if time.time() - start_time > 0.25:
             logging.warning("[IMPORT] Slow import detected (%.3fs) for file: %s", time.time() - start_time, fpath)
         return new_book_id, status
+
+    def _sync_sidecar_audio(self, fpath, book_id):
+        """§同目录音频随书导入§（4.6.0-15）
+
+        场景：imports/audiobooks/<书名>/ 里 epub+mp3 混放。书籍扫描把 epub
+        导入成书后，把同目录的音频一并挂到该书 .audio/——一次导入书+音频
+        齐活，不用再点「导入有声书」；否则音频会残留，之后点「导入有声书」
+        要么报 empty、要么按 ID3 标签（播音员当作者）再建一本重复书。
+
+        防重：给目录写一条 audiodir: 的 ScanFile 标记，AudioBookImporter
+        看到已处理目录直接 skip。只对 audiobooks 导入目录下的文件生效，
+        普通书籍目录里 epub+mp3 混放不在此列（那里可能是资料包）。
+        """
+        d = os.path.dirname(os.path.abspath(fpath))
+        import_root = os.path.abspath(os.path.join(
+            CONF.get("scan_upload_path", "/data/books/imports/"), constants.AUDIO_BOOK_IMPORTS))
+        if not os.path.abspath(d).startswith(import_root + os.sep):
+            return
+        audios = sorted([
+            f for f in os.listdir(d)
+            if os.path.isfile(os.path.join(d, f))
+            and f.lower().endswith(tuple(constants.SUPPORTED_AUDIO_FORMATS))
+        ])
+        if not audios:
+            return
+        dest = audio_dir_for_write(self.db, book_id)
+        if not dest:
+            logging.warning("[IMPORT] sidecar audio: book %s 没有可用书目录，跳过", book_id)
+            return
+        existing_audios = [f for f in (os.listdir(dest) if os.path.isdir(dest) else [])
+                           if f.lower().endswith(tuple(constants.SUPPORTED_AUDIO_FORMATS))]
+        if existing_audios:
+            logging.info("[IMPORT] sidecar audio: book %s 已有音频，跳过同步", book_id)
+        else:
+            from webserver.services.audios_import import _copy_or_convert_file
+            for fname in audios:
+                _copy_or_convert_file(os.path.join(d, fname), dest)
+            logging.info("[IMPORT] sidecar audio: %d 个音频已随书挂到 book %s 的 %s",
+                         len(audios), book_id, dest)
+        # 目录标记为已处理，防止 AudioBookImporter 按 ID3 再建一本重复书
+        dir_hash = "audiodir:" + hashlib.md5(os.path.normpath(d).encode("utf-8")).hexdigest()
+        try:
+            marker = self.session.query(ScanFile).filter(ScanFile.hash == dir_hash).first()
+            if not marker:
+                marker = ScanFile(d, dir_hash, 0)
+                marker.import_type = constants.IMPORT_TYPE_AUDIOBOOK
+                marker.book_id = book_id
+                # 标 IMPORTED：AudioBookImporter 跳过本目录，且后续往同目录
+                # 丢新音频时还能走它的增量同步（IMPORTED 才触发 _synch_audio_files）
+                marker.status = ScanFile.IMPORTED
+                marker.title = None
+                marker.author = None
+                self.save_or_rollback(marker)
+                logging.info("[IMPORT] sidecar audio: 目录 %s 已标记为已处理", d)
+            elif marker.status not in (ScanFile.IMPORTED, ScanFile.EXIST):
+                marker.status = ScanFile.IMPORTED
+                marker.book_id = marker.book_id or book_id
+                self.save_or_rollback(marker)
+        except Exception as err:
+            logging.warning("[IMPORT] sidecar audio: 写目录标记失败 %s: %s", d, err)
 
     def _importing_worker(self, work_queue, importing_imported, opts):
         """Worker thread for Phase 2: consumes row IDs from work_queue and imports each file.
