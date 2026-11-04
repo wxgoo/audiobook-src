@@ -397,27 +397,60 @@ export default {
                 this.audio_loading = true;
             });
 
+            let pendingSeek = 0;
             el.addEventListener('loadedmetadata', () => {
                 if (!alive() || ready) return;
                 ready = true;
                 this.audio_loading = false;
                 this.duration = el.duration || 0;
 
-                // 续播：对齐到整秒。非整秒位置会让 AAC/E-AC3 从帧中间开始解码，
-                // 听感上是爆音/电流声。
+                // 续播位置先记下，但【不在这里 seek】：从 0 直接播是整段 200
+                // 请求、一定能出声；而「还没缓冲任何数据就 seek」会让浏览器
+                // 立刻发一个中段 Range 请求，某些环境（nginx+网络盘）下这个
+                // 请求会迟迟不回，元素永远停在 rs=1（有元数据没数据），表现
+                // 就是「进度不动、也没声音」。改成先 play，等缓冲真正到了
+                // （canplay / rs>=3）再跳到续播位置——那时浏览器对文件结构
+                // 已经有概念，seek 又快又稳。
                 const saved = this.resumeMap[index];
                 if (saved && el.duration && saved >= 5 && saved < el.duration - 3) {
-                    const pos = Math.floor(saved);
-                    try { el.currentTime = pos; } catch (e) { /* 忽略 */ }
-                    this.currentTime = pos;
-                    this.sliderPct = (pos / el.duration) * 100;
+                    pendingSeek = Math.floor(saved);
+                    this.currentTime = pendingSeek;
+                    this.sliderPct = (pendingSeek / el.duration) * 100;
                 }
 
-                // 顺序关键：seek 必须发生在 play() 之前。反过来的话 play() 请求
-                // 会被 seek 引发的 load 打断（AbortError），然后 canplay 里再
-                // seek → 再打断 → 无限循环，表现就是「一动不动」。
                 this._safePlay(index);
             });
+
+            // 数据真正到了（可以往后播了）再落地续播 seek。对齐整秒，避免
+            // AAC/m4a 从帧中间解码出爆音。
+            const applyPendingSeek = () => {
+                if (!alive() || !pendingSeek) return;
+                if (el.readyState < 3) return; // 数据还没到位，再等等
+                const pos = pendingSeek;
+                pendingSeek = 0;
+                try {
+                    if (pos < el.duration - 3) {
+                        el.currentTime = pos;
+                        this.currentTime = pos;
+                        this.sliderPct = (pos / el.duration) * 100;
+                    }
+                } catch (e) { /* 忽略 */ }
+            };
+            el.addEventListener('canplay', applyPendingSeek);
+            el.addEventListener('playing', applyPendingSeek);
+
+            // §停滞看门狗§ play() 之后 6 秒还没拿到可播数据（rs<3），打日志。
+            // 只打一次，用来区分「网络/代理卡」还是「逻辑卡」。
+            const watchdog = setTimeout(() => {
+                if (alive() && !el.paused && el.readyState < 3) {
+                    // eslint-disable-next-line no-console
+                    console.warn('[AUDIO] 数据停滞：rs=' + el.readyState
+                        + ' ns=' + el.networkState + ' buffered='
+                        + (el.buffered.length ? el.buffered.end(0).toFixed(1) : '0')
+                        + ' url=' + audioItem.url);
+                }
+            }, 6000);
+            el.addEventListener('ended', () => clearTimeout(watchdog), { once: true });
 
             // canplay 只负责收 loading 态，绝不在这里 seek
             el.addEventListener('canplay', () => {

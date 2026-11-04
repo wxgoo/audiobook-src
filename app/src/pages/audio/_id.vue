@@ -546,13 +546,13 @@ export default {
       const curSrc = player.getAttribute('src') || '';
       const isSameFile = !!audio.url && curSrc === audio.url;
 
-      // §统一的 seek 落地§ 只在「元数据就绪」后写 currentTime，且只写一次。
-      // 之前 isSameFile 分支直接写 currentTime，若此刻还在 loading 会打断
-      // 加载；非同一文件分支的 onLoadedMetadata 又没做去重，多次切集会叠加
-      // 一堆监听器，同时写 currentTime，互相打架。
+      // §统一的 seek 落地§ 与弹窗同策略：不在 loadedmetadata（rs=1，还没有
+      // 任何数据）就 seek——那时 seek 会立刻发一个中段 Range 请求，网络盘
+      // 环境下可能迟迟不回，元素永远 rs=1。等 canplay（rs>=3，真有数据了）
+      // 再跳。play() 由调用方/用户手势触发，不在这里抢。
       const applyPosition = () => {
-        // 期间用户可能已经切到别的集了，校验一下再写
         if (this.currentTrackIndex !== index) return;
+        if (player.readyState < 3) return; // 数据未到位，由 canplay 再次触发
         try {
           if (targetTime > 0 && isFinite(player.duration)
               && targetTime < player.duration - 1) {
@@ -563,30 +563,22 @@ export default {
       };
 
       if (isSameFile) {
-        // §避免同一位置反复 seek§ 重入同一集同一位置（比如 mounted 时的
-        // 初始化 + 恢复那条路径）不应该再写一次 currentTime——写一次就会
-        // 触发一次 seek/缓冲。只有目标位置真的变了才动。
         const alreadyThere = player.readyState >= 1
           && Math.abs((player.currentTime || 0) - targetTime) < 0.75;
         if (alreadyThere) {
           this.syncDurationFromAudio(audio, player);
           return;
         }
-        if (player.readyState >= 1) {
-          // 已经能读到时长，直接定位
+        if (player.readyState >= 3) {
           applyPosition();
         } else {
-          // 还在加载：等元数据，别硬写 currentTime
-          player.addEventListener('loadedmetadata', applyPosition, { once: true });
+          player.addEventListener('canplay', applyPosition, { once: true });
         }
         return;
       }
 
-      // 换文件：先挂一次性监听，再赋值 src —— 顺序反了会漏事件
-      player.addEventListener('loadedmetadata', applyPosition, { once: true });
+      player.addEventListener('canplay', applyPosition, { once: true });
       player.src = audio.url;
-      // 不调 load()：给它设 src 已经会触发加载，额外调 load() 会把刚挂的
-      // 监听器之前的状态清掉，Chrome 上表现为加载被打断后再重来一遍。
     },
 
     // 时长：优先用切片区间（start_time/end_time），否则用真实 duration
