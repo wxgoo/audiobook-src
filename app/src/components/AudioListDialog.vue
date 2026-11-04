@@ -127,7 +127,6 @@ export default {
             playing_audio_index: null,
             audio_loading: false,
             audio_paused: false,
-            currentAudioFile: null,
             currentTime: 0,
             duration: 0,
             resumeMap: {},
@@ -139,6 +138,12 @@ export default {
             diagMode: false,
             _diagTaps: 0,
         };
+    },
+    created() {
+        // §非响应式播放器实例§ 故意不放进 data：Audio 元素上的事件每秒刷新
+        // 数次，一旦它成为响应式依赖，任何 timeupdate 都会让整棵子树重新求值，
+        // 与 v-slider 的 v-model 互相踩，最后表现为进度被按住不动。
+        this._el = null;
     },
     mounted() {
         this.loadResumeMap();
@@ -156,7 +161,7 @@ export default {
             // 「点了没动静，必须 Ctrl+F5」。
             if (!val) {
                 this.saveProgress();
-                this.stopAudioFilePlayback();
+                this._teardown();
             } else {
                 // §打开时重载进度§ mounted 时 audios 往往还没到（父组件异步取），
                 // 旧代码只在那时 loadResumeMap 一次 → 列表为空、resumeMap 永远
@@ -194,7 +199,7 @@ export default {
         if (typeof window !== 'undefined' && this._onHide) {
             window.removeEventListener('pagehide', this._onHide);
         }
-        this.stopAudioFilePlayback();
+        this._teardown();
     },
     methods: {
         // ---------- 诊断 ----------
@@ -239,7 +244,7 @@ export default {
                     console.warn('[PLAY] 卡住：t=' + _t.toFixed(2)
                         + ' rs=' + el.readyState + ' ns=' + el.networkState
                         + ' paused=' + el.paused
-                        + ' 当前实例=' + (this.currentAudioFile === el)
+                        + ' 当前实例=' + (this._el === el)
                         + ' playing_idx=' + this.playing_audio_index
                         + ' stack=' + (new Error().stack || '').split('\n').slice(1, 6).join(' <- '));
                 }
@@ -313,11 +318,14 @@ export default {
         },
         saveProgress() {
             const idx = this.playing_audio_index;
-            if (idx === null || !this.currentAudioFile) return;
+            if (idx === null || !this._el) return;
             const key = this._keyOf(idx);
             if (!key) return;
-            const t = this.currentAudioFile.currentTime || 0;
-            const d = this.currentAudioFile.duration || 0;
+            const t = this._el.currentTime || 0;
+            const d = this._el.duration;
+            // duration 可能是 NaN（元数据未就绪），此时无法判断"是否听完"，
+            // 直接不记，避免把 NaN 写进 localStorage 污染下次续播。
+            if (!d || !isFinite(d)) return;
             try {
                 // 听完（相差 3 秒内）就清掉，下次从头听；否则记位置。
                 // 5 秒内也视为「没真听」——从这种位置续播既无意义，又容易让
@@ -345,131 +353,163 @@ export default {
         },
 
         // ---------- 播放 ----------
+        // §重写说明§ 旧实现把「正在播的元素」放在 data 里（currentAudioFile），
+        // 每次 play/stop 都会让它变成响应式依赖，播放器事件又在高频改
+        // currentTime/sliderPct，三者互相触发，最后就是 currentTime 被按住不动、
+        // 状态灯疯狂闪烁。现在改成：
+        //   1) 播放器实例存在组件实例上（非响应式 this._el），事件回调只做纯赋值；
+        //   2) 只用一个 playing_audio_index 驱动 UI（谁在播/播放条是否显示）；
+        //   3) 所有「换实例」都走 _teardown()，保证旧的先彻底摘干净。
         playAudioFile(audioItem, index) {
-            if (this.playing_audio_index === index && this.currentAudioFile) {
-                if (this.audio_paused) {
-                    this.currentAudioFile.play();
+            // 点的是当前这条：切换暂停/继续，不动实例
+            if (this.playing_audio_index === index && this._el) {
+                if (this._el.paused) {
+                    this._el.play().catch(() => { /* 忽略 */ });
                     this.audio_paused = false;
                 } else {
                     this.saveProgress();
-                    this.currentAudioFile.pause();
+                    this._el.pause();
                     this.audio_paused = true;
                 }
                 return;
             }
-            // eslint-disable-next-line no-console
-            console.log('[PLAY] 开始', index, audioItem && audioItem.url,
-                'resumeMap=', JSON.stringify(this.resumeMap));
             this.saveProgress();
-            this.stopAudioFilePlayback();
-            // §通知父组件停掉语音试听§ 父页面 stopCurrentAudio() 已改为幂等
-            // （没有在播就什么都不做，见 _bookid.vue），所以这里保持无条件 emit
-            // 也不会引发「emit → 父组件重渲染 → props 变 → 再 emit」的回环。
+            this._teardown();
+
             this.$emit('stop-sample-audio');
-            this.audio_loading = true;
             this.playing_audio_index = index;
+            this.audio_loading = true;
             this.currentTime = 0;
             this.duration = 0;
-            const el = new Audio();
-            // preload='auto' 而不是默认的 'metadata'：低码率 mp3（如 16kHz/32kbps
-            // 的教材配套音频）边播边下时，metadata 模式会让浏览器频繁重新估算
-            // 缓冲，Chrome 上表现为声音「发抖」。整段预取掉就没这问题（文件都很小）。
-            el.preload = 'auto';
-            // §先绑事件再赋 src§ src 赋值会同步推进 readyState，若先赋 src 再
-            // addEventListener 会漏掉 loadstart；更关键的是后面 "readyState>=1
-            // 就手动 onReady" 的兜底，必须在事件全部就位后才判断，否则会出现
-            // 「onReady 跑两遍 / play() 被自己打断」。
-            this.currentAudioFile = el;
+            this.sliderPct = 0;
+            this.audio_paused = false;
 
-            el.addEventListener('loadstart', () => { this.audio_loading = true; });
-            // §先定位再播放§ 合并成一个 onReady：先应用续播 seek，再调 play()。
-            // 旧写法在 canplay 里 seek：play() 请求已发出，seek 又触发新的 load
-            // → 打断 play()（AbortError: interrupted by a new load request），
-            // 随后 seek 完又 canplay → 再 seek → 无限循环（Console 里 canplay
-            // 35.0/34.9 交替刷屏，表现为「一动不动」）。
-            let played = false;
-            const onReady = () => {
-                if (this.currentAudioFile !== el || played) return;
-                played = true;
+            const el = new Audio();
+            this._el = el;
+            el.preload = 'auto';
+
+            // §一次性事件载体§ 用 _el 比对，任何「已换实例」的回调立刻失效
+            const alive = () => this._el === el;
+            let ready = false;
+
+            el.addEventListener('loadstart', () => {
+                if (!alive()) return;
+                this.audio_loading = true;
+            });
+
+            el.addEventListener('loadedmetadata', () => {
+                if (!alive() || ready) return;
+                ready = true;
                 this.audio_loading = false;
-                // eslint-disable-next-line no-console
-                console.log('[PLAY] onReady rs=' + el.readyState
-                    + ' dur=' + (el.duration || 0).toFixed(2)
-                    + ' saved=' + this.resumeMap[index]);
-                if (!el._resumeApplied) {
-                    el._resumeApplied = true;
-                    const saved = this.resumeMap[index];
-                    if (saved && el.duration && saved < el.duration - 3 && saved >= 5) {
-                        try {
-                            el.currentTime = Math.floor(saved);
-                            this.sliderPct = (Math.floor(saved) / el.duration) * 100;
-                            this.currentTime = Math.floor(saved);
-                        } catch (e) { /* 忽略 */ }
-                    }
+                this.duration = el.duration || 0;
+
+                // 续播：对齐到整秒。非整秒位置会让 AAC/E-AC3 从帧中间开始解码，
+                // 听感上是爆音/电流声。
+                const saved = this.resumeMap[index];
+                if (saved && el.duration && saved >= 5 && saved < el.duration - 3) {
+                    const pos = Math.floor(saved);
+                    try { el.currentTime = pos; } catch (e) { /* 忽略 */ }
+                    this.currentTime = pos;
+                    this.sliderPct = (pos / el.duration) * 100;
                 }
-                el.play().then(() => {
-                    this.audio_paused = false;
-                    // eslint-disable-next-line no-console
-                    console.log('[PLAY] play() resolve t=' + (el.currentTime || 0).toFixed(2));
-                }).catch((err) => {
-                    // eslint-disable-next-line no-console
-                    console.log('[PLAY] play() 被拒:', err && err.name, err && err.message);
-                    // 被新的切换打断属正常，不弹错误框
-                    if (err && err.name === 'AbortError') return;
-                    this.stopAudioFilePlayback();
-                    this.$alert("error", this.$t('message.audioPlayFailed'));
-                });
-            };
-            el.addEventListener('loadedmetadata', onReady, { once: true });
+
+                // 顺序关键：seek 必须发生在 play() 之前。反过来的话 play() 请求
+                // 会被 seek 引发的 load 打断（AbortError），然后 canplay 里再
+                // seek → 再打断 → 无限循环，表现就是「一动不动」。
+                this._safePlay(index);
+            });
+
+            // canplay 只负责收 loading 态，绝不在这里 seek
             el.addEventListener('canplay', () => {
-                if (this.currentAudioFile !== el) return;
+                if (!alive()) return;
                 this.audio_loading = false;
             });
+
             el.addEventListener('timeupdate', () => {
-                // §节流§ timeupdate 每秒约 4 次；每次改 3 个响应式字段都会让
-                // v-slider 重新求值。整秒未变时不动 sliderPct，减少无谓渲染
-                // （之前「发抖」既有滑块回环的原因，也有这里过频的原因）。
+                if (!alive()) return;
                 const t = el.currentTime || 0;
                 const d = el.duration || 0;
                 this.currentTime = t;
                 if (d && d !== this.duration) this.duration = d;
-                // 播放推进时同步滑块；用户正在拖动时不要覆盖他的位置
-                if (!this.seekDragging && this.duration) {
-                    this.sliderPct = (t / this.duration) * 100;
+                if (!this.seekDragging && d) {
+                    this.sliderPct = (t / d) * 100;
                 }
             });
+
             el.addEventListener('ended', () => {
+                if (!alive()) return;
                 const key = this._keyOf(index);
                 try { if (key) localStorage.removeItem(key); } catch (e) { /* 忽略 */ }
-                delete this.resumeMap[index];
-                this.stopAudioFilePlayback();
+                this.resumeMap = { ...this.resumeMap, [index]: 0 };
+                this._teardown();
             });
+
             el.addEventListener('error', () => {
-                // 只处理「当前正在播」的实例报错；旧实例被 stop 时清 src/load()
-                // 也会触发 error，别让它误停新播放器、误弹错误框
-                if (this.currentAudioFile !== el) return;
-                this.stopAudioFilePlayback();
-                this.$alert("error", this.$t('message.audioLoadFailed'));
+                if (!alive()) return;
+                const err = el.error;
+                // 404/403 这类真错误才弹框；MEDIA_ERR_ABORTED(1) 是我们自己停的
+                if (err && err.code !== 1) {
+                    // eslint-disable-next-line no-console
+                    console.error('[AUDIO] 加载失败', index, audioItem.url, err.code, err.message);
+                    this._teardown();
+                    this.$alert("error", this.$t('message.audioLoadFailed'));
+                }
             });
-            // 现在才真正开始加载。事件回调全部就位，不会漏掉首帧事件。
+
+            // 事件全部就位后才赋 src：否则 src 同步推进 readyState，后面那个
+            // "readyState>=1 兜底" 会在事件还没绑好时抢跑。
             el.src = audioItem.url;
-            // 元数据可能已经就绪（命中缓存时同步可达），此时不会再有
-            // loadedmetadata 事件，兜底跑一次。onReady 内有 played 标志位保证幂等。
+            // 命中缓存时可能已经同步就绪（readyState>=1），此时不一定再派发
+            // loadedmetadata。手动补一次，但必须先确认 duration 有效，否则
+            // 会在 NaN 上算进度。
             if (el.readyState >= 1) {
-                onReady();
+                if (isFinite(el.duration) && el.duration > 0) {
+                    el.dispatchEvent(new Event('loadedmetadata'));
+                } else {
+                    // duration 还没算出来，等真正的 loadedmetadata
+                    el.addEventListener('durationchange', () => {
+                        if (alive() && !ready && isFinite(el.duration) && el.duration > 0) {
+                            el.dispatchEvent(new Event('loadedmetadata'));
+                        }
+                    });
+                }
             }
         },
-        stopAudioFilePlayback() {
-            if (this.currentAudioFile) {
-                const el = this.currentAudioFile;
-                // 先摘掉引用，让各事件回调的「是否当前实例」校验立刻失效，
-                // 避免下面 pause/清 src 触发的事件打到新播放器上。
-                this.currentAudioFile = null;
+        _safePlay(index) {
+            const el = this._el;
+            if (!el) return;
+            const p = el.play();
+            if (!p || !p.then) return;
+            p.then(() => {
+                if (this._el !== el) return;
+                this.audio_paused = false;
+                this.audio_loading = false;
+            }).catch((err) => {
+                if (this._el !== el) return;
+                const name = err && err.name;
+                // AbortError：被主动打断（换章节/关弹窗），属正常
+                if (name === 'AbortError') return;
+                // NotAllowedError：浏览器自动播放策略，等用户手势即可，不弹框
+                if (name === 'NotAllowedError') {
+                    this.audio_paused = true;
+                    this.audio_loading = false;
+                    return;
+                }
+                // eslint-disable-next-line no-console
+                console.error('[AUDIO] play() 失败', index, name, err && err.message);
+                this._teardown();
+                this.$alert("error", this.$t('message.audioPlayFailed'));
+            });
+        },
+        _teardown() {
+            const el = this._el;
+            if (el) {
+                // 先摘引用，让所有 alive() 立即失效，后续事件全是空操作
+                this._el = null;
                 try {
                     el.pause();
-                    // 只清 src 不 load()：load() 会立刻触发 drained/error 并重新
-                    // 初始化解码器，紧接着又 new 一个 Audio，短时间内两套解码器
-                    // 叠加，AAC 上表现为爆音/电流声。浏览器在引用释放后自会回收。
+                    // 只清 src 不调 load()：load() 会立刻重新初始化一遍解码器，
+                    // 与紧接着新建的 Audio 叠加，AAC 上就是爆音/电流声。
                     el.removeAttribute('src');
                 } catch (e) { /* 忽略 */ }
             }
@@ -481,6 +521,7 @@ export default {
             this.sliderPct = 0;
             this.seekDragging = false;
         },
+
         onSeekStart() {
             this.seekDragging = true;
         },
@@ -489,8 +530,8 @@ export default {
             // 拖动期间不实时 seek：高频 seek 大文件会打乱解码流（AAC 出杂音）。
             const pct = this.sliderPct;
             this.seekDragging = false;
-            if (this.currentAudioFile && this.duration) {
-                this.currentAudioFile.currentTime = (pct / 100) * this.duration;
+            if (this._el && this.duration) {
+                this._el.currentTime = (pct / 100) * this.duration;
             }
         },
     },
