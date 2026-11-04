@@ -79,8 +79,13 @@ if [ "${1:-}" = "--check" ]; then
             echo "  !! 有效链接只有 $valid 个（应 ≥100）—— 多半被 --transform 改坏了，或解压压扁了"
             fail=1
         fi
-        if [ "$broken" -gt 10 ]; then
-            echo "  !! 断链 $broken 个（正常残留 8 个）—— 检查打包方式"
+        # §断链必须为 0§ 4.6.0-16 起拒收任何断链。
+        # 以前容忍 8 条「历史残留」（sharp / turso-database / styled-jsx 的悬空 pnpm 链接），
+        # 那些目标目录早在构建时就不存在了，留着只会让"到底有没有坏"永远说不清。
+        # 现在一条都不许有：多出来就说明包被改坏了（--transform、解压压扁、符号链接丢失）。
+        if [ "$broken" -gt 0 ]; then
+            echo "  !! 断链 $broken 个（必须为 0）—— 检查打包方式，或清掉 myreader-dist 里的悬空链接"
+            find "$D/myreader-dist" -type l ! -exec test -e {} \; -print 2>/dev/null | head -10 | sed 's/^/     /'
             fail=1
         fi
 
