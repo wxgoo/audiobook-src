@@ -81,7 +81,7 @@
                     {{ $t('common.clear') }}
                 </v-btn>
                 <v-btn
-                    v-if="audios.status === audioStatus.CONVERTED"
+                    v-if="audios.status === audioStatus.CONVERTED && canGenerate"
                     color="primary"
                     @click="$emit('generate-audio')"
                 >
@@ -106,6 +106,9 @@ export default {
         audioStatus: { type: Object, required: true },
         // 书籍 id 与当前用户 id 用于隔离进度；拿不到就退化为不记忆（不强依赖）
         bookId: { type: [Number, String], default: null },
+        // 能否「重新生成」：依赖有 EPUB。纯音频导入的书没有 epub，
+        // 但列表照样要能看能播，所以只屏蔽生成按钮，不屏蔽整个弹窗。
+        canGenerate: { type: Boolean, default: true },
     },
     data() {
         return {
@@ -215,7 +218,12 @@ export default {
             this.playing_audio_index = index;
             this.currentTime = 0;
             this.duration = 0;
-            const el = new Audio(audioItem.url);
+            const el = new Audio();
+            // preload='auto' 而不是默认的 'metadata'：低码率 mp3（如 16kHz/32kbps
+            // 的教材配套音频）边播边下时，metadata 模式会让浏览器频繁重新估算
+            // 缓冲，Chrome 上表现为声音「发抖」。整段预取掉就没这问题（文件都很小）。
+            el.preload = 'auto';
+            el.src = audioItem.url;
             this.currentAudioFile = el;
 
             el.addEventListener('loadstart', () => { this.audio_loading = true; });
@@ -252,7 +260,15 @@ export default {
         },
         stopAudioFilePlayback() {
             if (this.currentAudioFile) {
-                this.currentAudioFile.pause();
+                const el = this.currentAudioFile;
+                // 只 pause() 不清 src，Chrome 会保留解码器与网络流。快速切歌/重播时
+                // 旧实例仍可能后台解码，和新实例叠在一起——听起来就是「声音发抖」
+                // （实际是两路同源音频错了几十毫秒在打架）。这里彻底拆掉。
+                try {
+                    el.pause();
+                    el.removeAttribute('src');
+                    el.load();
+                } catch (e) { /* 忽略 */ }
                 this.currentAudioFile = null;
             }
             this.playing_audio_index = null;

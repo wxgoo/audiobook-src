@@ -65,6 +65,8 @@
                 :open.sync="dialog_audiolist"
                 :audios="audios"
                 :audio-status="AUDIO_STATUS"
+                :book-id="book && book.id"
+                :can-generate="hasEBooks"
                 @stop-sample-audio="stopCurrentAudio"
                 @clear-conversion="clearConversion"
                 @generate-audio="generateAudio"
@@ -835,12 +837,12 @@
         <v-col cols="12" sm="6" class="book-action-col">
             <v-card outlined>
                 <v-list>
-                    <v-list-item @click="switchAudioDialog" :disabled="!hasEBooks">
-                        <v-list-item-avatar large :color="!hasEBooks ? 'grey' : (audios.status === AUDIO_STATUS.FAILED ? 'red' : 'primary')">
+                    <v-list-item @click="switchAudioDialog" :disabled="!hasEBooks && !hasAudio">
+                        <v-list-item-avatar large :color="(!hasEBooks && !hasAudio) ? 'grey' : (audios.status === AUDIO_STATUS.FAILED ? 'red' : 'primary')">
                             <v-icon dark>{{ audios.status === AUDIO_STATUS.FAILED ? 'mdi-alert-circle' : 'mdi-playlist-music' }}</v-icon>
                         </v-list-item-avatar>
                         <v-list-item-content>
-                            <v-list-item-title :class="{ 'grey--text': !hasEBooks }">
+                            <v-list-item-title :class="{ 'grey--text': !hasEBooks && !hasAudio }">
                                 {{ $t('book.convertToAudio') }}
                                 <span v-if="audios.status === AUDIO_STATUS.PROCESSING && audios.progress && audios.progress.converted_chapters !== undefined"
                                       class="ml-1 text-caption">
@@ -1479,6 +1481,15 @@ export default {
                 return false;
             }
             return true;
+        },
+
+        // 是否已有音频。
+        // 单独拆出来是因为「有声书」入口原先用 hasEBooks 做 disabled 条件：
+        // 纯音频导入的书（calibre 里没有 epub 记录，如批量导入的 mp3 书）
+        // 明明有几十个音频文件，按钮却是灰的、点不动。
+        // 有音频就该能打开列表；能不能「重新生成」由 hasEBooks 单独控制。
+        hasAudio() {
+            return this.audios && this.audios.count > 0;
         },
 
         hasTxt() {
@@ -2228,8 +2239,19 @@ export default {
             }
         },
         switchAudioDialog() {
-            // 如果没有电子书，则不允许转换音频
-            if (!this.hasEBooks) {
+            // 纯音频书（没有 epub）也能打开列表；只有「什么都没有」才拦下
+            if (!this.hasEBooks && !this.hasAudio) {
+                return;
+            }
+
+            if (this.hasAudio) {
+                // 已经有音频：直接看列表（不再弹「用 EPUB 转换」的对话框）
+                this.dialog_audiolist = !this.dialog_audiolist
+                if (this.dialog_audiolist && this.audios.status === this.AUDIO_STATUS.PROCESSING) {
+                    this.startAudioProgressPolling();
+                } else {
+                    this.stopAudioProgressPolling();
+                }
                 return;
             }
 
