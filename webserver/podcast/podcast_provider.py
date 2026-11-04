@@ -16,7 +16,6 @@ from webserver import loader
 from webserver import constants
 
 CONF = loader.get_settings()
-AUDIO_OUTPUT_FOLDER = CONF.get("audio_output_folder", "/data/books/audios/")
 
 _aggregate_cache = {
     "timestamp": 0,
@@ -133,8 +132,9 @@ class PodcastProvider:
         Returns:
             list of dicts with: title, url, size, duration, index
         """
-        audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
-        if not os.path.exists(audio_dir):
+        from webserver.base.audio_dir import audio_dir_for_read
+        audio_dir, _legacy = audio_dir_for_read(self.cache, book_id)
+        if not audio_dir or not os.path.exists(audio_dir):
             return []
 
         def _get_sort_key(filename):

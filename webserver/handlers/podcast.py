@@ -23,7 +23,6 @@ from webserver.podcast.podcast_provider import PodcastProvider
 from webserver import constants
 
 CONF = loader.get_settings()
-AUDIO_OUTPUT_FOLDER = CONF.get("audio_output_folder", "/data/books/audios/")
 
 # Module-level provider instance, initialized lazily
 _provider = None
@@ -672,7 +671,11 @@ class PodcastAudioFile(PodcastBaseHandler):
         if ".." in filename or "/" in filename:
             raise web.HTTPError(403, reason="Invalid filename")
 
-        audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
+        # 音频在书目录内的 .audio/（4.6.0-15 起唯一布局）
+        from webserver.base.audio_dir import audio_dir_for_read
+        audio_dir, _legacy = audio_dir_for_read(self.db, book_id)
+        if not audio_dir:
+            raise web.HTTPError(404, reason="Audio directory not found")
         file_path = os.path.join(audio_dir, filename)
 
         if not os.path.exists(file_path):

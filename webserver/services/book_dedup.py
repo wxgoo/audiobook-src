@@ -2,7 +2,7 @@
 # -*- coding: UTF-8 -*-
 """同名重复书籍的检测与合并（迁移工具）。
 
-背景：有声书走 `audios/<book_id>/`、电子书走 `library/`，上游导入音频时只看
+背景：早期有声书走 `audios/<book_id>/`、电子书走 `library/`，上游导入音频时只看
 "这本书有没有音频目录"，没有就新建一本书。于是「先导 epub、后加同名音频」必然
 在书库里多出一条同名记录。v4.8.0 修了导入逻辑，但**已经产生的重复记录不会自愈**
 （该 ScanFile 行已是 IMPORTED，重扫被跳过，没有再比标题的时机），需要一次性迁移。
@@ -15,9 +15,9 @@
 2. **成对才动手**。只有「一组里恰好一本有电子书文件、且至少一本有音频目录」
    这种情况才自动合并。方向不明确（两本都有电子书、两本都有音频、都没有电子书）
    的组只报告不处理——宁可漏修，不可误删。
-3. **音频搬到保留书 id 下**。`audios/<重复id>/` → `audios/<保留id>/`，保持
-   `audios/<book_id>/` 这条路径约定不变（播放器扫描、字幕配对都依赖它）。
-   目标目录已有同名文件时跳过该文件，不覆盖。
+3. **音频搬到保留书目录的 .audio/ 下**。音频跟着书走（`library/<作者>/<书名>
+   (id)/.audio/`，4.6.0-15 起唯一布局），合并时把重复书目录里的音频搬进保留书
+   目录。目标目录已有同名文件时跳过该文件，不覆盖。
 4. **关联数据改指而非删除**。阅读进度、收藏、书单、评论、分享等全部迁移到保留书，
    避免用户"进度凭空消失"。复合主键（reading_state / book_visits）与唯一约束
    （booklist_books / book_shares）逐行判断冲突，冲突时保留已有的、丢弃冗余的。
@@ -265,10 +265,12 @@ def _publisher_norm(pub):
 
 
 
-def _list_audio_files(audio_root, book_id):
-    """返回 audios/<book_id>/ 下可播放文件的文件名列表（不存在返回空表）。"""
-    d = os.path.join(audio_root, str(book_id))
-    if not os.path.isdir(d):
+def _list_audio_files(cache, book_id, library_root=None):
+    """返回某书 .audio/ 目录下可播放文件的文件名列表（没有音频返回空表）。"""
+    from webserver.base.audio_dir import audio_dir_for_read
+
+    d, _legacy = audio_dir_for_read(cache, book_id, library_root)
+    if not d or not os.path.isdir(d):
         return []
     try:
         return [f for f in os.listdir(d)
@@ -315,21 +317,23 @@ class DuplicateBookMerger(object):
 
     用法::
 
-        merger = DuplicateBookMerger(db, session, audio_root, backup_dir)
+        merger = DuplicateBookMerger(db, session, backup_dir)
         plan = merger.scan()          # 只读，返回方案
         merger.apply(plan)            # 执行，逐组返回结果
     """
 
-    def __init__(self, db, session, audio_root, backup_dir=None, meta_fetcher=None):
+    def __init__(self, db, session, backup_dir=None, meta_fetcher=None,
+                 library_root=None):
         """meta_fetcher: 可选，签名 (ids) -> list[dict]，用于在**工作线程**里取 calibre
         元数据（handler 传 `run_calibre_async` 包装过的函数，避免阻塞 ioloop）。
         不传则退回直接调 db.get_data_as_dict（仅适合脚本/测试环境）。
+        library_root: 可选，书库根目录（测试注入用）；默认走 CONF 的 with_library。
         """
         self.db = db
         self.session = session
-        self.audio_root = audio_root
         self.backup_dir = backup_dir
         self.meta_fetcher = meta_fetcher
+        self.library_root = library_root
         self.errors = []
 
     def _fetch_meta(self, ids):
@@ -468,7 +472,7 @@ class DuplicateBookMerger(object):
 
     def _book_brief(self, book_id, meta):
         row = meta.get(book_id) or {}
-        audio = _list_audio_files(self.audio_root, book_id)
+        audio = _list_audio_files(self.db, book_id, self.library_root)
         return {
             "book_id": book_id,
             "title": row.get("title") or "",
@@ -696,20 +700,24 @@ class DuplicateBookMerger(object):
         return detail
 
     def _move_audio(self, from_id, to_id):
-        """audios/<from_id>/ 里的音频及配套文件搬到 audios/<to_id>/。
+        """重复书目录 .audio/ 里的音频及配套文件搬进保留书目录的 .audio/。
 
         返回 (搬了几个, 跳过的文件)。搬的范围：
           - 音频（_AUDIO_EXTS）
-          - 封面（cover.jpg/png）——播放器在 audios/<id>/ 下找封面
+          - 封面（cover.jpg/png）——播放器在 .audio/ 下找封面
           - 字幕与文稿（.srt/.vtt/.txt）——与音频同名才能自动配对
         其它未知文件（下载残留、临时文件）留在原目录，因此目录不会被删——
         这类文件可能是用户手动放的，宁可留着让人自己判断。
         """
-        src_dir = os.path.join(self.audio_root, str(from_id))
-        dst_dir = os.path.join(self.audio_root, str(to_id))
+        from webserver.base.audio_dir import audio_dir_for_read, audio_dir_for_write
+
+        src_dir, _legacy = audio_dir_for_read(self.db, from_id, self.library_root)
+        if not src_dir or not os.path.isdir(src_dir):
+            return 0, []
+        dst_dir = audio_dir_for_write(self.db, to_id, self.library_root)
+        if not dst_dir:
+            raise RuntimeError("无法确定保留书 %s 的音频目录" % to_id)
         moved, skipped = 0, []
-        if not os.path.isdir(src_dir):
-            return moved, skipped
         movable = _AUDIO_EXTS + _COMPANION_EXTS
         try:
             os.makedirs(dst_dir, exist_ok=True)

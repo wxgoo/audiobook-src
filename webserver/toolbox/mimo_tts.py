@@ -21,7 +21,6 @@ from webserver.services import AsyncService
 from webserver.services.background_service import BackgroundService, BackgroundTask
 from webserver.toolbox.base_tool import BaseTool
 
-DEFAULT_AUDIO_OUTPUT_FOLDER = "/data/books/audios/"
 DEFAULT_CHAT_URL = "https://api.xiaomimimo.com/v1/chat/completions"
 DEFAULT_CHAT_MODEL = "mimo-v2.5-tts"
 VOICE_CLONE_MODEL = "mimo-v2.5-tts-voiceclone"
@@ -533,8 +532,11 @@ class MimoTTSTool(BaseTool):
             if total_chapters == 0:
                 raise RuntimeError(_("未从 EPUB 中提取到任何章节内容"))
 
-            audio_output_folder = self.api.settings.get("audio_output_folder", DEFAULT_AUDIO_OUTPUT_FOLDER)
-            output_dir = os.path.join(audio_output_folder, str(book_id))
+            # 音频输出到书目录内的 .audio/（4.6.0-15 起唯一布局）
+            from webserver.base.audio_dir import audio_dir_for_write
+            output_dir = audio_dir_for_write(self.db, book_id)
+            if not output_dir:
+                raise RuntimeError(_("书籍尚未进入书库，无法确定音频输出目录"))
             os.makedirs(output_dir, exist_ok=True)
 
             # Save the cover image to the output dir

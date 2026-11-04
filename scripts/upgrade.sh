@@ -79,6 +79,23 @@ fi
 echo "    OK：$DATA/books 存在"
 du -sh "$DATA" 2>/dev/null | sed 's/^/    数据体积: /'
 
+# ---------- 1.5 旧布局音频残留检查（4.6.0-15 起不再读取 audios/<id>/） ----------
+LEGACY_AUDIOS="$DATA/books/audios"
+if [ -d "$LEGACY_AUDIOS" ]; then
+    LEFT=$(find "$LEGACY_AUDIOS" -mindepth 2 -maxdepth 2 -type f \( -name '*.mp3' -o -name '*.m4a' -o -name '*.m4b' -o -name '*.flac' -o -name '*.wav' -o -name '*.opus' -o -name '*.ogg' -o -name '*.wma' -o -name '*.aac' \) 2>/dev/null | head -10)
+    if [ -n "$LEFT" ]; then
+        echo "    !! $LEGACY_AUDIOS 下仍发现有音频文件（示例）："
+        echo "$LEFT" | sed 's/^/       /'
+        echo "    !! 4.6.0-15 起旧布局 audios/<id>/ 不再被读取，这些音频升级后会变成孤儿。"
+        echo "    !! 请先按 docs/移除旧布局audios目录.md 把它们搬进对应书目录的 .audio/ 再升级。"
+        printf "    确认已处理或接受丢失风险，继续升级？[y/N] "
+        read ans
+        [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { echo "    已取消。"; exit 1; }
+    else
+        echo "    旧布局 audios/ 无音频残留（如有空目录可整目录删除）。"
+    fi
+fi
+
 # ---------- 2. 备份数据（可选，稳妥） ----------
 if [ "$NO_BACKUP" != "1" ]; then
     echo "==> [2/8] 备份数据库（仅 *.db，不含书/音频，秒级）"

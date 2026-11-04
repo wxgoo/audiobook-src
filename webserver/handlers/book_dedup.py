@@ -5,7 +5,7 @@
 配合 services/book_dedup.py：先 scan 出方案给页面预览，确认后 apply 执行。
 设计上强制「先看后做」——scan 只读，apply 才写，且 apply 前自动备份用户库。
 
-为什么要这个工具：有声书 `audios/<book_id>/` 与电子书 `library/` 分目录存放，
+为什么要这个工具：早期有声书 `audios/<book_id>/` 与电子书 `library/` 分目录存放，
 上游导入音频时只判断"有没有音频目录"，没有就新建一本书，于是"先导 epub、
 后加同名音频"必然在书库里留下两条记录。v4.8.0 修了导入逻辑，但**已产生的
 重复记录不会自愈**（ScanFile 已是 IMPORTED，重扫被跳过），只能一次性迁移。
@@ -29,10 +29,8 @@ def _build_merger(handler):
     读取必须走工作线程 + db_lock。这里用「带缓存的同步 fetcher」桥接：每个不同的
     id 集合只在首次调用时进 db_lock 取一次，同一请求内后续复用缓存。
     """
-    from webserver.services.audios_import import AUDIO_OUTPUT_DIR
-
-    db = handler.calibre_db
     cache = {}
+    db = handler.calibre_db
 
     def sync_fetcher(ids):
         key = tuple(sorted(int(i) for i in ids))
@@ -47,7 +45,7 @@ def _build_merger(handler):
         backup_dir = os.path.join(data_dir, "backup")
 
     return DuplicateBookMerger(
-        db, handler.sqlite_session, AUDIO_OUTPUT_DIR,
+        db, handler.sqlite_session,
         backup_dir=backup_dir, meta_fetcher=sync_fetcher)
 
 

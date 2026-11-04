@@ -58,26 +58,46 @@ class _FakeDB:
 class _Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="dedup_test_")
-        self.audio_root = os.path.join(self.tmp, "audios")
-        os.makedirs(self.audio_root, exist_ok=True)
+        # 4.6.0-15 起音频跟着书走：library/<作者>/<书名> (id)/.audio/
+        self.library_root = os.path.join(self.tmp, "library")
+        os.makedirs(self.library_root, exist_ok=True)
+        self._paths = {}   # book_id -> library 内相对路径
         self.meta_fetcher = None
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def make_audio(self, book_id, names):
-        d = os.path.join(self.audio_root, str(book_id))
+        """给一本书造 .audio/ 目录（含给 book 目录本身），登记 field_for 路径。"""
+        rel = "作者/书%d (%d)" % (book_id, book_id)
+        d = os.path.join(self.library_root, rel, ".audio")
         os.makedirs(d, exist_ok=True)
+        self._paths[book_id] = rel
         for n in names:
             with open(os.path.join(d, n), "wb") as f:
                 f.write(b"fake-audio")
         return d
 
+    def audio_dir_of(self, book_id):
+        return os.path.join(self.library_root, self._paths[book_id], ".audio")
+
     def merger(self, db, session=None):
+        # 把 library 里的目录布局接到 fake db 的 field_for 上
+        paths = self._paths
+
+        def field_for(field, bid):
+            if field == "path":
+                if int(bid) in paths:
+                    return paths[int(bid)]
+                raise KeyError("no such book: %s" % bid)
+            raise KeyError("unsupported field: %s" % field)
+
+        db.new_api.field_for.side_effect = field_for
         return DuplicateBookMerger(
-            db, session or mock.MagicMock(), self.audio_root,
+            db, session or mock.MagicMock(),
             backup_dir=os.path.join(self.tmp, "backup"),
-            meta_fetcher=self.meta_fetcher)
+            meta_fetcher=self.meta_fetcher,
+            library_root=self.library_root)
 
 
 class TestTitleNormalization(unittest.TestCase):
@@ -135,11 +155,15 @@ class TestEbookDetection(unittest.TestCase):
 class TestAudioListing(_Base):
     def test_lists_only_audio(self):
         self.make_audio(7, ["01.mp3", "cover.jpg", "02.m4a"])
-        files = _list_audio_files(self.audio_root, 7)
+        db = _FakeDB([])
+        self.merger(db)
+        files = _list_audio_files(db, 7, self.library_root)
         self.assertEqual(sorted(files), ["01.mp3", "02.m4a"])
 
     def test_missing_dir(self):
-        self.assertEqual(_list_audio_files(self.audio_root, 999), [])
+        db = _FakeDB([])
+        self.merger(db)
+        self.assertEqual(_list_audio_files(db, 999, self.library_root), [])
 
 
 class TestScanDecisions(_Base):
@@ -226,18 +250,20 @@ class TestScanDecisions(_Base):
 class TestAudioMove(_Base):
     def test_moves_files_and_removes_empty_dir(self):
         src = self.make_audio(9, ["01.mp3", "02.mp3"])
+        self.make_audio(7, [])   # 目标书的目录必须已存在于 library
         m = self.merger(_FakeDB([]))
         moved, skipped = m._move_audio(9, 7)
         self.assertEqual(moved, 2)
         self.assertEqual(skipped, [])
         self.assertFalse(os.path.exists(src))
-        self.assertTrue(os.path.exists(os.path.join(self.audio_root, "7", "01.mp3")))
-        self.assertTrue(os.path.exists(os.path.join(self.audio_root, "7", "02.mp3")))
+        dst = self.audio_dir_of(7)
+        self.assertTrue(os.path.exists(os.path.join(dst, "01.mp3")))
+        self.assertTrue(os.path.exists(os.path.join(dst, "02.mp3")))
 
     def test_does_not_overwrite_existing(self):
         """目标已有同名文件时保留目标内容，跳过来源"""
         self.make_audio(7, ["01.mp3"])
-        target = os.path.join(self.audio_root, "7", "01.mp3")
+        target = os.path.join(self.audio_dir_of(7), "01.mp3")
         with open(target, "wb") as f:
             f.write(b"KEEP-ME")
         self.make_audio(9, ["01.mp3", "02.mp3"])
@@ -253,27 +279,29 @@ class TestAudioMove(_Base):
         self.assertEqual(m._move_audio(123, 7), (0, []))
 
     def test_moves_cover_along_with_audio(self):
-        """封面和字幕是音频的配套文件，必须一起搬走——否则新 id 目录下的
+        """封面和字幕是音频的配套文件，必须一起搬走——否则新目录下的
         播放器找不到封面，同名字幕也配不上。源目录搬空后应被删掉。"""
         d = self.make_audio(9, ["01.mp3"])
         for extra in ("cover.jpg", "01.srt"):
             with open(os.path.join(d, extra), "wb") as f:
                 f.write(b"x")
+        self.make_audio(7, [])
         m = self.merger(_FakeDB([]))
         moved, skipped = m._move_audio(9, 7)
         self.assertEqual(moved, 3)
         self.assertEqual(skipped, [])
         self.assertFalse(os.path.exists(d), "搬空后应删除源目录")
+        dst = self.audio_dir_of(7)
         for f in ("01.mp3", "cover.jpg", "01.srt"):
-            self.assertTrue(
-                os.path.exists(os.path.join(self.audio_root, "7", f)),
-                "%s 应已搬到新目录" % f)
+            self.assertTrue(os.path.exists(os.path.join(dst, f)),
+                            "%s 应已搬到新目录" % f)
 
     def test_keeps_dir_when_unknown_files_remain(self):
         """目录里有非配套文件（比如下载残留）时，搬完不能删目录"""
         d = self.make_audio(9, ["01.mp3"])
         with open(os.path.join(d, "notes.xyz"), "wb") as f:
             f.write(b"?")
+        self.make_audio(7, [])
         m = self.merger(_FakeDB([]))
         m._move_audio(9, 7)
         self.assertTrue(os.path.isdir(d))
@@ -311,12 +339,12 @@ class TestBackup(_Base):
     def test_backup_skips_non_sqlite(self):
         session = mock.MagicMock()
         session.get_bind.return_value.engine.url = "postgresql://x/y"
-        m = DuplicateBookMerger(_FakeDB([]), session, self.audio_root,
+        m = DuplicateBookMerger(_FakeDB([]), session,
                                 backup_dir=os.path.join(self.tmp, "backup"))
         self.assertIsNone(m.backup())
 
     def test_backup_no_dir(self):
-        m = DuplicateBookMerger(_FakeDB([]), mock.MagicMock(), self.audio_root, backup_dir="")
+        m = DuplicateBookMerger(_FakeDB([]), mock.MagicMock(), backup_dir="")
         self.assertIsNone(m.backup())
 
 
@@ -351,8 +379,8 @@ class TestRepointRecordsWithRealDB(unittest.TestCase):
         self.session.commit()
 
         self.tmp = tempfile.mkdtemp(prefix="dedup_db_")
-        self.audio_root = os.path.join(self.tmp, "audios")
-        os.makedirs(self.audio_root)
+        self.library_root = os.path.join(self.tmp, "library")
+        os.makedirs(self.library_root)
 
     def tearDown(self):
         self.session.close()
@@ -361,8 +389,9 @@ class TestRepointRecordsWithRealDB(unittest.TestCase):
 
     def merger(self):
         return DuplicateBookMerger(
-            _FakeDB([]), self.session, self.audio_root,
-            backup_dir=os.path.join(self.tmp, "backup"))
+            _FakeDB([]), self.session,
+            backup_dir=os.path.join(self.tmp, "backup"),
+            library_root=self.library_root)
 
     def test_reading_and_review_are_repointed(self):
         M, s = self.M, self.session

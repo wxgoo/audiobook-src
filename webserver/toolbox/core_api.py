@@ -615,7 +615,7 @@ class SettingsAPI(_NamespaceBase):
     # key -> 一句话说明为什么这项配置可以只读透出给工具
     ALLOWED_KEYS = {
         "auto_fill_meta": "是否自动补全导入书籍的元数据，纯行为开关，不含敏感信息",
-        "audio_output_folder": "音频类工具的输出目录路径，本地文件系统路径，不含敏感信息",
+        "with_library": "calibre 书库根目录路径，本地文件系统路径，不含敏感信息",
         "DEFAULT_LANGUAGE": "站点默认语言，用于工具自行做多语言展示的兜底",
     }
 

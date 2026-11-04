@@ -40,7 +40,6 @@ from webserver.constants import UPGRABLE_REVISION
 
 messages = defaultdict(list)
 CONF = loader.get_settings()
-AUDIO_OUTPUT_FOLDER = CONF.get("audio_output_folder", "/data/books/audios/")
 
 # 「必须登录才能访问」(REQUIRE_LOGIN) 开启后，仍然允许匿名访问的路径。
 # 原则：只放行"没有登录就进不来"的必需品（登录/注册/激活/安装、登录页静态资源），
@@ -980,15 +979,13 @@ class BaseHandler(web.RequestHandler):
         return env
 
     def get_audio_books_count(self):
-        """Get the total count of books with audio files."""
-        if not os.path.exists(AUDIO_OUTPUT_FOLDER):
+        """Get the total count of books with audio files (书目录内 .audio/)."""
+        try:
+            from webserver.base.audio_dir import find_audios_by_scanning_library
+            return len(find_audios_by_scanning_library())
+        except Exception:
+            logging.exception("count audio books failed")
             return 0
-        count = 0
-        for item in os.listdir(AUDIO_OUTPUT_FOLDER):
-            item_path = os.path.join(AUDIO_OUTPUT_FOLDER, item)
-            if os.path.isdir(item_path) and item.isdigit():
-                count += 1
-        return count
 
     def reset_physical_books_count_cache(self):
         BaseHandler._physical_books_count_cache_time = 0

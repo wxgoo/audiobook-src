@@ -9,7 +9,47 @@
 
 ---
 
-## 4.6.0-14（当前）
+## 4.6.0-15（当前）
+
+### 彻底移除旧布局 `audios/<book_id>/`
+
+4.6.0-13 起音频写入书目录内的 `.audio/`（`library/<作者>/<书名> (id)/.audio/`），
+-14 修了读取端。本版把旧布局的支持代码**全部删除**——读、写、扫描、删除、播客、
+TTS 输出、重复书合并，一律只认 `.audio/`。
+
+- **升级前检查**：`scripts/upgrade.sh` 新增步骤 1.5，发现 `audiobook-data/books/audios/`
+  下仍有音频文件时会列出并要求确认；`audio_dir.describe_leftover_legacy_audio()`
+  供启动自检复用。
+- `webserver/base/audio_dir.py`：删 `legacy_audio_dir()`/`legacy_audio_dirs()`/
+  `LEGACY_AUDIO_ROOT`；`audio_dir_for_read` 不再回退旧目录（书不在 library 时返回
+  `(None, False)`，调用方按无音频处理）；`audio_dir_for_write` 去掉「旧布局有内容就
+  继续写旧位置」的抢跑分支；原函数更名 `obsolete_audio_dirs()`（仅供检查用）；
+  核心函数新增可选 `library_root` 参数（测试/工具注入）。
+- `webserver/handlers/audio.py`：7 处硬编码 `AUDIO_OUTPUT_FOLDER/<id>/` 与
+  `AudioFile` 的旧目录兜底全部清除；`AudioBooks` 列表页、`AudioBooksCache._scan`
+  改走 `find_audios_by_scanning_library()`；转换输出目录改 `audio_dir_for_write`；
+  `AudioUtils.clear_audio` 支持 `extra_dirs`（线程池外先算好路径，避免子线程碰
+  calibre Cache），并新增 `audio_dirs_of()`；`AudioDelete`/合集下载/购买改走
+  `resolve_audio_dir`。常量 `AUDIO_OUTPUT_FOLDER` 删除。
+- `webserver/handlers/base.py`：`get_audio_books_count()` 改扫 library（旧实现只数
+  `audios/` 下数字目录，旧目录空了之后侧边栏的有声书计数恒为 0）。
+- `webserver/handlers/podcast.py` / `podcast_provider.py`：音频文件服务与剧集列表
+  改走 `audio_dir_for_read`。
+- `webserver/toolbox/mimo_tts.py`：TTS 输出目录改 `audio_dir_for_write(self.db, ...)`，
+  不再看 `audio_output_folder` 配置；`core_api.py` 配置白名单同步调整。
+- **修复 book_dedup 已然断掉的导入**：`handlers/book_dedup.py` 还在
+  `from webserver.services.audios_import import AUDIO_OUTPUT_DIR`（该常量
+  -13 就没了，页面一开就 ImportError）。`DuplicateBookMerger` 去 `audio_root` 参数，
+  音频目录改由 `audio_dir_for_read/for_write` 从 calibre 库解析，搬移目标变为
+  保留书目录的 `.audio/`；测试夹具同步重写为 library 布局（43 项全过）。
+
+> **升级注意**：如果你的 `audiobook-data/books/audios/` 里还有书（-12 及更早导入的），
+> 必须先手工把音频搬进对应书目录的 `.audio/`，否则升级后那些音频不可见。
+> upgrade.sh 会在动手前提醒。
+
+---
+
+## 4.6.0-14
 
 > **紧急修复：4.6.0-13 的有声书导入完全不可用**，请直接升级到本版，跳过 -13。
 > 只改后端 3 个文件，**不需要重建前端**。

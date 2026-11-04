@@ -21,7 +21,11 @@ from tornado import web
 
 from webserver import loader
 from webserver.base.formatter import BookFormatter
-from webserver.base.audio_dir import audio_dir_for_read
+from webserver.base.audio_dir import (
+    audio_dir_for_read,
+    audio_dir_for_write,
+    find_audios_by_scanning_library,
+)
 from webserver.handlers.base import BaseHandler, auth, js, is_admin
 from webserver.models import BizKey, ReaderPaidBook, ReaderLog, Message
 from webserver.worker.epub2audio_worker import EpubToAudioWorker
@@ -36,7 +40,6 @@ ConversionWorkerMap: dict = {}
 DailyDownloadMap: dict = {}
 
 ALLOW_MAX_RUNNING_WORKERS = CONF.get("BOOK2AUDIO_MAX_WORKERS", 2)
-AUDIO_OUTPUT_FOLDER = CONF.get("audio_output_folder", "/data/books/audios/")
 SKIP_AUDIO_FILE_PREFIX = "图书在版编目CIP数据"
 MAX_FREE_AUDIO_FILES = 6
 AUDIO_CACHE_EXPIRE_SECONDS = 300  # 5 minutes
@@ -47,20 +50,28 @@ def natural_sort_key(filename):
 
 
 def resolve_audio_dir(db, book_id):
-    """解析某本书的音频目录（新布局 library/<作者>/<书名> (id)/.audio/ 优先，
-    旧布局 audios/<id>/ 回退）。
+    """解析某本书的音频目录：书目录内的 .audio/。
 
-    4.6.0-14 之前这里的接口全部硬编码 AUDIO_OUTPUT_FOLDER/<id>/，而导入端早在
-    4.6.0-13 就把音频写进了书目录内的 .audio/。结果：文件明明在，播放器列表空、
-    字幕也不显示——只有「导入说成功了」这一个假象。
+    4.6.0-15 起旧布局 audios/<id>/ 已移除，这里没有回退分支。
+    书不在 calibre library 里时返回 (None, False)，调用方按「没有音频」处理。
 
-    返回 (path, is_legacy)，path 可能不存在。
+    返回 (path, is_legacy)，is_legacy 恒为 False（保留是为了兼容老调用方）。
     """
     try:
         return audio_dir_for_read(db, book_id)
     except Exception as err:
         logging.warning("[AUDIO] resolve dir for book %s failed: %s", book_id, err)
-        return os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id)), True
+        return None, False
+
+
+def resolve_audio_dir_or_404(db, book_id):
+    """同上，但拿不到目录时抛 404（供「只可能读」的场景直接用）。"""
+    audio_dir, _legacy = resolve_audio_dir(db, book_id)
+    if not audio_dir or not os.path.isdir(audio_dir):
+        logging.warning("[AUDIO] audio dir missing for book %s (resolved: %s)",
+                        book_id, audio_dir)
+        raise web.HTTPError(404, "Audio directory not found")
+    return audio_dir
 
 
 class AudioBooksCache:
@@ -73,34 +84,20 @@ class AudioBooksCache:
 
     @classmethod
     def _scan_audio_directory(cls):
-        """扫描音频目录并返回book_ids集合。
+        """扫描 library，收集所有带音频的书（书目录内 .audio/）。
 
         4.6.0-14 之前只扫旧布局 audios/<数字>/，而导入端早就把音频写进
         library/<作者>/<书名> (id)/.audio/ 了。旧目录是空的，于是全库被判成
         「没有有声书」——前端不显示有声书标识，播放页也拿不到音频和字幕。
-        现在两种布局都扫，取并集。
+        4.6.0-15 起旧布局彻底移除，这里只认 .audio/。
         """
         start_time = time.time()
-        book_ids = set()
-
-        # 新布局：扫 library 各书目录下的 .audio/
         try:
-            from webserver.base.audio_dir import find_audios_by_scanning_library
-            new_layout = find_audios_by_scanning_library()
-            book_ids.update(new_layout.keys())
-            logging.info("Audio scan: %d books in new layout (.audio/)", len(new_layout))
+            book_ids = set(find_audios_by_scanning_library().keys())
+            logging.info("Audio scan: %d books with audio (.audio/)", len(book_ids))
         except Exception as e:
             logging.error(f"Error scanning library for audio: {e}")
-
-        # 旧布局：audios/<数字>/
-        try:
-            if os.path.exists(AUDIO_OUTPUT_FOLDER):
-                for item in os.listdir(AUDIO_OUTPUT_FOLDER):
-                    item_path = os.path.join(AUDIO_OUTPUT_FOLDER, item)
-                    if os.path.isdir(item_path) and item.isdigit():
-                        book_ids.add(int(item))
-        except Exception as e:
-            logging.error(f"Error scanning legacy audio directory: {e}")
+            book_ids = set()
 
         elapsed_time = time.time() - start_time
         logging.info(
@@ -192,16 +189,13 @@ class AudioUtils:
             AudioUtils.site_url = BaseHandler.get_site_url()
 
         book_id = int(bid)
-        # 静态方法没有 db，走 library 扫描反查新布局；扫不到再回退旧布局
+        # 静态方法没有 db 实例，靠扫描 library 反查（4.6.0-14 起只此一处布局）
         audio_dir = None
         try:
-            from webserver.base.audio_dir import find_audios_by_scanning_library
             audio_dir = find_audios_by_scanning_library().get(book_id)
         except Exception as err:
             logging.debug("[AUDIO] scan library failed: %s", err)
-        if not audio_dir:
-            audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
-        if not os.path.exists(audio_dir):
+        if not audio_dir or not os.path.exists(audio_dir):
             return {
                 "status": "unavailable",
                 "msg": _("没有发现音频文件目录"),
@@ -258,17 +252,45 @@ class AudioUtils:
             }
 
     @staticmethod
-    def clear_audio(book_id):
-        """Clear audio files for a book."""
-        audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
-        if os.path.exists(audio_dir):
+    def audio_dirs_of(bid, db=None):
+        """算出某本书的音频目录（可能为空列表）。供删除流程在线程池外先算好。
+
+        calibre 的 Cache 不是线程安全的，删除走线程池时要在当前线程把路径算成
+        字符串再传进去，别让子线程自己调 field_for。
+        """
+        try:
+            book_id = int(bid)
+        except (TypeError, ValueError):
+            return []
+        audio_dir, _legacy = resolve_audio_dir(db, book_id)
+        if not audio_dir:
+            audio_dir = find_audios_by_scanning_library().get(book_id)
+        return [audio_dir] if audio_dir else []
+
+    @staticmethod
+    def clear_audio(book_id, extra_dirs=None):
+        """Clear audio files for a book.
+
+        只删书目录内的 .audio/ 这一层，书目录本身和电子书文件都不动。
+        extra_dirs 供调用方传入「在线程外预先算好的目录」，避免子线程碰 calibre。
+        """
+        dirs = list(extra_dirs or [])
+        if not dirs:
+            dirs = AudioUtils.audio_dirs_of(book_id)
+
+        removed = False
+        for audio_dir in dirs:
+            if not audio_dir or not os.path.exists(audio_dir):
+                continue
             try:
                 shutil.rmtree(audio_dir)
-                AudioBooksCache.async_update()
-                return True, _("音频文件删除成功")
+                removed = True
             except OSError as e:
                 logging.error(f"Error deleting audio directory {audio_dir}: {e}")
                 return False, f"音频文件删除遇到错误: {e}"
+        if removed:
+            AudioBooksCache.async_update()
+            return True, _("音频文件删除成功")
         return True, _("音频文件不存在")
 
 
@@ -320,7 +342,7 @@ class AudioDetail(BaseHandler):
             enable_vip_quota = CONF.get(ENABLE_VIP_QUOTA_KEY, False)
 
             # Check if audio file already exists
-            # 新布局（书目录内 .audio/）优先，回退旧布局 audios/<id>/
+            # 音频在书目录内的 .audio/（4.6.0-15 起唯一布局）
             audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
             if os.path.exists(audio_dir) and os.listdir(audio_dir):
                 audio_files = [
@@ -411,23 +433,18 @@ class AudioBooks(BaseHandler):
             start = self.get_argument_start()
             size = int(self.get_argument("size", 60))
 
-            # 扫描音频目录，获取有音频文件的书籍ID
+            # 扫描 library 里带 .audio/ 的书（4.6.0-15 起唯一布局）
             audios_cnt_map = {}
             audio_book_ids = []
-            if os.path.exists(AUDIO_OUTPUT_FOLDER):
-                for item in os.listdir(AUDIO_OUTPUT_FOLDER):
-                    item_path = os.path.join(AUDIO_OUTPUT_FOLDER, item)
-                    if os.path.isdir(item_path) and item.isdigit():
-                        book_id = int(item)
-                        # 检查目录中是否有音频文件
-                        audio_files = [
-                            f
-                            for f in os.listdir(item_path)
-                            if f.endswith((".mp3", ".wav", ".m4a", ".opus"))
-                        ]
-                        audio_book_ids.append(book_id)
-                        if audio_files:
-                            audios_cnt_map[book_id] = len(audio_files)
+            for book_id, audio_dir in find_audios_by_scanning_library().items():
+                audio_book_ids.append(book_id)
+                try:
+                    audios_cnt_map[book_id] = len([
+                        f for f in os.listdir(audio_dir)
+                        if f.lower().endswith(tuple(SUPPORTED_AUDIO_FORMATS))
+                    ])
+                except OSError:
+                    audios_cnt_map[book_id] = 0
 
             # 分页处理
             total = len(audio_book_ids)
@@ -569,9 +586,13 @@ class AudioConversion(BaseHandler):
             # Write the metadata
             self.save_book_meta(book_id, fmt="epub")
 
-            # Create output directory
-            output_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
-            os.makedirs(output_dir, exist_ok=True)
+            # Create output directory（书目录内的 .audio/）
+            output_dir = audio_dir_for_write(self.calibre_db, book_id)
+            if not output_dir:
+                return {
+                    "err": "audio.no_output_dir",
+                    "msg": _("无法确定音频输出目录（书籍未进入书库）"),
+                }
 
             # Save the cover image to the output dir
             try:
@@ -824,9 +845,9 @@ class AudioDelete(BaseHandler):
                     }
                 ConversionWorkerMap.pop(book_id, None)
 
-            # Delete audio directory
-            audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
-            if not os.path.exists(audio_dir):
+            # Delete audio directory（只删 .audio/ 这一层，不动书目录里的书）
+            audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
+            if not audio_dir or not os.path.exists(audio_dir):
                 return {"err": "audio.not_found", "msg": _("未找到要删除的音频文件")}
             try:
                 logging.info(f"AudioDelete requested, audio path:{audio_dir}")
@@ -893,20 +914,13 @@ class AudioFile(BaseHandler):
             if ".." in filename or "/" in filename:
                 raise web.HTTPError(403, "Invalid filename")
 
-            # 新布局优先（书目录内 .audio/），找不到再回退旧布局。
-            # 以前这里硬编码 audios/<id>/，而导入端写的是 .audio/，
-            # 导致音频和字幕都 404。
-            audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
+            # 音频（含同名字幕）都在书目录内的 .audio/ 下，没有第二处可找。
+            audio_dir = resolve_audio_dir_or_404(self.db, book_id)
             file_path = os.path.join(audio_dir, filename)
             if not os.path.exists(file_path):
-                legacy_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
-                alt = os.path.join(legacy_dir, filename)
-                if os.path.exists(alt):
-                    file_path = alt
-                else:
-                    logging.warning("[AUDIO] file not found: %s (dir tried: %s)",
-                                    filename, audio_dir)
-                    raise web.HTTPError(404, "Audio file not found")
+                logging.warning("[AUDIO] file not found: %s (dir: %s)",
+                                filename, audio_dir)
+                raise web.HTTPError(404, "Audio file not found")
 
             # 设置适当的Content-Type
             ext = os.path.splitext(filename)[1].lower()
@@ -1051,8 +1065,8 @@ class AudioCollection(BaseHandler):
                         }
 
             # 检查音频目录
-            audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
-            if not os.path.exists(audio_dir):
+            audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
+            if not audio_dir or not os.path.exists(audio_dir):
                 logging.error(f"Audio directory does not exist: {audio_dir}")
                 return {"err": "audio.not_found", "msg": _("音频文件不存在")}
 
@@ -1158,7 +1172,7 @@ class AudioCollectionDownloadFile(BaseHandler):
                 raise web.HTTPError(403, "Download key expired")
 
             # 检查zip文件
-            audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
+            audio_dir = resolve_audio_dir_or_404(self.db, book_id)
             zip_filename = f"audio_collection_{book_id}.zip"
             zip_path = os.path.join(audio_dir, zip_filename)
             uid = biz_key.reader_id
@@ -1318,8 +1332,8 @@ class AudioPurchase(BaseHandler):
                 return {"err": "already.purchased", "msg": _("您已经购买过此音频")}
 
             # 检查音频是否存在
-            audio_dir = os.path.join(AUDIO_OUTPUT_FOLDER, str(book_id))
-            if not os.path.exists(audio_dir):
+            audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
+            if not audio_dir or not os.path.exists(audio_dir):
                 return {"err": "audio.not_found", "msg": _("音频文件不存在")}
 
             audio_files = [
