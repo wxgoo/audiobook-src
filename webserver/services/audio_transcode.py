@@ -17,6 +17,7 @@
 * 进度是模块级字典，Tornado 多个请求共享。
 """
 
+import json
 import logging
 import os
 import subprocess
@@ -77,6 +78,93 @@ def list_mp3_files(db, book_id):
         f for f in os.listdir(audio_dir)
         if f.lower().endswith(".mp3") and os.path.isfile(os.path.join(audio_dir, f))
     )
+
+
+def _audio_dir_of(db, book_id):
+    """取书的音频目录（只读）；取不到返回 None。"""
+    try:
+        audio_dir, _legacy = audio_dir_for_read(db, int(book_id))
+    except Exception:
+        return None
+    return audio_dir if audio_dir and os.path.isdir(audio_dir) else None
+
+
+def probe_mp3(path):
+    """用 ffprobe 读单个 mp3 的码率/采样率/时长/大小。
+
+    为什么要探测：转码前用户看不到源码率，只能盲选档位。若源文件本身只有
+    32k，选 128k 转出来只是把低质量放大——文件更大、音质一点没提升。
+    探测结果用来提示「是否白转」。
+
+    任何异常（ffprobe 缺失、文件损坏、解析失败）都返回 None，调用方按
+    「未知」处理，绝不因为探测失败影响扫描本身。
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = 0
+    info = {"path": path, "name": os.path.basename(path), "size": size,
+            "bitrate": None, "sample_rate": None, "duration": None}
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=bit_rate,sample_rate:format=bit_rate,duration",
+             "-of", "json", path],
+            capture_output=True, timeout=20,
+        )
+        if out.returncode != 0:
+            return info
+        data = json.loads(out.stdout.decode("utf-8", "replace") or "{}")
+        streams = data.get("streams") or [{}]
+        fmt = data.get("format") or {}
+        # 优先用流级码率，退到容器级（VBR 的 mp3 常只有容器级）
+        br = streams[0].get("bit_rate") or fmt.get("bit_rate")
+        info["bitrate"] = int(br) if br and str(br).isdigit() else None
+        sr = streams[0].get("sample_rate")
+        info["sample_rate"] = int(sr) if sr and str(sr).isdigit() else None
+        du = fmt.get("duration")
+        try:
+            info["duration"] = float(du) if du else None
+        except (TypeError, ValueError):
+            info["duration"] = None
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
+        LOG.info("[audio_transcode] ffprobe 失败 %s: %s", path, e)
+    return info
+
+
+def probe_book_audio(db, book_id, files=None, limit=200):
+    """探测一本书的音频概况，给前端展示「现在是什么样」。
+
+    返回 dict：files 明细、总大小、总时长、平均码率、最低/最高码率。
+    files 超过 limit 时只探测前 limit 个（全库扫描时避免几百次 ffprobe 卡住），
+    此时 sampled=True，前端应说明「基于抽样」。
+    """
+    audio_dir = _audio_dir_of(db, book_id)
+    if not files:
+        files = list_mp3_files(db, book_id) or []
+    if not audio_dir:
+        return None
+    picked = files[:limit] if limit and len(files) > limit else files
+    details = []
+    for name in picked:
+        details.append(probe_mp3(os.path.join(audio_dir, name)))
+
+    total_size = sum(d["size"] or 0 for d in details)
+    known = [d for d in details if d["bitrate"]]
+    durations = [d["duration"] for d in details if d["duration"]]
+    return {
+        "count": len(files),
+        "sampled": len(picked) < len(files),
+        "sampled_count": len(picked),
+        "total_size": total_size,
+        "total_duration": sum(durations) if durations else None,
+        "avg_bitrate": int(sum(d["bitrate"] for d in known) / len(known)) if known else None,
+        "min_bitrate": min((d["bitrate"] for d in known), default=None),
+        "max_bitrate": max((d["bitrate"] for d in known), default=None),
+        "sample_rate": next((d["sample_rate"] for d in details if d["sample_rate"]), None),
+        "files": details,
+    }
+
 
 
 def start(db, book_ids, bitrate="64k", titles=None):

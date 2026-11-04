@@ -721,11 +721,15 @@ class AdminAudioTranscodeScan(BaseHandler):
             title = self.calibre_db_cache.field_for("title", book_id) or ""
         except Exception:
             title = ""
+        # 探测现有音频的码率/时长/体积：用户要先知道「现在是什么样」，
+        # 才能决定转不转、转多少码率。ffprobe 失败不影响扫描本身。
+        probe = audio_transcode.probe_book_audio(self.calibre_db, book_id, files)
         return {"err": "ok", "data": {
             "book_id": book_id,
             "title": title,
             "mp3_count": len(files),
             "files": files,
+            "probe": probe,
         }}
 
 
@@ -749,7 +753,18 @@ class AdminAudioTranscodeScanAll(BaseHandler):
                 title = self.calibre_db_cache.field_for("title", bid) or ""
             except Exception:
                 title = ""
-            result.append({"book_id": bid, "title": title, "mp3_count": len(mp3s)})
+            # 全库可能有上千个 mp3，这里只探测首曲 + 统计体积，不做全量 ffprobe
+            # （全量会让「扫描全库」从秒级变成分钟级）。前端按"抽样估算"展示。
+            brief = {"book_id": bid, "title": title, "mp3_count": len(mp3s)}
+            try:
+                total = sum(os.path.getsize(os.path.join(adir, f)) for f in mp3s)
+                first = audio_transcode.probe_mp3(os.path.join(adir, sorted(mp3s)[0]))
+                brief["total_size"] = total
+                brief["sample_bitrate"] = first.get("bitrate")
+                brief["sample_rate"] = first.get("sample_rate")
+            except OSError:
+                pass
+            result.append(brief)
         return {"err": "ok", "data": {"books": result}}
 
 

@@ -61,6 +61,40 @@
             </span>
           </div>
 
+          <!-- 现有音频概况：转码前先让用户看清「现在是什么样」 -->
+          <v-card v-if="scanResult && scanResult.probe" flat outlined class="mb-4 pa-3">
+            <div class="text-subtitle-2 mb-2">现有音频</div>
+            <div class="text-body-2">
+              {{ scanResult.probe.count }} 个 mp3 ·
+              {{ fmtSize(scanResult.probe.total_size) }}
+              <template v-if="scanResult.probe.avg_bitrate">
+                · 平均 {{ Math.round(scanResult.probe.avg_bitrate / 1000) }} kbps
+              </template>
+              <template v-if="scanResult.probe.sample_rate">
+                · {{ (scanResult.probe.sample_rate / 1000).toFixed(1) }} kHz
+              </template>
+              <template v-if="scanResult.probe.total_duration">
+                · 总时长 {{ fmtDuration(scanResult.probe.total_duration) }}
+              </template>
+            </div>
+            <div
+              v-if="scanResult.probe.min_bitrate && scanResult.probe.max_bitrate
+                    && scanResult.probe.min_bitrate !== scanResult.probe.max_bitrate"
+              class="text-caption grey--text mt-1"
+            >
+              码率不均：最低 {{ Math.round(scanResult.probe.min_bitrate / 1000) }} kbps，
+              最高 {{ Math.round(scanResult.probe.max_bitrate / 1000) }} kbps
+            </div>
+            <div v-if="scanResult.probe.sampled" class="text-caption grey--text mt-1">
+              文件较多，以上为抽样 {{ scanResult.probe.sampled_count }} 个的估算
+            </div>
+
+            <!-- 白转预警：选的码率不低于源码率，等于没提升还占地方 -->
+            <v-alert
+              v-if="wastedWarning" type="warning" dense text rounded="lg" class="mt-2 mb-0"
+            >{{ wastedWarning }}</v-alert>
+          </v-card>
+
           <!-- 全库批量：多选列表 -->
           <template v-if="allBooks.length">
             <div class="d-flex align-center mb-2">
@@ -87,7 +121,10 @@
           <!-- 文件列表 -->
           <v-card v-if="scanResult && scanResult.files.length" flat outlined class="mb-4">
             <div class="pa-2 text-caption grey--text" style="max-height:160px;overflow-y:auto">
-              <div v-for="f in scanResult.files" :key="f">{{ f }}</div>
+              <div v-for="f in fileRows" :key="f.name" class="d-flex">
+                <span class="flex-grow-1 text-truncate">{{ f.name }}</span>
+                <span class="ml-3 text-no-wrap">{{ f.meta }}</span>
+              </div>
             </div>
           </v-card>
 
@@ -103,6 +140,13 @@
             <v-radio label="96k" value="96k" dense></v-radio>
             <v-radio label="128k（音乐类）" value="128k" dense></v-radio>
           </v-radio-group>
+          <div v-if="sourceBitrate" class="text-caption grey--text mb-4">
+            源文件平均 {{ Math.round(sourceBitrate / 1000) }} kbps；
+            <span v-if="bitrateValue > sourceBitrate">
+              当前选择高于源码率，体积会变大而音质不会提升。
+            </span>
+            <span v-else>当前选择不高于源码率，不会白转。</span>
+          </div>
 
           <!-- 启动 -->
           <div class="d-flex justify-center">
@@ -225,6 +269,48 @@ export default {
     globalTask() {
       return this.task && this.task.running ? this.task : null;
     },
+    // 当前选中的码率（bps），用于与源码率比较
+    bitrateValue() {
+      const map = { "64k": 64000, "96k": 96000, "128k": 128000 };
+      return map[this.bitrate] || 0;
+    },
+    // 源码平均码率：单本用探测结果；全库批量取所选书的样本中位数
+    sourceBitrate() {
+      if (this.scanResult && this.scanResult.probe) {
+        return this.scanResult.probe.avg_bitrate || null;
+      }
+      if (this.selectedBooks.length && this.allBooks.length) {
+        const vals = this.allBooks
+          .filter((b) => this.selectedBooks.includes(b.book_id) && b.sample_bitrate)
+          .map((b) => b.sample_bitrate);
+        if (!vals.length) return null;
+        vals.sort((a, b) => a - b);
+        return vals[Math.floor(vals.length / 2)];
+      }
+      return null;
+    },
+    // 「白转」预警文案：码率不低于源码率时，转码不提升音质还占更多空间
+    wastedWarning() {
+      const src = this.sourceBitrate;
+      if (!src || !this.bitrateValue) return "";
+      if (this.bitrateValue <= src) return "";
+      return `所选码率（${this.bitrate}）高于源文件平均码率（${Math.round(src / 1000)} kbps）：`
+        + "转码后体积会变大，但音质不会提升。建议选择不高于源码率的档位，或直接不转。";
+    },
+    // 文件列表：把文件名与探测到的码率拼成一行
+    fileRows() {
+      const files = (this.scanResult && this.scanResult.files) || [];
+      const details = (this.scanResult && this.scanResult.probe && this.scanResult.probe.files) || [];
+      const byName = {};
+      details.forEach((d) => { byName[d.name] = d; });
+      return files.map((name) => {
+        const d = byName[name];
+        const bits = [];
+        if (d && d.bitrate) bits.push(`${Math.round(d.bitrate / 1000)}kbps`);
+        if (d && d.size) bits.push(this.fmtSize(d.size));
+        return { name, meta: bits.join(" · ") };
+      });
+    },
   },
   mounted() {
     this.refreshProgress();
@@ -235,6 +321,20 @@ export default {
   methods: {
     toast(text, color = "info") {
       this.snack = { show: true, text, color };
+    },
+    fmtSize(bytes) {
+      if (!bytes) return "0 B";
+      const units = ["B", "KB", "MB", "GB"];
+      let v = bytes;
+      let i = 0;
+      while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+      return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+    },
+    fmtDuration(sec) {
+      if (!sec) return "0 分";
+      const h = Math.floor(sec / 3600);
+      const m = Math.round((sec % 3600) / 60);
+      return h ? `${h} 小时 ${m} 分` : `${m} 分`;
     },
     async scan() {
       const id = parseInt(this.bookIdInput, 10);

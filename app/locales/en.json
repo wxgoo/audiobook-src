@@ -2592,8 +2592,8 @@
   "dedup": {
     "title": "Duplicate Book Cleanup",
     "close": "Close",
-    "intro": "Audiobooks and ebooks live in separate folders (audios/ and library/). Older versions of the audio importer did not check whether an ebook with the same title already existed, so importing an EPUB first and adding its audio later left two records for the same book. This page merges them.",
-    "intro2": "Scanning is read-only. Your user database is backed up before merging. Ambiguous groups (both have ebooks, or neither has one) are reported but never changed automatically.",
+    "intro": "Some titles ended up with two records: one holding the ebook, another holding later-imported audio under the same name. This page merges them — it keeps the record that has the ebook, moves the audio into its .audio/ folder, and deletes the redundant record.",
+    "intro2": "Scanning is read-only; your user database is backed up before merging. Three cases are reported but never changed automatically: both records have ebooks (possibly different editions or volumes), neither has an ebook (cannot tell which to keep), or the records are judged to be different books despite the same title (ISBN/publisher/translator/author mismatch).",
     "scanBtn": "Scan for duplicates",
     "scanning": "Scanning…",
     "applyBtn": "Merge {n} selected",
