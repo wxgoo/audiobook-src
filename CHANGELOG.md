@@ -883,7 +883,7 @@ MP3 48000bps/24kHz/单声道；SRT 时间轴 `0.0 / 1.5 / 3.0` 秒正确累加�
 不再产生 `/tmp/chapter-*` 临时文件。文本过滤边界 16 种输入全部符合预期。
 
 > **以后升级 `epub_to_audio` 别直接覆盖回 `8ca3bc4`**，会把这两处修复冲掉。
-> 详细对照见 `docs/upstream-issues.md` 附二。
+> 详细对照见 `webserver/epub_to_audio/` 内的改动注释（单次 48kbps、过滤纯标点片段）。
 
 ### 新增：盯上游改动的工具
 
@@ -927,7 +927,7 @@ GitHub 上**没有 Release 页面**，只有 tag，所以没有官方变更说�
 
 `autofill.py` / `ai_fillinfo.py` 加 `cancel_requested` + `cancel()`，
 循环每个批次和每本书前检查；`handlers/admin.py` 两个接口收 `{"cancel": true}`。
-—— 这正是 `docs/upstream-issues.md` 里 P2 的建议，**可以从「给上游的清单」里划掉了**。
+—— 这是当年给上游提的 P2 建议（长任务无法取消，只能重启容器），现已落地，可从未解决清单里划掉。
 
 **② 本月阅读统计按站点时区切**
 
@@ -942,7 +942,7 @@ GitHub 上**没有 Release 页面**，只有 tag，所以没有官方变更说�
 `conf/nginx/ipv6-listen.conf`（我们的 nginx 配置自管，照抄会打架）、
 favicon 资源、AI 助手。
 
-详细对照见 `docs/upstream-issues.md` 附四。
+详细对照见当版发布说明中的播放链路修复记录。
 
 ### 盯上游：watch-upstream.py 补 --tags 与 --between
 

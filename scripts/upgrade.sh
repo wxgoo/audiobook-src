@@ -87,7 +87,9 @@ if [ -d "$LEGACY_AUDIOS" ]; then
         echo "    !! $LEGACY_AUDIOS 下仍发现有音频文件（示例）："
         echo "$LEFT" | sed 's/^/       /'
         echo "    !! 4.6.0-15 起旧布局 audios/<id>/ 不再被读取，这些音频升级后会变成孤儿。"
-        echo "    !! 请先按 docs/移除旧布局audios目录.md 把它们搬进对应书目录的 .audio/ 再升级。"
+        echo "    !! 处理办法：把每个 audios/<书id>/ 里的音频移到对应书目录下的 .audio/"
+        echo "    !!   （书目录形如 library/<作者>/<书名> (id)/，可用书 id 对应上面的目录名）"
+        echo "    !!   搬不动的可先备份，升级后再手工补回书的 .audio/。"
         printf "    确认已处理或接受丢失风险，继续升级？[y/N] "
         read ans
         [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { echo "    已取消。"; exit 1; }
