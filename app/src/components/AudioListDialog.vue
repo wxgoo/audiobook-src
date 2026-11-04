@@ -52,9 +52,8 @@
             <!-- 播放进度条：试听也能定位，不用拖整个文件 -->
             <v-card-text v-if="playing_audio_index !== null" class="pt-0">
                 <v-slider
-                    :value="progressPct"
-                    @input="onSeekInput"
-                    @start="seekDragging = true"
+                    v-model="sliderPct"
+                    @start="onSeekStart"
                     @end="onSeekEnd"
                     :min="0" :max="100" :step="0.1"
                     hide-details
@@ -122,6 +121,7 @@ export default {
             duration: 0,
             resumeMap: {},
             seekDragging: false,
+            sliderPct: 0,
         };
     },
     mounted() {
@@ -235,20 +235,22 @@ export default {
             el.addEventListener('canplay', () => {
                 if (this.currentAudioFile !== el) return;
                 this.audio_loading = false;
-                // 恢复上次进度：只在真的拿到时长之后再设，否则会被浏览器的
-                // 元数据刷新打回 0（这是 HTMLAudio 常见的坑）。
-                // §只在暂停态恢复§ 若此时已经在播（play() 已 resolve），再 seek
-                // 会打断解码器当前帧边界——AAC 从半帧开始解码就是「电流声」。
-                // 所以仅在尚未开始播放时恢复。
+                // 恢复上次进度：只在拿到时长之后设一次（用标志位防止被重复
+                // 触发覆盖）。§对齐整秒§ 非整秒位置会让 AAC 从帧中间解码出杂音。
+                if (el._resumeDone) return;
+                el._resumeDone = true;
                 const saved = this.resumeMap[index];
-                if (!saved || !el.duration || el.paused === false) return;
-                if (saved >= el.duration - 3 || saved < 2) return;
-                // 对齐到整秒，避免落在帧中间
+                if (!saved || !el.duration) return;
+                if (saved >= el.duration - 3 || saved < 5) return;
                 try { el.currentTime = Math.floor(saved); } catch (e) { /* 忽略 */ }
             });
             el.addEventListener('timeupdate', () => {
                 this.currentTime = el.currentTime || 0;
                 this.duration = el.duration || 0;
+                // 播放推进时同步滑块；用户正在拖动时不要覆盖他的位置
+                if (!this.seekDragging && this.duration) {
+                    this.sliderPct = (this.currentTime / this.duration) * 100;
+                }
             });
             el.addEventListener('ended', () => {
                 const key = this._keyOf(index);
@@ -290,20 +292,18 @@ export default {
             this.audio_paused = false;
             this.currentTime = 0;
             this.duration = 0;
+            this.sliderPct = 0;
+            this.seekDragging = false;
         },
-        onSeekInput(pct) {
-            // §防回环§ Vuetify v-slider 在外部 :value 变化时也会 emit input：
-            // 回环 emit 会被这里挡掉（非拖动状态一律忽略）。
-            // §不实时 seek§ 拖动期间高频 seek 大文件会打乱解码流（表现为
-            // 拖过一次之后出现电流声），所以拖动中只记录位置，松手才 seek。
-            if (!this.seekDragging) return;
-            this._pendingSeek = pct;
+        onSeekStart() {
+            this.seekDragging = true;
         },
         onSeekEnd() {
+            // v-model 已把最终百分比写进 sliderPct；松手时一次性 seek。
+            // 拖动期间不实时 seek：高频 seek 大文件会打乱解码流（AAC 出杂音）。
+            const pct = this.sliderPct;
             this.seekDragging = false;
-            const pct = this._pendingSeek;
-            this._pendingSeek = null;
-            if (pct !== null && pct !== undefined && this.currentAudioFile && this.duration) {
+            if (this.currentAudioFile && this.duration) {
                 this.currentAudioFile.currentTime = (pct / 100) * this.duration;
             }
         },
