@@ -216,16 +216,29 @@ def js(func):
                 rsp["msg"] = result
         except Exception as e:
             logging.error(traceback.format_exc())
-            msg = (
-                'Exception:<br><pre style="white-space:pre-wrap;word-break:keep-all">%s</pre>'
-                % traceback.format_exc()
-            )
+            # 完整 traceback 含服务器路径/库版本，只给管理员看（排障用）；
+            # 其余用户只回类型+消息，避免被构造参数批量探测服务器内部信息
+            try:
+                admin_view = bool(getattr(self, "current_user", None)) and self.is_admin()
+            except Exception:
+                admin_view = False
+            if admin_view:
+                msg = (
+                    'Exception:<br><pre style="white-space:pre-wrap;word-break:keep-all">%s</pre>'
+                    % traceback.format_exc()
+                )
+            else:
+                msg = "Exception: %s: %s" % (type(e).__name__, e)
             rsp = {"err": "exception", "msg": msg}
             if isinstance(e, web.Finish):
                 rsp = ""
-        origin = self.request.headers.get("origin", "*")
-        self.set_header("Access-Control-Allow-Origin", origin)
-        self.set_header("Access-Control-Allow-Credentials", "true")
+        origin = self.request.headers.get("origin")
+        # CORS：只回显同站点 Origin（SPA 与后端同源部署）。
+        # 原实现把任意 Origin 原样回显且带 Allow-Credentials，等于给任何
+        # 恶意网页开了「带着用户 Cookie 读本站 API」的口子。
+        if origin and self._is_same_site_origin(origin):
+            self.set_header("Access-Control-Allow-Origin", origin)
+            self.set_header("Access-Control-Allow-Credentials", "true")
         self.set_header("Cache-Control", "max-age=0")
         self.write(rsp)
         self.finish()
@@ -610,6 +623,22 @@ class BaseHandler(web.RequestHandler):
         if book_id is None:
             return False
         return BookAccessService.share_read_granted(self, book_id)
+
+    def _is_same_site_origin(self, origin):
+        """Origin 是否指向本站（scheme + host[:port] 与请求的 Host 一致）。
+
+        CORS 响应头只对浏览器有意义；本站 SPA 与后端同源部署，跨站一律不发
+        Allow-Origin，恶意网页即使带着用户 Cookie 发起请求也读不到响应。
+        """
+        import urllib.parse
+
+        try:
+            parts = urllib.parse.urlsplit(origin or "")
+            if parts.scheme not in ("http", "https") or not parts.netloc:
+                return False
+            return parts.netloc.lower() == (self.request.host or "").lower()
+        except Exception:
+            return False
 
     def should_be_logged_in(self):
         """REQUIRE_LOGIN 开启时的登录门禁：未登录且路径不在放行名单 → 一律拦下。

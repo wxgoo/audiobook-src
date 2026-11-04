@@ -289,7 +289,19 @@ class ImportRun(BaseHandler):
             selector = None
             paths = "all"
             if kind == "paths":
-                paths = filelist
+                # 收口在扫描目录内：SCAN_DIR_PREFIX 定义了却没人用，paths 形态
+                # 原样透传可把磁盘上任意目录交给 _collect_files 遍历
+                allowed = os.path.realpath(CONF.get("scan_upload_path", ""))
+                checked = []
+                for p in filelist:
+                    real = os.path.realpath(str(p))
+                    if real == allowed or real.startswith(allowed + os.sep):
+                        checked.append(p)
+                    else:
+                        logging.warning("[IMPORT] 拒绝扫描目录之外的路径: %s", p)
+                if not checked:
+                    return {"err": "params.error", "msg": _("路径不在扫描目录内")}
+                paths = checked
             elif kind == "dirs":
                 # 纯文件系统操作（realpath/isdir），在 handler 里同步做以便即时报错
                 paths = ScanService.resolve_dir_paths(CONF.get("scan_upload_path", ""), value)
@@ -353,6 +365,11 @@ class BatchAddRun(BaseHandler):
         """批量添加实体书 - 从CSV文件导入"""
         from webserver.services.batch_add import BatchAddService
 
+        # 预检：服务端已有任务在跑时这份 CSV 会被顺序排队重复执行（重复建书），
+        # 这里直接拒绝；原来的响应 total 恒为 null 也是这个原因
+        if BatchAddService.is_running():
+            return {"err": "running", "msg": _("已有批量添加任务正在运行，请稍后再试")}
+
         # 检查是否上传了文件
         if "csv_file" not in self.request.files:
             return {"err": "params.error", "msg": _("请选择CSV文件")}
@@ -365,6 +382,7 @@ class BatchAddRun(BaseHandler):
         if not filename.lower().endswith('.csv'):
             return {"err": "params.error", "msg": _("文件格式错误，请上传CSV文件")}
 
+        csv_path = None
         try:
             # 保存临时文件
             import tempfile
@@ -418,6 +436,13 @@ class BatchAddRun(BaseHandler):
             return {"err": "ok", "msg": _("开始批量添加实体书"), "total": total}
 
         except Exception as e:
+            # 解析中途炸掉（如单字段超 csv 模块 128KB 上限触发 _csv.Error）时
+            # 临时文件还躺在磁盘上——清理掉再返回
+            try:
+                if csv_path and os.path.exists(csv_path):
+                    os.unlink(csv_path)
+            except Exception:
+                pass
             logging.error(f"BatchAddRun error: {e}")
             logging.error(traceback.format_exc())
             return {"err": "server.error", "msg": str(e)}
@@ -460,6 +485,8 @@ class AudioImportRun(BaseHandler):
     def post(self):
         if AudioBookImporter.is_running():
             return {"err": "running", "msg": _("有声书导入任务正在运行中，请稍候")}
+        if ScanService.is_importing():
+            return {"err": "empty", "msg": _("已有扫描导入任务正在运行，请稍后再试")}
         if ScanService.is_bulk_deleting():
             return {"err": "empty", "msg": _("已有批量删除任务正在运行，请稍后再试")}
 

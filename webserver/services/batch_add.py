@@ -6,6 +6,7 @@ import codecs
 import hashlib
 import logging
 import os
+import re
 import requests
 import traceback
 
@@ -361,12 +362,24 @@ class BatchAddService(AsyncService):
     def _download_cover(self, cover_url):
         """下载封面图片"""
         try:
-            response = requests.get(cover_url, timeout=10)
-            if response.status_code == 200:
-                return response.content
-            else:
+            # cover_url 来自 CSV（用户可控）：限 http(s)、封顶 8MB，防 SSRF
+            # 打内网/云元数据 + 超大响应耗尽内存
+            if not cover_url or not re.match(r"^https?://", str(cover_url), re.IGNORECASE):
+                logging.warning("Cover URL 不合法，跳过: %r", cover_url)
+                return None
+            response = requests.get(cover_url, timeout=10, stream=True, allow_redirects=True)
+            if response.status_code != 200:
                 logging.error("Failed to download cover, status: %d", response.status_code)
                 return None
+            chunks = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                total += len(chunk)
+                if total > 8 * 1024 * 1024:
+                    logging.error("Cover too large (>8MB), dropped: %s", cover_url)
+                    return None
+                chunks.append(chunk)
+            return b"".join(chunks)
         except Exception as e:
             logging.error("Error downloading cover: %s", e)
             return None

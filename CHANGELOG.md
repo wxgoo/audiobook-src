@@ -98,6 +98,41 @@
 - 存量回归：`test_meta_merge.py` + `test_audio_narrator.py`（89 例）与
   `test_models.py` + `test_utils.py` 全部通过。
 
+### 六、第二轮（同版本补充）：上传/导入链路修复 + 三个功能
+
+> 聚焦 PDF/EPUB 上传、扫描导入、监听导入的审查结果 + 三个用户功能。
+
+**上传/导入链路修复**
+
+| 位置 | 问题 |
+|---|---|
+| `handlers/base.py` `@js` | CORS 任意回显 + `Allow-Credentials:true`：任何恶意网页可带着用户 Cookie 读本站 API。改为只回显同站点 Origin；异常 traceback 只回管理员，其他用户只看类型+消息（原实现任何访客可构造参数触发并拿到服务器路径） |
+| `handlers/book.py` 分片上传 | 同步 handler：GB 级合并+元数据解析+calibre 入库全在 ioloop（分片上传正是为大文件设计的）；不进 `_upload_slot` 与单文件上传互踩；`int()` 参数不设防（`total_chunks=10^9` → 上亿次 exists）；`temp_chunks/` 孤儿目录无人清扫。改 async：合并/解析进线程池、calibre 走 `run_calibre_async`、参数钳制、24h 孤儿清扫、全程持信号量；错误响应不再回传原始异常文本 |
+| `handlers/book.py` | 同名书判定顺序 bug：迭代中遇到作者不匹配的候选会把先前已找到的同作者候选清成 None（books 是集合、顺序漂移），本该并入既有书的会建重复书。单文件/分片两处同修 |
+| `handlers/book.py` | `update_meta=1` 显式传参被 `== 1`（字符串比整数）静默判 False |
+| `services/scan_service.py` | `do_import` 置锁后有 ~40 行裸露代码（选择器解析、`_collect_files`），任一异常把导入锁泄漏到重启——之后所有导入被拒、监控线程永远等不到空闲。整段包进 try/except 兜底复位 |
+| `services/scan_service.py` + `audios_import.py` + `handlers/scan.py` | 扫描导入与有声书导入互斥只有单侧设防（批量删除侧是三方检查）：补齐双向检查与 handler 预检；拒绝时顺手清理批量上传的暂存目录 |
+| `handlers/scan.py` | `ImportRun` 的 paths 形态原样透传任意路径（`SCAN_DIR_PREFIX` 定义了从未使用）：收口在扫描目录内 |
+| `handlers/scan.py` | `BatchAddRun`：补 `is_running` 预检（原来连发两份 CSV 会顺序执行两遍重复建书）；CSV 解析异常路径补 unlink |
+| `services/batch_add.py` | `_download_cover` 对 CSV 里的 URL 无限制直接 GET：限 http(s) + 8MB 封顶（SSRF/内存耗尽） |
+
+**监听导入可靠性（monitor_service.py）**
+
+- **线程自愈**：`inotify.read` 异常原实现直接退出线程且 `_running` 仍 True（`start()` 幂等短路），自动导入静默失效到重启。现在 read 异常自动重建 watcher（退避重试），调度线程加看门狗兜底拉起
+- **大文件防截断**：文件 CREATE 事件不再入队（拷贝超 3s 防抖窗口就会把截断文件当正常哈希入库、之后永久跳过）；完成信号改为 CLOSE_WRITE / MOVED_TO（cp/scp/WebDAV/rsync 都会触发其一）
+- **队列溢出**：处理 `IN_Q_OVERFLOW`——溢出期间事件全丢且原实现静默吞掉；现在告警 + 重扫监听根补齐
+- **配置变更生效**：`scan_upload_path` 改了原来要重启；调度线程每秒检查、变更即重建监听并补扫
+- **生命周期**：`stop()` 补 join（快速关→开旧线程会复活成双消费）；滞留的合并队列由调度线程营救
+
+**新功能**
+
+1. **电子书下一级子目录的音频同目录处理**：`collect_sidecar_audio_dirs`（纯 FS，可单测）——`书名/书名.epub + 书名/第一季/*.mp3` 这类分季布局，扫描导入时音频随书进 `.audio/`，跨子目录同名加「子目录名-」前缀；书目录与贡献音频的子目录都写 `audiodir:` 防重标记（否则「导入有声书」会把子目录按 ID3 再建一本重复书）。`_copy_or_convert_file` 增加可选 `dest_name`（向后兼容）
+2. **播放进度服务端存储（跨设备续播）**：新表 `audio_playback`（自动建表）；`GET/POST /api/audio/<id>/progress`；前端 5s 心跳节流 15s 上报，暂停/切集/离开页面立即推；进页时本地与服务端「谁新用谁」，两台设备轮流听也能接上。服务端存取语义与播放器一致（track_index + 集内秒数）
+3. **读者组总开关** `READER_GROUPS_ENABLED`（默认开）：关闭时组规则全链路失效——收口在 `effective_limits()` 单点（所有判定点都经它取组配置），用户自身 `read_limit/limit_*` 不受影响；成员归属保留，重开即恢复。设置页「用户与访问 → 读者组」置顶新增开关，三语言文案
+4. **播放页字幕开关接线**：`showSubtitle` 原来只改按钮颜色不控制任何渲染（无效开关）；现在关=回封面视图、开=恢复字幕视图偏好
+
+**另增测试**：`tests/test_sidecar_audio_dirs.py`（7 例，纯文件系统）。
+
 ---
 
 ## 4.6.0-18

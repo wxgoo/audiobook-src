@@ -110,10 +110,14 @@ def _convert_wma_to_mp3(src_path, dst_path):
         return False
 
 
-def _copy_or_convert_file(src_path, dst_dir):
-    """Copy a file to dst_dir. If it's a WMA file, convert to MP3 instead."""
+def _copy_or_convert_file(src_path, dst_dir, dest_name=None):
+    """Copy a file to dst_dir. If it's a WMA file, convert to MP3 instead.
+
+    dest_name: 目标文件名（可带子目录前缀）。sidecar 扩展（4.6.0-19）跨子目录
+    同名冲突时由调用方生成「子目录名-文件名」；缺省沿用源文件名。
+    """
     filename = os.path.basename(src_path)
-    dest_filename = _get_dest_filename(filename)
+    dest_filename = _get_dest_filename(dest_name) if dest_name else _get_dest_filename(filename)
     dst_path = os.path.join(dst_dir, dest_filename)
 
     if os.path.exists(dst_path):
@@ -407,6 +411,12 @@ class AudioBookImporter(AsyncService):
         with ScanService.task_claim_lock:
             if AudioBookImporter.static_is_running:
                 logging.error("[AUDIO_IMPORT] already running, skip")
+                return
+            if ScanService.is_importing():
+                # 与扫描导入互斥（4.6.0-19）：原来只有批量删除一侧设防，
+                # 两边同时搬音频/写 ScanFile 会互相踩
+                logging.error("[AUDIO_IMPORT] scan importing is running, skip")
+                self.add_msg(user_id=user_id, status="error", msg=_("已有扫描导入任务正在运行，请稍后再试"))
                 return
             if ScanService.is_bulk_deleting():
                 # 二道闸：handler 检查与异步入队之间存在窗口，服务线程入口再拦一次

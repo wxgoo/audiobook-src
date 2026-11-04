@@ -134,6 +134,17 @@ def strict_mode() -> bool:
     return bool(CONF.get("READER_GROUP_STRICT", True))
 
 
+def groups_enabled() -> bool:
+    """读者组总开关（4.6.0-19 新增）。
+
+    关闭时组规则全链路失效——所有权限判定点都经由 effective_limits() 取组
+    配置，在这里单点收口即可，不用逐个改判定点。用户自身的
+    read_limit/limit_categories/limit_tags 不受影响（那层由
+    ALLOW_READ_RANGE_SETTING 总闸管）。成员归属照常保存，重新打开即恢复。
+    """
+    return bool(CONF.get("READER_GROUPS_ENABLED", True))
+
+
 class ReaderGroupService:
     """读者组的增删查与成员分配。所有方法都是静态的，与 mybooks 其他 service 一致。"""
 
@@ -300,10 +311,23 @@ class ReaderGroupService:
         """用户的生效限制：自身显式设置优先，否则用组的配置。
 
         返回 {"read_limit": 0/1/2, "limit_categories": str, "limit_tags": str}
+
+        4.6.0-19 起受总开关 READER_GROUPS_ENABLED 控制：关闭时组规则全链路
+        失效（所有判定点都经由本函数取组配置，单点收口即可），用户自身的
+        read_limit/limit_categories/limit_tags 仍然生效——总开关关的是
+        「读者组」这一层，不是整个阅读范围体系（那是 ALLOW_READ_RANGE_SETTING）。
         """
         own_limit = int(getattr(reader, "read_limit", 0) or 0)
         own_cats = (reader.limit_categories or "").strip()
         own_tags = (reader.limit_tags or "").strip()
+        if not groups_enabled():
+            if own_limit > 0 or own_cats or own_tags:
+                return {"read_limit": own_limit,
+                        "limit_categories": own_cats,
+                        "limit_tags": own_tags,
+                        "source": "self", "group": ""}
+            return {"read_limit": 0, "limit_categories": "", "limit_tags": "",
+                    "source": "group-disabled", "group": ""}
         if own_limit > 0 or own_cats or own_tags:
             return {"read_limit": own_limit,
                     "limit_categories": own_cats,

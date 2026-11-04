@@ -967,6 +967,8 @@
     "allow_new_user_manage_book": "新注册用户默认启用书籍管理权限，包括上传、编辑、删除、下载。",
     "allow_new_user_push_book": "新注册用户默认启用推送到阅读设备权限",
     "allow_read_range_setting": "启用阅读范围控制（总开关）",
+    "reader_groups_enabled": "启用读者组分组权限",
+    "reader_groups_enabled_tips": "读者组自己的总开关（4.6.0-19 新增）。关闭时所有按组配置的分类/标签限制一律失效，但用户个人的阅读范围设置不受影响；成员归属照常保留，重新打开即恢复。想连个人限制一起关掉，用下方的「阅读范围控制」总开关。",
     "default_read_range": "设置新用户的默认阅读范围",
     "default_read_range_dialog_title": "设置新用户默认阅读范围",
     "default_read_range_all": "默认阅读范围：全部可见",

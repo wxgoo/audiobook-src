@@ -496,6 +496,9 @@ export default {
     if (!restored) {
       this.loadTrack(0);
     }
+    // 4.6.0-19：服务端进度（跨设备续播）。本地没有记录、或本地的比服务端
+    // 旧时，跳到服务端保存的位置——两台设备轮流听也能接上。
+    this.tryRestoreFromServer(restored);
     this.startProgressSaving();
     this.escKeyListener = (event) => {
       if (event.key === 'Escape' || event.keyCode === 27) {
@@ -507,6 +510,7 @@ export default {
 
   beforeDestroy() {
     this.savePlaybackPosition();
+    this.pushServerProgress(true);  // 离开页面前把进度推到服务端（fire-and-forget）
     this.clearSleepTimer();
     this.stopProgressSaving();
     if (this.$refs.audioPlayer) {
@@ -976,6 +980,19 @@ export default {
           console.error('Error saving subtitle preference:', error);
         }
       }
+      // 4.6.0-19：接上实际渲染。原来这个开关只改按钮颜色+存偏好，
+      // 不控制任何东西（字幕视图实际由 showLyrics 管），是个无效开关。
+      // 语义定为「要不要看字幕」：关 → 回封面视图；开 → 恢复上次的字幕视图偏好。
+      if (!this.showSubtitle) {
+        this.showLyrics = false;
+      } else if (process.client) {
+        try {
+          const lyrics = localStorage.getItem('audio_lyrics_view');
+          this.showLyrics = lyrics === null ? true : lyrics === '1';
+        } catch (error) {
+          this.showLyrics = true;
+        }
+      }
     },
 
     restoreSubtitlePreference() {
@@ -984,10 +1001,14 @@ export default {
         const saved = localStorage.getItem('audio_subtitle_enabled');
         if (saved !== null) {
           this.showSubtitle = saved === '1';
+          // 字幕偏好为关时封面视图（原开关无实效，从不影响渲染）
+          if (!this.showSubtitle) {
+            this.showLyrics = false;
+          }
         }
         // 整篇字幕视图的开关也是持久的：习惯看整篇的人不想每次都点一下
         const lyrics = localStorage.getItem('audio_lyrics_view');
-        if (lyrics !== null) {
+        if (lyrics !== null && this.showSubtitle) {
           this.showLyrics = lyrics === '1';
         }
       } catch (error) {
@@ -1034,7 +1055,9 @@ export default {
         };
 
         localStorage.setItem(this.getStorageKey(), JSON.stringify(progressData));
-        console.log('Saved playback position:', progressData);
+        this._localProgressTs = progressData.timestamp;
+        // 4.6.0-19：同步到服务端（内部 15s 节流），换设备/换浏览器也能续播
+        this.pushServerProgress();
       } catch (error) {
         console.error('Error saving playback position:', error);
       }
@@ -1057,6 +1080,7 @@ export default {
           progressData.currentTime >= 0
         ) {
           console.log('Restoring playback position:', progressData);
+          this._localProgressTs = progressData.timestamp || 0;
 
           // loadTrack 内部会设置 currentTrackIndex，这里不用再赋一遍
           this.loadTrack(progressData.trackIndex, progressData.currentTime);
@@ -1099,6 +1123,46 @@ export default {
         clearInterval(this.saveProgressInterval);
         this.saveProgressInterval = null;
       }
+    },
+
+    // §服务端进度（4.6.0-19）§ 进度此前只存 localStorage：换设备/换浏览器/
+    // 清缓存即丢。这里节流上报（15s 一次，配合 5s 心跳；暂停/切集/离开页面
+    // 用 force 立即推）。未登录或离线时静默失败，不影响本地记忆。
+    async pushServerProgress(force = false) {
+      if (!process.client || !this.bookId) return;
+      const now = Date.now();
+      if (!force && now - (this._lastServerPush || 0) < 15000) return;
+      this._lastServerPush = now;
+      try {
+        await this.$backend(`/audio/${this.bookId}/progress`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            track_index: this.currentTrackIndex || 0,
+            position: this.currentTime || 0,
+            duration: this.duration || null,
+          }),
+        });
+      } catch (e) { /* 静默：进度上报失败不影响播放 */ }
+    },
+
+    // 服务端进度恢复：localRestored 表示本地已经恢复过（此时只有服务端
+    // 更新时才跳转）。两台设备都听过时以「更晚保存」的一方为准。
+    async tryRestoreFromServer(localRestored) {
+      try {
+        const rsp = await this.$backend(`/audio/${this.bookId}/progress`);
+        if (!rsp || rsp.err !== "ok" || !rsp.data) return;
+        const { track_index, position, updated_at } = rsp.data;
+        if (!(track_index >= 0 && track_index < this.audioFiles.length && position >= 0)) return;
+        const serverTs = updated_at ? Date.parse(updated_at) : 0;
+        if (localRestored && serverTs <= (this._localProgressTs || 0)) return;
+        if (localRestored && track_index === this.currentTrackIndex
+            && Math.abs(position - this.currentTime) < 5) {
+          return;  // 和本地基本一致，不打断当前加载
+        }
+        console.log('Restoring playback position from server:', rsp.data);
+        this.loadTrack(track_index, position);
+      } catch (e) { /* 静默：拿不到服务端进度就走本地 */ }
     },
 
     clearPlaybackPosition() {

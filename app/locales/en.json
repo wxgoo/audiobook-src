@@ -671,6 +671,8 @@
     "allow_new_user_manage_book": "Newly registered users are enabled to upload and download by default",
     "allow_new_user_push_book": "Newly registered users are enabled to push books to reading devices by default",
     "allow_read_range_setting": "Enable reading-range control (master switch)",
+    "reader_groups_enabled": "Enable reader-group permissions",
+    "reader_groups_enabled_tips": "Master switch for reader groups only (added in 4.6.0-19). When off, all group-based category/tag restrictions stop applying, but each user's personal reading-range settings remain effective; memberships are kept and restored when re-enabled. To disable personal limits as well, use the reading-range master switch below.",
     "default_read_range": "Set default reading range",
     "default_read_range_dialog_title": "Set default reading range for new users",
     "default_read_range_all": "Default reading range: all visible",

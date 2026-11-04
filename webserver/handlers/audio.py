@@ -27,7 +27,7 @@ from webserver.base.audio_dir import (
     find_audios_by_scanning_library,
 )
 from webserver.handlers.base import BaseHandler, auth, js, is_admin
-from webserver.models import BizKey, ReaderPaidBook, ReaderLog, Message
+from webserver.models import BizKey, ReaderPaidBook, ReaderLog, Message, AudioPlayback
 from webserver.worker.epub2audio_worker import EpubToAudioWorker
 from webserver.constants import ENABLE_VIP_QUOTA_KEY, SUPPORTED_AUDIO_FORMATS, SUPPORTED_SUBTITLE_FORMATS
 from webserver.services.background_service import BackgroundService, BackgroundTask
@@ -1465,6 +1465,80 @@ class AudioPurchase(BaseHandler):
             return {"err": "server.error", "msg": str(e)}
 
 
+class AudioPlaybackProgress(BaseHandler):
+    """有声书播放进度的服务端存取（4.6.0-19）。
+
+    此前进度只存浏览器 localStorage：换设备/换浏览器/清缓存即丢，服务器
+    完全不参与。语义与前端播放器对齐：track_index=播放列表序号，
+    position=该集内秒数（audio.currentTime）。前端每 ~15s 和暂停/切集/
+    离开页面上报一次；GET 返回 null 表示这本书还没播过。
+    """
+
+    @js
+    @auth
+    def get(self, book_id):
+        try:
+            book_id = int(book_id)
+        except (TypeError, ValueError):
+            return {"err": "params.invalid", "msg": _("无效的书籍ID")}
+        user = self.get_current_user()
+        if not user:
+            return {"err": "auth.required", "msg": _("需要登录")}
+        row = (
+            self.sqlite_session.query(AudioPlayback)
+            .filter_by(reader_id=user.id, book_id=book_id)
+            .first()
+        )
+        return {"err": "ok", "data": row.format_dict() if row else None}
+
+    @js
+    @auth
+    def post(self, book_id):
+        try:
+            book_id = int(book_id)
+        except (TypeError, ValueError):
+            return {"err": "params.invalid", "msg": _("无效的书籍ID")}
+        user = self.get_current_user()
+        if not user:
+            return {"err": "auth.required", "msg": _("需要登录")}
+
+        try:
+            data = tornado.escape.json_decode(self.request.body or b"{}")
+        except Exception:
+            return {"err": "params.invalid", "msg": _("参数错误")}
+        try:
+            track_index = int(data.get("track_index") or 0)
+            position = float(data.get("position") or 0)
+            duration = data.get("duration")
+            duration = float(duration) if duration is not None else None
+        except (TypeError, ValueError):
+            return {"err": "params.invalid", "msg": _("进度参数必须是数字")}
+        # 钳制：负值/异常巨大的值一律拉回合法范围，避免脏数据
+        track_index = max(0, min(track_index, 100000))
+        position = max(0.0, min(position, 86400 * 14))
+        if duration is not None:
+            duration = max(0.0, min(duration, 86400 * 14))
+
+        try:
+            row = (
+                self.sqlite_session.query(AudioPlayback)
+                .filter_by(reader_id=user.id, book_id=book_id)
+                .first()
+            )
+            if row:
+                row.track_index = track_index
+                row.position = position
+                row.duration = duration
+                row.updated_at = datetime.datetime.now()
+            else:
+                row = AudioPlayback(user.id, book_id, track_index, position, duration)
+            row.save()
+            return {"err": "ok"}
+        except Exception as e:
+            logging.error(f"Error saving audio playback progress: {e}")
+            return {"err": "server.error", "msg": _("保存进度失败")}
+
+
 def routes():
     return [
         (r"/api/audio/([0-9]+)", AudioDetail),
@@ -1472,6 +1546,7 @@ def routes():
         (r"/api/audio/([0-9]+)/cancel", AudioConversionCancel),
         (r"/api/audio/([0-9]+)/delete", AudioDelete),
         (r"/api/audio/([0-9]+)/purchase", AudioPurchase),  # 音频购买接口
+        (r"/api/audio/([0-9]+)/progress", AudioPlaybackProgress),  # 播放进度（跨设备续播）
         (r"/api/audiobooks", AudioBooks),  # 音频书籍列表
         (r"/api/audio/([0-9]+)/([^/]+)", AudioFile),
         (r"/api/audios/([0-9]+)/collection", AudioCollection),  # 音频合集下载接口

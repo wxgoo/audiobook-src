@@ -3379,10 +3379,13 @@ class BookUpload(BaseHandler):
                 return {"err": "permission", "msg": _("无权操作")}
 
         target_book_id = self.get_argument("bid", None)
-        update_metadata = self.get_argument("update_meta", 1)
+        # get_argument 缺省返回的 1 是 int、客户端传的是字符串 "1"：直接 == 1
+        # 会把显式传 "1" 的「更新元数据」静默判成 False。统一按宽松开关解析。
+        update_metadata = str(self.get_argument("update_meta", "1")).strip().lower() \
+            not in ("0", "false", "no", "off", "")
         if target_book_id:
             force = str(self.get_argument("force", "0")).lower() in ("1", "true")
-            return await self._add_format_to_existing_book(int(target_book_id), update_metadata == 1, force)
+            return await self._add_format_to_existing_book(int(target_book_id), update_metadata, force)
 
         name, data = self.get_upload_file()
         if name is None:
@@ -3513,10 +3516,10 @@ class BookUpload(BaseHandler):
             logging.info(f"  existed formats: {b.formats}")
             if b.get(CALIBRE_COLUMN_BOOK_TYPE, BOOK_TYPE_EBOOK) == BOOK_TYPE_PHYSICAL:
                 continue
-            if book_id is None:
-                book_id = b.get("id")
             if b.get("authors", "") != mi.authors:
-                book_id = None
+                # 作者不匹配的候选直接跳过：原来的写法先记 book_id 再在作者
+                # 不匹配时清成 None，会把先前已找到的同作者候选一并丢掉——
+                # books 是集合、迭代顺序不定，本该并入既有书的会建出重复书
                 continue
             if fmt.upper() in b.formats:
                 return "samebook", {
@@ -3524,6 +3527,8 @@ class BookUpload(BaseHandler):
                     "msg": _("同名书籍《%s》已存在这一图书格式 %s") % (mi.title, fmt),
                     "book_id": b.get("id")
                 }
+            if book_id is None:
+                book_id = b.get("id")
         logging.info("import [%s] with format %s", repr(mi.title), fmt)
         if book_id is None:
             return "new", False
@@ -3607,8 +3612,15 @@ class BookUploadChunk(BaseHandler):
             return int(size_str)
 
     @js
-    def post(self):
-        """Handle chunked upload POST requests"""
+    async def post(self):
+        """Handle chunked upload POST requests
+
+        4.6.0-19：改为 async。分片上传正是为大文件设计的——原实现是同步
+        handler，合并 GB 级文件、读 EPUB/PDF 元数据、calibre 入库全在
+        ioloop 上跑，上传期间全站请求被冻住；且不进 _upload_slot 信号量，
+        与单文件上传互不知晓。现在：分片落盘保持轻量，合并+解析进线程池，
+        calibre 操作走 run_calibre_async，合并导入全程持 _upload_slot。
+        """
         if not BookAccessService.guest_upload_allowed():
             if self.is_guest():
                 return {"err": "permission", "msg": _("无权操作，请先登录")}
@@ -3617,8 +3629,6 @@ class BookUploadChunk(BaseHandler):
 
         # Get parameters from form data
         filename = self.get_argument("filename", "")
-        chunk_index = int(self.get_argument("chunk_index", 0))
-        total_chunks = int(self.get_argument("total_chunks", 1))
         file_hash = self.get_argument("file_hash", "")
 
         if not filename:
@@ -3641,6 +3651,18 @@ class BookUploadChunk(BaseHandler):
         if not re.fullmatch(r"[a-fA-F0-9]{8,128}", file_hash):
             return {"err": "params.hash", "msg": _("文件hash不合法")}
 
+        # 分片参数钳制：原来 int() 解析失败直接抛异常（@js 会把 traceback
+        # 回给客户端），total_chunks 传 10^9 会让合并循环做上亿次 exists
+        try:
+            chunk_index = int(self.get_argument("chunk_index", 0))
+            total_chunks = int(self.get_argument("total_chunks", 1))
+        except (TypeError, ValueError):
+            return {"err": "params.chunk", "msg": _("分块参数必须是数字")}
+        if total_chunks < 1 or total_chunks > 2000:
+            return {"err": "params.chunk", "msg": _("total_chunks 超出范围（1-2000）")}
+        if chunk_index < 0 or chunk_index >= total_chunks:
+            return {"err": "params.chunk", "msg": _("chunk_index 超出范围")}
+
         # Get the chunk data
         if "chunk" not in self.request.files:
             return {"err": "params.chunk", "msg": _("未找到文件块数据")}
@@ -3649,103 +3671,136 @@ class BookUploadChunk(BaseHandler):
         chunk_data = chunk_file["body"]
 
         # Create temporary directory for chunks
-        temp_dir = os.path.join(CONF["upload_path"], "temp_chunks", file_hash)
-        os.makedirs(temp_dir, exist_ok=True)
+        chunk_root = os.path.join(CONF["upload_path"], "temp_chunks")
+        temp_dir = os.path.join(chunk_root, file_hash)
+        if not os.path.isdir(temp_dir):
+            # 新会话第一片：顺手清扫 24h 前的孤儿目录——客户端中途放弃上传
+            # 时没人再走到合并分支，原实现这些目录会永久残留直到磁盘吃满
+            self._sweep_stale_chunk_dirs(chunk_root)
+            os.makedirs(temp_dir, exist_ok=True)
 
         # Save current chunk
         chunk_path = os.path.join(temp_dir, f"chunk_{chunk_index}")
         with open(chunk_path, "wb") as f:
             f.write(chunk_data)
 
-        # Check if all chunks are received
-        received_chunks = []
-        for i in range(total_chunks):
-            chunk_file_path = os.path.join(temp_dir, f"chunk_{i}")
-            if os.path.exists(chunk_file_path):
-                received_chunks.append(i)
+        # Check if all chunks are received（一次 listdir 代替逐个 exists）
+        try:
+            received = len(os.listdir(temp_dir))
+        except OSError:
+            received = 0
 
-        if len(received_chunks) == total_chunks:
+        if received >= total_chunks:
             # All chunks received, merge them
-            return self._merge_chunks_and_import(filename, file_hash, total_chunks, temp_dir)
+            # _upload_slot 定义在 BookUpload 上（两类共享同一把信号量：
+            # 分片合并与单文件导入互斥，暂存路径 upload_path/<filename> 才不会互踩）
+            async with BookUpload._upload_slot():
+                return await self._merge_chunks_and_import(filename, fmt, total_chunks, temp_dir)
         else:
             # Still waiting for more chunks
             return {
                 "err": "ok",
                 "msg": _("分块上传成功"),
-                "received_chunks": len(received_chunks),
+                "received_chunks": received,
                 "total_chunks": total_chunks
             }
 
-    def _merge_chunks_and_import(self, filename, file_hash, total_chunks, temp_dir):
-        """Merge all chunks and import the book"""
-        final_path = None
+    @staticmethod
+    def _sweep_stale_chunk_dirs(root, max_age_hours=24):
+        """清扫中途放弃的分片上传残留（temp_chunks/<hash> 目录）。"""
+        import shutil
         try:
-            # Clean filename
-            filename = re.sub(r"[\x80-\xFF]+", BookUpload.convert, filename)
-            filename = self._sanitize_uploaded_filename(filename)
-            if not filename:
-                return {"err": "params.filename", "msg": _("文件名不合法")}
-            fmt = os.path.splitext(filename)[1]
-            fmt = fmt[1:] if fmt else None
-            if not fmt:
-                return {"err": "params.filename", "msg": _("文件名不合法")}
-            fmt = fmt.lower()
+            now = time.time()
+            for name in os.listdir(root):
+                p = os.path.join(root, name)
+                if not os.path.isdir(p):
+                    continue
+                try:
+                    if now - os.path.getmtime(p) > max_age_hours * 3600:
+                        shutil.rmtree(p, ignore_errors=True)
+                except OSError:
+                    continue
+        except OSError:
+            pass
 
-            # Merge chunks into final file
-            try:
-                final_path = self._safe_upload_path(filename)
-            except ValueError:
-                return {"err": "params.filename", "msg": _("文件名不合法")}
+    def _merge_chunks_to_file(self, filename, fmt, total_chunks, temp_dir):
+        """合并分片并解析元数据（纯文件系统/解析，供线程池调用）。
+
+        返回 (final_path, mi, translators)。GB 级文件合并 + EPUB/PDF 解析
+        可能耗时分钟级，绝不能在 ioloop 上跑（4.6.0-19 前就是在 ioloop 上）。
+        """
+        final_path = self._safe_upload_path(filename)
+        try:
             with open(final_path, "wb") as outfile:
                 for i in range(total_chunks):
                     chunk_path = os.path.join(temp_dir, f"chunk_{i}")
                     with open(chunk_path, "rb") as chunk_file:
                         outfile.write(chunk_file.read())
+        except Exception:
+            # 合并中断时清掉半成品，避免 upload_path 根目录残留脏文件
+            if os.path.exists(final_path):
+                try:
+                    os.remove(final_path)
+                except OSError:
+                    pass
+            raise
 
-            # Clean up temporary chunks
-            import shutil
-            shutil.rmtree(temp_dir)
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
-            logging.info("Merged chunked upload file into [%s]", final_path)
+        logging.info("Merged chunked upload file into [%s]", final_path)
 
-            # Read ebook metadata (same logic as BookUpload)
-            failed = False
-            _translators = []
-            _authors = []
-            merged_fields = []
+        validate_book_file(final_path, fmt)  # InvalidBookFileError 由调用方处理
+        mi = read_book_metadata(final_path, fmt, filename)
+        if mi.title and mi.title == CALIBRE_ERROR_FLAG:
+            if fmt == "pdf":
+                mi.title = utils.remove_zlibrary_suffix(filename.replace("." + fmt, ""))
+            else:
+                logger.error("Failed to get metadata for %s, reason:%s", final_path, mi.comments)
+                mi.title = ""
+        mi.title = utils.super_strip(mi.title)
+        if mi.authors:
+            _authors, _translators = guess_authors(mi.authors)
+        else:
+            _authors, _translators = guess_authors([utils.super_strip(mi.author_sort)])
+        # 4.6.0-9：分片上传入库同样归一化，与单文件上传保持一致
+        mi.authors = resolve_author_list(_authors) or _authors
+
+        # 4.6.0-16：与单文件上传对齐（原来这里 pdf 无条件覆盖标题为文件名、
+        # 作者无条件改成"佚名"，把文件里刚同步进去的元数据全丢了）
+        stem = filename[:-len(fmt) - 1] if fmt else filename
+        if fmt == "txt":
+            normalize_txt_meta(mi, stem)
+        elif fmt == "pdf":
+            normalize_pdf_meta(mi, stem)
+
+        logging.info("chunked upload mi.title = " + repr(mi.title))
+        return final_path, mi, _translators
+
+    async def _merge_chunks_and_import(self, filename, fmt, total_chunks, temp_dir):
+        """Merge all chunks and import the book（4.6.0-19 起为 async）
+
+        FS/解析阶段进线程池；calibre 操作走 run_calibre_async，不占 ioloop。
+        """
+        final_path = None
+        try:
+            filename = re.sub(r"[\x80-\xFF]+", BookUpload.convert, filename)
+            filename = self._sanitize_uploaded_filename(filename)
+            if not filename or not fmt:
+                return {"err": "params.filename", "msg": _("文件名不合法")}
+
             try:
-                validate_book_file(final_path, fmt)
+                final_path, mi, _translators = await utils.run_in_threadpool(
+                    self._merge_chunks_to_file, filename, fmt, total_chunks, temp_dir)
             except InvalidBookFileError as e:
                 return {"err": "book.invalid", "msg": _("文件校验失败：%s") % e}
-            mi = read_book_metadata(final_path, fmt, filename)
-            if mi.title and mi.title == CALIBRE_ERROR_FLAG:
-                if fmt == "pdf":
-                    mi.title = utils.remove_zlibrary_suffix(filename.replace("." + fmt, ""))
-                else:
-                    logger.error("Failed to get metadata for %s, reason:%s", final_path, mi.comments)
-                    failed = True
-            mi.title = utils.super_strip(mi.title)
-            if mi.authors:
-                _authors, _translators = guess_authors(mi.authors)
-            else:
-                _authors, _translators = guess_authors([utils.super_strip(mi.author_sort)])
-            # 4.6.0-9：分片上传入库同样归一化，与单文件上传保持一致
-            mi.authors = resolve_author_list(_authors) or _authors
-            if failed:
+            if not mi.title:
                 return {"err": "book.invalid", "msg": _("此书籍文件无法识别, 或者受DRM保护无法导入")}
 
-            # 4.6.0-16：与单文件上传对齐（原来这里 pdf 无条件覆盖标题为文件名、
-            # 作者无条件改成"佚名"，把文件里刚同步进去的元数据全丢了）
-            stem = filename[:-len(fmt) - 1] if fmt else filename
-            if fmt == "txt":
-                normalize_txt_meta(mi, stem)
-            elif fmt == "pdf":
-                normalize_pdf_meta(mi, stem)
-
-            logging.info("chunked upload mi.title = " + repr(mi.title))
+            merged_fields = []
 
             # Check for existing books
-            books = self.calibre_db.books_with_same_title(mi)
+            books = await self.run_calibre_async(self.calibre_db.books_with_same_title, mi)
             if books and fmt in SCANNED_DOCUMENT_FORMATS and len(books) > 1:
                 # 扫描版作者多来自文件名、不可信：多个同名候选一律按新书入库，避免误并
                 logging.info("chunked upload: %d same-title candidates for scanned document, import as new book", len(books))
@@ -3753,16 +3808,14 @@ class BookUploadChunk(BaseHandler):
             if books:
                 book_id = None
                 for id in books:
-                    b = self.calibre_db.get_metadata(id, index_is_id=True)
+                    b = await self.run_calibre_async(
+                        self.calibre_db.get_metadata, id, index_is_id=True)
                     # 如果是实体书，则跳过
                     if b.get(CALIBRE_COLUMN_BOOK_TYPE, BOOK_TYPE_EBOOK) == BOOK_TYPE_PHYSICAL:
                         continue
-                    if book_id is None:
-                        book_id = b.get("id")
                     if b.get("authors", "") != mi.authors:
                         # 与 BookUpload.post 对齐：作者不匹配的候选不可作为并入目标，
                         # 否则扫描版（作者多来自文件名、不可信）会误并入同名不同作者的书
-                        book_id = None
                         continue
                     if fmt.upper() in b.formats:
                         return {
@@ -3770,32 +3823,41 @@ class BookUploadChunk(BaseHandler):
                             "msg": _("同名书籍《%s》已存在这一图书格式 %s") % (mi.title, fmt),
                             "book_id": b.get("id")
                         }
+                    if book_id is None:
+                        book_id = b.get("id")
                 logging.info("import [%s] from %s with format %s", repr(mi.title), final_path, fmt)
                 if book_id is None:
-                    # New EBOOK
-                    book_id = self._add_new_book(mi, [final_path])
+                    # New EBOOK（含封面兜底与新书通知；通知可能走 SMTP，放
+                    # blocking_pool 而不是 run_calibre_async，避免慢邮件占住 db_lock）
+                    book_id = await utils.run_in_threadpool(self._add_new_book, mi, [final_path])
                 else:
-                    self.calibre_db.add_format(book_id, fmt.upper(), final_path, True)
+                    await self.run_calibre_async(
+                        self.calibre_db.add_format, book_id, fmt.upper(), final_path, True)
                     # 4.6.0-16：并入既有书时，文件里的元数据不能白读——补进记录
-                    merged_fields = merge_meta_from_file(
-                        self.calibre_db, book_id, mi, force=_merge_meta_force(self),
+                    merged_fields = await self.run_calibre_async(
+                        merge_meta_from_file, self.calibre_db, book_id, mi,
+                        _merge_meta_force(self),
                     ) or []
             else:
-                book_id = self._add_new_book(mi, [final_path])
+                book_id = await utils.run_in_threadpool(self._add_new_book, mi, [final_path])
                 if _translators:
                     translators = ",".join(_translators)
-                    self.calibre_db_cache.set_field(CALIBRE_COLUMN_TRANSLATORS, {book_id: translators})
+                    await self.run_calibre_async(
+                        self.calibre_db_cache.set_field,
+                        CALIBRE_COLUMN_TRANSLATORS, {book_id: translators})
 
             self.add_msg("success", _("导入书籍成功！"))
             return {"err": "ok", "book_id": book_id, "merged_fields": merged_fields}
 
         except Exception as e:
             logging.error("Error in chunked upload: %s", str(e))
+            logging.error(traceback.format_exc())
             # Clean up on error
             if os.path.exists(temp_dir):
                 import shutil
-                shutil.rmtree(temp_dir)
-            return {"err": "upload_error", "msg": _("文件上传处理失败：%s") % str(e)}
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            # 原实现把 str(e) 原样回给客户端（内含服务器路径）；细节留日志
+            return {"err": "upload_error", "msg": _("文件上传处理失败：%s") % type(e).__name__}
         finally:
             # 上传的源文件已被 calibre 复制进书库，除非配置要求保留，否则清理暂存文件
             # (无论导入成功、失败还是发现同名书籍，都要清理，避免残留)

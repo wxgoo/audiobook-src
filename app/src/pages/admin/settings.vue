@@ -2186,6 +2186,16 @@ export default {
             title: "settings.sec_reader_groups",
             fields: [
               {
+                // 读者组总开关（4.6.0-19）：只关组规则这一层，用户自身的
+                // read_limit/limit_* 不受影响；成员归属保留，重开即恢复
+                icon: "mdi-account-group-outline",
+                key: "READER_GROUPS_ENABLED",
+                label: "settings.reader_groups_enabled",
+                tips: "settings.reader_groups_enabled_tips",
+                al: ["读者组", "总开关", "分组权限", "关闭读者组"],
+                type: "checkbox",
+              },
+              {
                 icon: "mdi-book-lock-outline",
                 key: "ALLOW_READ_RANGE_SETTING",
                 label: "settings.allow_read_range_setting",

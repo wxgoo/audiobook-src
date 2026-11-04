@@ -68,6 +68,8 @@ class MonitorService:
         self._monitor_thread: threading.Thread | None = None
         self._scheduler_thread: threading.Thread | None = None
         self._active_task_thread: threading.Thread | None = None
+        # 当前监听的根目录（realpath）。调度线程据此发现 scan_upload_path 配置变更
+        self._watch_root: str = ""
 
     def start(self) -> None:
         """启动监控（幂等，已运行则忽略）。"""
@@ -82,17 +84,12 @@ class MonitorService:
             )
             return
 
-        watch_path = CONF.get("scan_upload_path", "")
+        watch_path = self._current_watch_path()
         if not watch_path:
-            logging.error("[Monitor] scan_upload_path 未配置，跳过目录监控")
-            return
-
-        watch_path = os.path.realpath(watch_path)
-        if not os.path.isdir(watch_path):
-            logging.error("[Monitor] scan_upload_path 不存在或不是目录: %s", watch_path)
             return
 
         self._inotify = inotify_simple.INotify()
+        self._watch_root = watch_path
         self._running = True
         self._add_watch_recursive(watch_path)
 
@@ -111,14 +108,65 @@ class MonitorService:
             "如有此类子目录请 留意此限制。"
         )
 
+    @staticmethod
+    def _current_watch_path():
+        """读取并校验当前配置的监听目录，返回 realpath 或 None。"""
+        watch_path = CONF.get("scan_upload_path", "")
+        if not watch_path:
+            logging.error("[Monitor] scan_upload_path 未配置，跳过目录监控")
+            return None
+        watch_path = os.path.realpath(watch_path)
+        if not os.path.isdir(watch_path):
+            logging.error("[Monitor] scan_upload_path 不存在或不是目录: %s", watch_path)
+            return None
+        return watch_path
+
+    def _rebuild_watcher(self) -> bool:
+        """（重）建 inotify 实例与整棵监听树。monitor 线程自愈用。"""
+        try:
+            import inotify_simple
+        except ImportError:
+            logging.error("[Monitor] inotify_simple 未安装，自动监控不可用。")
+            return False
+        watch_path = self._current_watch_path()
+        if not watch_path:
+            return False
+        try:
+            if self._inotify is not None:
+                try:
+                    self._inotify.close()
+                except Exception:
+                    pass
+            self._inotify = inotify_simple.INotify()
+            with self._wd_lock:
+                self._wd_to_path.clear()
+                self._path_to_wd.clear()
+            self._watch_root = watch_path
+            self._add_watch_recursive(watch_path)
+            logging.warning("[Monitor] watcher 已重建: %s", watch_path)
+            return True
+        except Exception as e:
+            logging.error("[Monitor] watcher 重建失败: %s", e)
+            return False
+
     def stop(self) -> None:
-        """停止监控（幂等）。"""
+        """停止监控（幂等）。
+
+        4.6.0-19：补 join。原来只置 _running + 关 fd，快速 stop→start 时旧
+        调度线程可能看到新一轮的 _running=True 复活成双份、旧 monitor 线程
+        读到新 INotify fd，出现双消费。
+        """
         self._running = False
         if self._inotify:
             try:
                 self._inotify.close()
             except Exception:
                 pass
+        for t in (self._monitor_thread, self._scheduler_thread):
+            if t and t.is_alive():
+                t.join(timeout=3)
+        self._monitor_thread = None
+        self._scheduler_thread = None
         logging.info("[Monitor] 已停止")
 
     def _watch_flags(self) -> int:
@@ -220,14 +268,30 @@ class MonitorService:
         MOVED_FROM_MASK = int(F.MOVED_FROM)  # 64 (0x00000040)
         MOVED_TO_MASK = int(F.MOVED_TO)  # 128 (0x00000080)
         IGNORED_MASK = int(F.IGNORED)  # 32768 (0x00008000)
+        Q_OVERFLOW_MASK = int(F.Q_OVERFLOW)  # 16384 (0x00004000)
 
         while self._running:
             try:
                 events = self._inotify.read(timeout=1000)  # 1s 超时以便检查 _running
             except Exception as e:
-                if self._running:
-                    logging.error("[Monitor] inotify.read 异常: %s", e)
-                break
+                if not self._running:
+                    break
+                # 4.6.0-19：read 异常不再直接退出线程（原来退出后 _running 仍
+                # 为 True，start() 幂等短路，自动导入静默失效没人发现）。
+                # 尝试重建 watcher，失败则退避重试。
+                logging.error("[Monitor] inotify.read 异常: %s，尝试重建 watcher", e)
+                rebuilt = False
+                for _ in range(6):
+                    time.sleep(5)
+                    if not self._running:
+                        break
+                    if self._rebuild_watcher():
+                        rebuilt = True
+                        break
+                if not rebuilt:
+                    logging.error("[Monitor] watcher 重建连续失败，monitor 线程退出（调度线程会尝试重新拉起）")
+                    break
+                continue
 
             for event in events:
                 mask = event.mask
@@ -238,6 +302,18 @@ class MonitorService:
                     continue
 
                 logging.info("[Monitor] Event: wd=%d mask=%d name=%s cookie=%d", wd, mask, name, event.cookie)
+
+                # IN_Q_OVERFLOW：内核事件队列溢出，溢出期间的事件全部丢失。
+                # 不处理的话漏导入只能靠手动全量扫描兜底——这里主动把监听根
+                # 重新走一遍「加 watch + 扫已有文件」，把丢掉的事件补回来。
+                if mask & Q_OVERFLOW_MASK:
+                    logging.error("[Monitor] inotify 队列溢出，部分事件丢失；重新扫描监听根 %s 补齐", self._watch_root)
+                    if self._watch_root:
+                        try:
+                            self._add_watch_and_scan_files(self._watch_root)
+                        except OSError as e2:
+                            logging.warning("[Monitor] 溢出后补扫失败: %s", e2)
+                    continue
 
                 # IN_IGNORED: 内核自动回收了该 wd（目录删除/卸载后）
                 if mask & IGNORED_MASK:
@@ -310,8 +386,13 @@ class MonitorService:
                             logging.info("[Monitor] add watch for %s", full_path)
                             if os.path.isdir(full_path):
                                 self._add_watch_recursive(full_path)
-                    if not old_entry and not is_dir and (mask & (CREATE_MASK | MOVED_TO_MASK)):
-                        # file and not moving or renaming
+                    if not old_entry and not is_dir and (mask & MOVED_TO_MASK):
+                        # 外部移入的文件（无 cookie 配对）。
+                        # 注意：CREATE 事件**不再**入队（4.6.0-19）——大文件拷贝
+                        # 超过 3s 防抖窗口时，文件还没拷完就会被导入，截断的
+                        # 书按正常哈希入库后被判重永久跳过。文件的完成信号是
+                        # CLOSE_WRITE（写 fd 关闭）或 MOVED_TO（改名/移入完成），
+                        # cp/scp/WebDAV/rsync(先写临时文件再 rename) 都会触发其一。
                         self._on_file_event(full_path)
                     continue
 
@@ -350,7 +431,41 @@ class MonitorService:
     def _scheduler_loop(self) -> None:
         while self._running:
             time.sleep(1)
+
+            # 看门狗：monitor 线程意外死亡（未捕获异常等）时重新拉起。
+            # 原实现线程一死自动导入就静默失效，只能重启进程恢复。
+            mt = self._monitor_thread
+            if self._running and (mt is None or not mt.is_alive()):
+                logging.warning("[Monitor] monitor 线程已退出，看门狗尝试重新拉起")
+                if self._rebuild_watcher():
+                    self._monitor_thread = threading.Thread(
+                        target=self._monitor_loop,
+                        name="MonitorService.inotify",
+                        daemon=True)
+                    self._monitor_thread.start()
+
+            # scan_upload_path 配置变更即时生效（原来只在 start() 时读一次，
+            # 改路径后监控仍盯旧目录，只能重启进程）
+            try:
+                current = self._current_watch_path()
+                if self._running and current and current != self._watch_root:
+                    logging.warning("[Monitor] scan_upload_path 变更: %s -> %s，重建监听",
+                                    self._watch_root, current)
+                    if self._rebuild_watcher():
+                        # 新目录里可能已有文件，补一次扫描
+                        self._add_watch_and_scan_files(self._watch_root)
+            except Exception as e:
+                logging.warning("[Monitor] 检查监听路径变更失败: %s", e)
+
+            # 营救滞留的 _merge_pending：任务线程退出后并入的文件原本要等
+            # 下一个新文件事件才被带走
             with self._state_lock:
+                task_alive = self._active_task_thread and self._active_task_thread.is_alive()
+                if not task_alive and self._merge_pending:
+                    self._pending_files |= self._merge_pending
+                    self._merge_pending.clear()
+                    logging.info("[Monitor] 营救滞留的合并队列: %d 个文件", len(self._pending_files))
+
                 if not self._pending_files:
                     continue
                 if time.monotonic() - self._last_event_time < DEBOUNCE_SECONDS:

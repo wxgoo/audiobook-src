@@ -244,6 +244,46 @@ def _title_index_cleanup(path):
         pass
 
 
+def collect_sidecar_audio_dirs(d):
+    """收集「电子书同目录 + 下一级子目录」里带音频的目录（4.6.0-19）。
+
+    返回 [(目录绝对路径, [音频文件名])]，同目录在前、子目录按名排序。
+    子目录跳过隐藏/临时目录；子目录下面再有层级不递归（只处理一级）。
+
+    用户资源包常见布局：`书名/书名.epub + 书名/第一季/*.mp3`——音频不在
+    电子书同目录而在下一级子目录，原来这种情况音频会残留，之后点
+    「导入有声书」会按 ID3 标签再建一本重复书。纯文件系统操作，可单测。
+    """
+    entries = []
+    if not os.path.isdir(d):
+        return entries
+    audio_exts = tuple(constants.SUPPORTED_AUDIO_FORMATS)
+    try:
+        same = sorted(
+            f for f in os.listdir(d)
+            if os.path.isfile(os.path.join(d, f)) and f.lower().endswith(audio_exts)
+        )
+        if same:
+            entries.append((os.path.abspath(d), same))
+        for name in sorted(os.listdir(d)):
+            sub = os.path.join(d, name)
+            if not os.path.isdir(sub) or name.startswith(".") or name.startswith("~"):
+                continue
+            try:
+                subs = sorted(
+                    f for f in os.listdir(sub)
+                    if os.path.isfile(os.path.join(sub, f)) and f.lower().endswith(audio_exts)
+                )
+            except OSError as err:
+                logging.warning("[IMPORT] sidecar audio: 列子目录失败 %s: %s", sub, err)
+                continue
+            if subs:
+                entries.append((os.path.abspath(sub), subs))
+    except OSError as err:
+        logging.warning("[IMPORT] sidecar audio: 列目录失败 %s: %s", d, err)
+    return entries
+
+
 class ScanService(AsyncService):
     static_abort_flag = False
     # 本轮 Phase1 是否发生过持久化失败（批量 apply/commit 异常、行级 save 被丢）。
@@ -1190,60 +1230,88 @@ class ScanService(AsyncService):
         """
         if options is None:
             options = ImportOptions()
+        from webserver.services.audios_import import AudioBookImporter  # 局部导入避免循环依赖
+
+        def _cleanup_rejected_dir():
+            # 拒绝时也要把批量上传的暂存批次目录清掉：handler 侧已经回了
+            # 「已开始」，cleanup 只在导入流程里做，这里不清就永久泄漏
+            cleanup_dir = getattr(options, "cleanup_dir", None)
+            if cleanup_dir and not CONF.get("KEEP_UPLOAD_SOURCE_FILE", False):
+                shutil.rmtree(cleanup_dir, ignore_errors=True)
+
         with ScanService.task_claim_lock:
             if ScanService.static_is_importing:
                 logging.error("Importing is running, please wait...")
+                _cleanup_rejected_dir()
                 return
             if ScanService.is_bulk_deleting():
                 # 二道闸：handler 检查与异步入队之间存在窗口，服务线程入口再拦一次
                 logging.error("[IMPORT] Bulk deleting is running, import rejected")
                 self.add_msg(user_id=user_id, status="error", msg=_("已有批量删除任务正在运行，请稍后再试"))
+                _cleanup_rejected_dir()
+                return
+            if AudioBookImporter.is_running():
+                # 与有声书导入互斥（4.6.0-19）：这对原来只有批量删除侧设防，
+                # 两边同时搬文件/写 ScanFile 会互相踩
+                logging.error("[IMPORT] audiobook importing is running, import rejected")
+                self.add_msg(user_id=user_id, status="error", msg=_("已有有声书导入任务正在运行，请稍后再试"))
+                _cleanup_rejected_dir()
                 return
             ScanService.static_is_importing = True
 
-        ScanService.invalid_folder.clear()
-        ScanService.static_abort_flag = False
-        ScanService.static_phase1_persist_failed = False
-        ScanService.static_import_user_id = user_id
+        imported_id = options.import_id
         start_time = time.time()
 
-        imported_id = options.import_id
-        options.skip_last_dirs = self._normalize_scope(options.skip_last_dirs)
+        try:
+            ScanService.invalid_folder.clear()
+            ScanService.static_abort_flag = False
+            ScanService.static_phase1_persist_failed = False
+            ScanService.static_import_user_id = user_id
 
-        if options.selector is not None:
-            sel_kind, sel_value = options.selector
-            if sel_kind == "ready":
-                paths = self.resolve_ready_paths(self.session)
-            else:
-                paths = self.resolve_filter_paths(self.session, sel_value)
+            options.skip_last_dirs = self._normalize_scope(options.skip_last_dirs)
 
-        # 快照剪枝只走全量作用域（细则见 _snapshot_active）。
-        use_snapshot = ScanService._snapshot_active(paths, options.force, options.skip_last_dirs)
-        filelist, visited, file_dir = self._collect_files(paths, use_snapshot=use_snapshot)
-        logging.info("[IMPORT] Collected %d files in %.3f seconds (skip_last_dirs=%d)", len(filelist), time.time() - start_time, options.skip_last_dirs)
-        if not filelist:
-            # 选择器模式下 paths 是全量解析结果（百万行时单条日志上百 MB），只记条数
-            candidates = paths if isinstance(paths, str) else "%d paths" % len(paths or [])
-            logging.warning("[IMPORT] No valid files found in: %s", candidates)
             if options.selector is not None:
-                # 选择器空跑：记录在库但磁盘上已无对应文件（missed/invalid 等），明确告知而非静默结束
-                self.add_msg(
-                    user_id=user_id,
-                    status="warning",
-                    msg=_("选择器没有找到可导入的文件，对应记录可能已失效或源文件已不存在"),
-                )
-            # 本轮虽无可导入文件，但目录已成功走完：提交快照，否则“只有非扫描格式的
-            # 目录”会每轮重走、增量永远不生效。use_snapshot 为假（显式路径/force/选项4）
-            # 时无需提交；abort 由 _commit_dir_snapshots 内部熔断兜底。
-            if use_snapshot:
-                self._commit_dir_snapshots(
-                    self.session, visited, os.path.realpath(CONF.get("scan_upload_path", ""))
-                )
+                sel_kind, sel_value = options.selector
+                if sel_kind == "ready":
+                    paths = self.resolve_ready_paths(self.session)
+                else:
+                    paths = self.resolve_filter_paths(self.session, sel_value)
+
+            # 快照剪枝只走全量作用域（细则见 _snapshot_active）。
+            use_snapshot = ScanService._snapshot_active(paths, options.force, options.skip_last_dirs)
+            filelist, visited, file_dir = self._collect_files(paths, use_snapshot=use_snapshot)
+            logging.info("[IMPORT] Collected %d files in %.3f seconds (skip_last_dirs=%d)", len(filelist), time.time() - start_time, options.skip_last_dirs)
+            if not filelist:
+                # 选择器模式下 paths 是全量解析结果（百万行时单条日志上百 MB），只记条数
+                candidates = paths if isinstance(paths, str) else "%d paths" % len(paths or [])
+                logging.warning("[IMPORT] No valid files found in: %s", candidates)
+                if options.selector is not None:
+                    # 选择器空跑：记录在库但磁盘上已无对应文件（missed/invalid 等），明确告知而非静默结束
+                    self.add_msg(
+                        user_id=user_id,
+                        status="warning",
+                        msg=_("选择器没有找到可导入的文件，对应记录可能已失效或源文件已不存在"),
+                    )
+                # 本轮虽无可导入文件，但目录已成功走完：提交快照，否则“只有非扫描格式的
+                # 目录”会每轮重走、增量永远不生效。use_snapshot 为假（显式路径/force/选项4）
+                # 时无需提交；abort 由 _commit_dir_snapshots 内部熔断兜底。
+                if use_snapshot:
+                    self._commit_dir_snapshots(
+                        self.session, visited, os.path.realpath(CONF.get("scan_upload_path", ""))
+                    )
+                ScanService.static_is_importing = False
+                ScanService.static_import_user_id = 0
+                if options.cleanup_dir and not CONF.get("KEEP_UPLOAD_SOURCE_FILE", False):
+                    shutil.rmtree(options.cleanup_dir, ignore_errors=True)
+                return
+        except Exception:
+            # 4.6.0-19：置位之后、主流程 try 之前这段收集代码（选择器解析、
+            # _collect_files）原来裸露在异常保护之外，任一异常会把导入锁泄漏
+            # 到重启——之后所有导入被「已有导入任务正在运行」拒绝，监控线程
+            # 永远等不到空闲。这里兜底复位锁再抛。
             ScanService.static_is_importing = False
             ScanService.static_import_user_id = 0
-            if options.cleanup_dir and not CONF.get("KEEP_UPLOAD_SOURCE_FILE", False):
-                shutil.rmtree(options.cleanup_dir, ignore_errors=True)
-            return
+            raise
 
         task_id = None
         try:
@@ -1608,43 +1676,53 @@ class ScanService(AsyncService):
         return new_book_id, status
 
     def _sync_sidecar_audio(self, fpath, book_id):
-        """§同目录音频随书导入§（4.6.0-15）
+        """§同目录（及下一级子目录）音频随书导入§（4.6.0-15，4.6.0-19 扩展）
 
         场景：imports/audiobooks/<书名>/ 里 epub+mp3 混放。书籍扫描把 epub
         导入成书后，把同目录的音频一并挂到该书 .audio/——一次导入书+音频
         齐活，不用再点「导入有声书」；否则音频会残留，之后点「导入有声书」
         要么报 empty、要么按 ID3 标签（播音员当作者）再建一本重复书。
 
-        防重：给目录写一条 audiodir: 的 ScanFile 标记，AudioBookImporter
-        看到已处理目录直接 skip。只对 audiobooks 导入目录下的文件生效，
-        普通书籍目录里 epub+mp3 混放不在此列（那里可能是资料包）。
+        4.6.0-19 起音频在电子书的**下一级子目录**同样处理（如
+        `书名/书名.epub + 书名/第一季/*.mp3`，分季打包的常见布局）。
+        子目录音频与同目录音频同名冲突时加「子目录名-」前缀区分。
+
+        防重：给目录写 audiodir: 的 ScanFile 标记（书目录本身和贡献了音频的
+        子目录都要标，否则 AudioBookImporter 会把子目录当独立有声书再建一本）。
+        只对 audiobooks 导入目录下的文件生效，普通书籍目录里 epub+mp3 混放
+        不在此列（那里可能是资料包）。
         """
         d = os.path.dirname(os.path.abspath(fpath))
         import_root = os.path.abspath(os.path.join(
             CONF.get("scan_upload_path", "/data/books/imports/"), constants.AUDIO_BOOK_IMPORTS))
         if not os.path.abspath(d).startswith(import_root + os.sep):
             return
-        audios = sorted([
-            f for f in os.listdir(d)
-            if os.path.isfile(os.path.join(d, f))
-            and f.lower().endswith(tuple(constants.SUPPORTED_AUDIO_FORMATS))
-        ])
-        if not audios:
+        sidecar_dirs = collect_sidecar_audio_dirs(d)
+        if not sidecar_dirs:
             return
         dest = audio_dir_for_write(self.db, book_id)
         if not dest:
             logging.warning("[IMPORT] sidecar audio: book %s 没有可用书目录，跳过", book_id)
             return
+        first_audio_path = os.path.join(sidecar_dirs[0][0], sidecar_dirs[0][1][0])
         existing_audios = [f for f in (os.listdir(dest) if os.path.isdir(dest) else [])
                            if f.lower().endswith(tuple(constants.SUPPORTED_AUDIO_FORMATS))]
         if existing_audios:
             logging.info("[IMPORT] sidecar audio: book %s 已有音频，跳过同步", book_id)
         else:
-            from webserver.services.audios_import import _copy_or_convert_file
-            for fname in audios:
-                _copy_or_convert_file(os.path.join(d, fname), dest)
+            from webserver.services.audios_import import _copy_or_convert_file, _get_dest_filename
+            copied = 0
+            for sdir, audios in sidecar_dirs:
+                prefix = "" if sdir == d else os.path.basename(sdir)
+                for fname in audios:
+                    target = fname
+                    if prefix and os.path.exists(os.path.join(dest, _get_dest_filename(target))):
+                        # 跨子目录同名（如两个季都有 01.mp3）：加子目录名前缀
+                        target = f"{prefix}-{fname}"
+                    _copy_or_convert_file(os.path.join(sdir, fname), dest, dest_name=target)
+                    copied += 1
             logging.info("[IMPORT] sidecar audio: %d 个音频已随书挂到 book %s 的 %s",
-                         len(audios), book_id, dest)
+                         copied, book_id, dest)
 
         # §顺带补演播者§ 4.6.0-18
         # 音频是随电子书一起进来的，走的是本方法而不是 AudioBookImporter.do_import，
@@ -1653,18 +1731,25 @@ class ScanService(AsyncService):
         # 这里读首曲标签补一次：作者仍是电子书的作者（不动），只填演播者。
         try:
             from webserver.services.audios_import import _extract_audio_metadata, attach_narrator
-            _title, narrator = _extract_audio_metadata(os.path.join(d, audios[0]), "")
+            _title, narrator = _extract_audio_metadata(first_audio_path, "")
             if narrator:
                 attach_narrator(self.db, book_id, narrator)
                 logging.info("[IMPORT] sidecar audio: book %s 演播者 %s", book_id, narrator)
         except Exception as err:
             logging.warning("[IMPORT] sidecar audio: 补演播者失败 book %s: %s", book_id, err)
-        # 目录标记为已处理，防止 AudioBookImporter 按 ID3 再建一本重复书
-        dir_hash = "audiodir:" + hashlib.md5(os.path.normpath(d).encode("utf-8")).hexdigest()
+        # 目录标记为已处理，防止 AudioBookImporter 按 ID3 再建一本重复书。
+        # 书目录本身和每个贡献了音频的子目录都要标。
+        marked_dirs = [d] + [sdir for sdir, _ in sidecar_dirs if sdir != d]
+        for mdir in marked_dirs:
+            self._mark_sidecar_dir(mdir, book_id)
+
+    def _mark_sidecar_dir(self, mdir, book_id):
+        """给目录写一条 audiodir: 防重标记（本目录音频已随书 book_id 带走）。"""
+        dir_hash = "audiodir:" + hashlib.md5(os.path.normpath(mdir).encode("utf-8")).hexdigest()
         try:
             marker = self.session.query(ScanFile).filter(ScanFile.hash == dir_hash).first()
             if not marker:
-                marker = ScanFile(d, dir_hash, 0)
+                marker = ScanFile(mdir, dir_hash, 0)
                 marker.import_type = constants.IMPORT_TYPE_AUDIOBOOK
                 marker.book_id = book_id
                 # 标 IMPORTED：AudioBookImporter 跳过本目录，且后续往同目录
@@ -1675,18 +1760,18 @@ class ScanService(AsyncService):
                 # 目的是让 AudioBookImporter 跳过该目录，不再按 ID3 标签建重复书。
                 # 原来 title/author 留空，在「已导入」列表里就是几行书名空白的
                 # 有声书图标，看着像导入失败。填上目录名并标注用途，一眼能懂。
-                marker.title = (os.path.basename(os.path.normpath(d)) or d)[:100]
+                marker.title = (os.path.basename(os.path.normpath(mdir)) or mdir)[:100]
                 marker.author = None
                 marker.data = {**(marker.data or {}), "sidecar_of_book": book_id}
                 self.save_or_rollback(marker)
-                logging.info("[IMPORT] sidecar audio: 目录 %s 已标记为已处理", d)
+                logging.info("[IMPORT] sidecar audio: 目录 %s 已标记为已处理", mdir)
             elif marker.status not in (ScanFile.IMPORTED, ScanFile.EXIST):
                 marker.status = ScanFile.IMPORTED
                 marker.book_id = marker.book_id or book_id
-                marker.title = marker.title or (os.path.basename(os.path.normpath(d)) or d)[:100]
+                marker.title = marker.title or (os.path.basename(os.path.normpath(mdir)) or mdir)[:100]
                 self.save_or_rollback(marker)
         except Exception as err:
-            logging.warning("[IMPORT] sidecar audio: 写目录标记失败 %s: %s", d, err)
+            logging.warning("[IMPORT] sidecar audio: 写目录标记失败 %s: %s", mdir, err)
 
     def _importing_worker(self, work_queue, importing_imported, opts):
         """Worker thread for Phase 2: consumes row IDs from work_queue and imports each file.

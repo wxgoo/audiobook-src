@@ -815,6 +815,44 @@ class KoreaderPosition(Base, SQLAlchemyMixin):
         }
 
 
+# 有声书播放进度（4.6.0-19）。此前进度只存浏览器 localStorage，换设备/换
+# 浏览器/清缓存即丢。语义与前端播放器对齐：track_index 是播放列表里的
+# 集/章序号，position 是该集内的秒数（audio.currentTime），duration 是该集
+# 总时长（供前端校验进度有效性）。每 (reader_id, book_id) 一行。
+class AudioPlayback(Base, SQLAlchemyMixin):
+    __tablename__ = "audio_playback"
+    __table_args__ = (
+        Index("ix_audio_playback_reader_book", "reader_id", "book_id", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True)
+    reader_id = Column(Integer, ForeignKey("readers.id"))
+    book_id = Column(Integer)
+    track_index = Column(Integer, default=0)
+    position = Column(Float, default=0)
+    duration = Column(Float)
+    updated_at = Column(DateTime)
+
+    reader = relationship(Reader)
+
+    def __init__(self, reader_id, book_id, track_index=0, position=0, duration=None):
+        super().__init__()
+        self.reader_id = reader_id
+        self.book_id = book_id
+        self.track_index = track_index
+        self.position = position
+        self.duration = duration
+        self.updated_at = datetime.datetime.now()
+
+    def format_dict(self):
+        return {
+            "track_index": self.track_index,
+            "position": self.position,
+            "duration": self.duration,
+            "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
+        }
+
+
 # 用户对某本书的评分 + 评论（"共读"里的评价 = 推荐，见 plan/Social_Reading_Plan.md §5.1）。
 # 每个用户对每本书最多一条（唯一约束），自行删除是软删除（deleted_at），管理员屏蔽是把
 # status 置为 hidden（prev_status 记录屏蔽前的状态，供"恢复"用），两者语义不同、互不覆盖。
@@ -1283,7 +1321,7 @@ def user_syncdb(engine):
 # 表结构随功能迭代新增的表，不希望依赖运维方手动重新执行 `--syncdb` 才能用上
 # （`docker/start.sh` 每次启动都会跑 --syncdb，但手工部署/测试环境不一定会），
 # 在正常的 make_app() 启动路径里也顺带补建一次，checkfirst=True 天然幂等。
-_NEW_TABLES_AUTO_ENSURE = (ReadingRecord, BookReview, InstalledTool, BookReadingStats, BookList, BookListBook, BookListLike, ManualReadingLog, BookVisit, BookShare, ScanDirSnapshot, MyNexusBookAnalysis, MyNexusChatSession, KoreaderPosition)
+_NEW_TABLES_AUTO_ENSURE = (ReadingRecord, BookReview, InstalledTool, BookReadingStats, BookList, BookListBook, BookListLike, ManualReadingLog, BookVisit, BookShare, ScanDirSnapshot, MyNexusBookAnalysis, MyNexusChatSession, KoreaderPosition, AudioPlayback)
 
 
 def ensure_new_tables(engine):
