@@ -141,8 +141,22 @@ export default {
             if (!val) {
                 this.saveProgress();
                 this.stopAudioFilePlayback();
+            } else {
+                // §打开时重载进度§ mounted 时 audios 往往还没到（父组件异步取），
+                // 旧代码只在那时 loadResumeMap 一次 → 列表为空、resumeMap 永远
+                // 是空，于是「有没有听过都从头」，而且后面 saveProgress 写入
+                // 的 key 又和读取时不一致。打开弹窗时按最新列表重建一次。
+                this.loadResumeMap();
             }
         },
+        'audios.audios': {
+            handler() { this.loadResumeMap(); },
+            deep: false,
+        },
+        // bookId 也是异步来的（父组件 book && book.id）。它是进度 key 的一部分，
+        // 晚到时 loadResumeMap 生成的 key 会与之后 saveProgress 的不一致，
+        // 表现同样是「读过也像没读过」。
+        bookId() { this.loadResumeMap(); },
     },
     beforeDestroy() {
         // 关闭时也要存一次，否则最后几秒的进度会丢
