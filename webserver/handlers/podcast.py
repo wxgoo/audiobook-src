@@ -673,7 +673,7 @@ class PodcastAudioFile(PodcastBaseHandler):
 
         # 音频在书目录内的 .audio/（4.6.0-15 起唯一布局）
         from webserver.base.audio_dir import audio_dir_for_read
-        audio_dir, _legacy = audio_dir_for_read(self.db, book_id)
+        audio_dir, _legacy = audio_dir_for_read(self.calibre_db, book_id)
         if not audio_dir:
             raise web.HTTPError(404, reason="Audio directory not found")
         file_path = os.path.join(audio_dir, filename)

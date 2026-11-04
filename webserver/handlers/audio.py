@@ -343,7 +343,7 @@ class AudioDetail(BaseHandler):
 
             # Check if audio file already exists
             # 音频在书目录内的 .audio/（4.6.0-15 起唯一布局）
-            audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
+            audio_dir, _legacy = resolve_audio_dir(self.calibre_db, book_id)
             if os.path.exists(audio_dir) and os.listdir(audio_dir):
                 audio_files = [
                     f
@@ -846,7 +846,7 @@ class AudioDelete(BaseHandler):
                 ConversionWorkerMap.pop(book_id, None)
 
             # Delete audio directory（只删 .audio/ 这一层，不动书目录里的书）
-            audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
+            audio_dir, _legacy = resolve_audio_dir(self.calibre_db, book_id)
             if not audio_dir or not os.path.exists(audio_dir):
                 return {"err": "audio.not_found", "msg": _("未找到要删除的音频文件")}
             try:
@@ -915,7 +915,7 @@ class AudioFile(BaseHandler):
                 raise web.HTTPError(403, "Invalid filename")
 
             # 音频（含同名字幕）都在书目录内的 .audio/ 下，没有第二处可找。
-            audio_dir = resolve_audio_dir_or_404(self.db, book_id)
+            audio_dir = resolve_audio_dir_or_404(self.calibre_db, book_id)
             file_path = os.path.join(audio_dir, filename)
             if not os.path.exists(file_path):
                 logging.warning("[AUDIO] file not found: %s (dir: %s)",
@@ -1065,7 +1065,7 @@ class AudioCollection(BaseHandler):
                         }
 
             # 检查音频目录
-            audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
+            audio_dir, _legacy = resolve_audio_dir(self.calibre_db, book_id)
             if not audio_dir or not os.path.exists(audio_dir):
                 logging.error(f"Audio directory does not exist: {audio_dir}")
                 return {"err": "audio.not_found", "msg": _("音频文件不存在")}
@@ -1172,7 +1172,7 @@ class AudioCollectionDownloadFile(BaseHandler):
                 raise web.HTTPError(403, "Download key expired")
 
             # 检查zip文件
-            audio_dir = resolve_audio_dir_or_404(self.db, book_id)
+            audio_dir = resolve_audio_dir_or_404(self.calibre_db, book_id)
             zip_filename = f"audio_collection_{book_id}.zip"
             zip_path = os.path.join(audio_dir, zip_filename)
             uid = biz_key.reader_id
@@ -1332,7 +1332,7 @@ class AudioPurchase(BaseHandler):
                 return {"err": "already.purchased", "msg": _("您已经购买过此音频")}
 
             # 检查音频是否存在
-            audio_dir, _legacy = resolve_audio_dir(self.db, book_id)
+            audio_dir, _legacy = resolve_audio_dir(self.calibre_db, book_id)
             if not audio_dir or not os.path.exists(audio_dir):
                 return {"err": "audio.not_found", "msg": _("音频文件不存在")}
 
