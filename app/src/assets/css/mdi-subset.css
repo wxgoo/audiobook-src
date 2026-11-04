@@ -626,6 +626,10 @@
   content: "\F1030";
 }
 
+.mdi-file-music-outline::before {
+  content: "\F0E2A";
+}
+
 .mdi-file-pdf-box::before {
   content: "\F0226";
 }

@@ -26,6 +26,7 @@ from webserver.toolbox.epub_fixer import EpubFixerTool
 from webserver.toolbox.utils import epub_fixer_lib
 from webserver.toolbox.epub_split import EpubSplitTool
 from webserver.toolbox.author_clean_tool import AuthorCleanTool
+from webserver.services import audio_transcode
 from webserver.toolbox.mimo_tts import MimoTTSTool
 try:
     from webserver.toolbox.text_replace import TextReplaceTool
@@ -693,6 +694,67 @@ class AdminAuthorClean(BaseHandler):
             return {"err": "ok", "msg": _("作者替换任务已启动，右上角可以查看进度")}
         else:
             return {"err": "params.action.invalid", "msg": _("无效的操作类型")}
+
+
+class AdminAudioTranscodeScan(BaseHandler):
+    """扫描指定书 .audio/ 下的 mp3，供前端确认后再启动。"""
+    @js
+    @is_admin
+    def post(self):
+        data = tornado.escape.json_decode(self.request.body)
+        try:
+            book_id = int(data.get("book_id") or 0)
+        except (TypeError, ValueError):
+            return {"err": "params.book_id.invalid", "msg": _("书籍 ID 必须是数字")}
+        if book_id <= 0:
+            return {"err": "params.book_id.missing", "msg": _("请提供书籍 ID")}
+
+        if audio_transcode.is_running():
+            snap = audio_transcode.task_snapshot()
+            return {"err": "task.running", "msg": _("已有转码任务在进行中"),
+                    "data": {"task": snap}}
+
+        files = audio_transcode.list_mp3_files(self.calibre_db, book_id)
+        if files is None:
+            return {"err": "book.not_found", "msg": _("书籍不存在")}
+        try:
+            title = self.calibre_db_cache.field_for("title", book_id) or ""
+        except Exception:
+            title = ""
+        return {"err": "ok", "data": {
+            "book_id": book_id,
+            "title": title,
+            "mp3_count": len(files),
+            "files": files,
+        }}
+
+
+class AdminAudioTranscodeStart(BaseHandler):
+    @js
+    @is_admin
+    def post(self):
+        data = tornado.escape.json_decode(self.request.body)
+        try:
+            book_id = int(data.get("book_id") or 0)
+        except (TypeError, ValueError):
+            return {"err": "params.book_id.invalid", "msg": _("书籍 ID 必须是数字")}
+        bitrate = (data.get("bitrate") or "64k").strip()
+        try:
+            title = self.calibre_db_cache.field_for("title", book_id) or ""
+        except Exception:
+            title = ""
+        ok, msg = audio_transcode.start(self.calibre_db, book_id, bitrate, title)
+        if not ok:
+            return {"err": "task.start_failed", "msg": msg}
+        return {"err": "ok", "msg": msg}
+
+
+class AdminAudioTranscodeProgress(BaseHandler):
+    @js
+    @is_admin
+    def get(self):
+        snap = audio_transcode.task_snapshot()
+        return {"err": "ok", "data": {"task": snap}}
 
 
 class AdminMimoTTSConvert(BaseHandler):
@@ -1620,6 +1682,9 @@ def routes():
                 (r"/api/toolbox/epub_split/chapters", AdminEpubSplitChapters),
                 (r"/api/toolbox/epub_split/generate", AdminEpubSplitGenerate),
                 (r"/api/toolbox/author_clean", AdminAuthorClean),
+                (r"/api/toolbox/audio_transcode/scan", AdminAudioTranscodeScan),
+                (r"/api/toolbox/audio_transcode/start", AdminAudioTranscodeStart),
+                (r"/api/toolbox/audio_transcode/progress", AdminAudioTranscodeProgress),
                 (r"/api/toolbox/bookbarn_acceptor/status", AdminBookBarnAcceptorStatus),
                 (r"/api/toolbox/bookbarn_acceptor/toggle", AdminBookBarnAcceptorToggle),
                 (r"/api/toolbox/bookbarn_acceptor/apply_token", AdminBookBarnAcceptorApplyToken),
