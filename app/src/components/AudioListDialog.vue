@@ -53,7 +53,7 @@
             <v-card-text v-if="playing_audio_index !== null" class="pt-0">
                 <v-slider
                     :value="progressPct"
-                    @input="seekPct"
+                    @input="onSeekInput"
                     @start="seekDragging = true"
                     @end="onSeekEnd"
                     :min="0" :max="100" :step="0.1"
@@ -250,6 +250,9 @@ export default {
                 this.stopAudioFilePlayback();
             });
             el.addEventListener('error', () => {
+                // 只处理「当前正在播」的实例报错；旧实例被 stop 时清 src/load()
+                // 也会触发 error，别让它误停新播放器、误弹错误框
+                if (this.currentAudioFile !== el) return;
                 this.stopAudioFilePlayback();
                 this.$alert("error", this.$t('message.audioLoadFailed'));
             });
@@ -280,27 +283,21 @@ export default {
             this.currentTime = 0;
             this.duration = 0;
         },
-        seekPct(pct) {
-            // 记录最后一次拖动位置，@end 时兜底
-            this._lastSeekPct = pct;
+        onSeekInput(pct) {
             // §防回环§ Vuetify v-slider 在外部 :value 变化时也会 emit input：
-            // 播放走到 0.2s → progressPct≈0.016% → 被步长 0.1 四舍五入成 0 →
-            // emit → seek 回 0 →「播 0.2 秒弹回 0」无限循环（表现为进度不走、
-            // 声音发抖/同一句重复）。所以只有用户真实拖动（@start..@end 之间）
-            // 才允许 seek，来自组件回环的 input 一律忽略。
+            // 回环 emit 会被这里挡掉（非拖动状态一律忽略）。
+            // §不实时 seek§ 拖动期间高频 seek 大文件会打乱解码流（表现为
+            // 拖过一次之后出现电流声），所以拖动中只记录位置，松手才 seek。
             if (!this.seekDragging) return;
-            if (!this.currentAudioFile || !this.duration) return;
-            this.currentAudioFile.currentTime = (pct / 100) * this.duration;
+            this._pendingSeek = pct;
         },
         onSeekEnd() {
-            // 松手时把最终位置补一次 seek（拖动期间的 input 已实时 seek 过，
-            // 这里兜底最后一次的值，避免停在不准的位置）
-            const pct = this._lastSeekPct;
             this.seekDragging = false;
-            if (pct !== null && this.currentAudioFile && this.duration) {
+            const pct = this._pendingSeek;
+            this._pendingSeek = null;
+            if (pct !== null && pct !== undefined && this.currentAudioFile && this.duration) {
                 this.currentAudioFile.currentTime = (pct / 100) * this.duration;
             }
-            this._lastSeekPct = null;
         },
     },
     computed: {
