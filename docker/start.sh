@@ -54,6 +54,11 @@ echo "[MyBooks] Checked and parepared the default folders."
 # 检查目录，拷贝并创建目录
 cd /prebuilt/books/;
 for f in *; do
+  # §旧布局 audios 不得回流§ 4.6.0-17 起：镜像 /prebuilt/books/audios 是上游 Dockerfile
+  # mkdir 出来的空目录，这里的拷贝循环会把它反复带进宿主 audiobook-data/books/，
+  # 用户删一次、容器重启一次就回来一次。音频早已改为书目录内 .audio/，
+  # audios/<id>/ 旧布局 4.6.0-15 起不再读取，这里必须跳过。
+  [ "$f" = "audios" ] && continue
   if [ -d "$f" -a ! -d "/data/books/$f" ]; then
     cp -rvf "/prebuilt/books/$f" /data/books/
   fi

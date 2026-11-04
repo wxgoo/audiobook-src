@@ -210,7 +210,6 @@ RUN mkdir -p /data/log/nginx/ && \
     mkdir -p /data/books/settings && \
     mkdir -p /data/books/logo && \
     mkdir -p /data/books/avatar && \
-    mkdir -p /data/books/audios && \
     mkdir -p /data/books/ssl && \
     mkdir -p /var/www/mybooks/ && \
     mkdir -p /var/www/myreader/ && \
@@ -379,7 +378,6 @@ print('faster-whisper API check OK')" \
     ln -s /data/books/logo app/dist/logo; \
     rm -rf app/dist/avatar; \
     ln -s /data/books/avatar app/dist/avatar; \
-    ln -s /data/books/audios app/dist/audios; \
     mkdir -p /prebuilt/; \
     mv /data/* /prebuilt/; \
     chmod +x /var/www/mybooks/docker/start.sh

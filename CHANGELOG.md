@@ -9,7 +9,95 @@
 
 ---
 
-## 4.6.0-16（当前）
+## 4.6.0-17（当前）
+
+> **修「books/audios/ 删了又回来」**。改 `Dockerfile` + `docker/start.sh` 两个文件，
+> 不动 Python，不需要重建前端，但 start.sh 在镜像里——**必须重建镜像**（或按下面的
+> 热修命令处理现有容器）。
+
+### 背景：删掉的 audios 目录重新部署后又出现
+
+> 「audios 上一次删除了，这次重新部署，又来了，哪里的问题？」
+
+`books/audios/` 是 4.6.0-13 之前的旧音频布局（`audios/<book_id>/`），4.6.0-15 起
+读取端已全部删除、目录也清理过。但只要**容器重启**，它就会自己回来。
+
+### 根因：镜像里的「种子目录」+ 启动时自动拷贝
+
+两条代码合力，一次重启就回流一次：
+
+1. **`Dockerfile`（上游原样）**：构建时 `mkdir -p /data/books/audios`，构建末尾
+   `mv /data/* /prebuilt/` —— 于是镜像里永远躺着一个 `/prebuilt/books/audios` 空目录；
+   另有 `ln -s /data/books/audios app/dist/audios`（旧布局的静态软链，早已无人使用）。
+2. **`docker/start.sh`（上游原样）**：每次容器启动执行
+   `for f in /prebuilt/books/*; do [ ! -d /data/books/$f ] && cp -rvf ...; done`
+   —— 「镜像里有、宿主上没有」的目录**一律拷回**。
+
+`/data/books` 挂载宿主 `audiobook-data/books`，于是：删掉 → 容器一重启 → 拷回。
+跟「重新部署」没有必然关系，光重启就够。
+
+### 修法
+
+- `docker/start.sh`：拷贝循环跳过 `audios`（带注释说明为什么）
+- `Dockerfile`：删掉 `mkdir -p /data/books/audios` 和 `ln -s ... app/dist/audios` 两行
+
+dist/audios 软链安全删除：前端只有 `/audios/<id>/collection` 这种 **API 路由**，
+nginx 也没有静态 audios 转发，没有任何消费者。
+
+### 已部署环境怎么清（不重建镜像也能立刻根治）
+
+```sh
+# 1. 删掉镜像层里的「种子目录」，挡住下次启动拷回（容器不重建就一直在）
+docker exec audiobook-mybooks-1 rm -rf /prebuilt/books/audios
+
+# 2. 清掉宿主上的现状
+rm -rf /volume1/docker/audiobook-data/books/audios
+```
+
+之后无论重启多少次都不会再出现。下次用本版重建镜像后连第 1 步都不需要。
+
+### 上游 v4.6.1 解决了没有
+
+**没有**。逐字核对过上游 `v4.6.1` 分支：`Dockerfile` 仍有 `mkdir -p /data/books/audios`
+和 `ln -s /data/books/audios app/dist/audios`；`start.sh` 的拷贝循环也没有排除逻辑。
+这是上游自己的布局（上游还在用 `audios/<id>/`），只有我们 fork 迁到 `.audio/`
+之后才成为问题。
+
+### 验证
+
+- `sh -n docker/start.sh` 通过
+- `grep -n audios Dockerfile` 0 命中
+- `scripts/upgrade.sh` 的旧布局残留检查（步骤 1.5）保留，装包时仍会提醒
+
+### 另：用户实测报告（-16 的元数据修复有效，需部署后重新导入）
+
+用户上传《秒懂速解小学数字画图 - 燕晓.pdf》（31MB，走分片上传）显示
+「标题=完整文件名、作者 Unknown、无封面」，怀疑元数据没取到。
+
+容器内用 **-16 代码**复现整个分片上传元数据链路：
+
+| 项 | 结果 |
+|---|---|
+| `read_book_metadata` 合并结果 | title=秒懂速解小学数字画图，authors=[燕晓] ✅ |
+| `normalize_pdf_meta` 之后 | 不变（内嵌作者非占位符，不回退佚名）✅ |
+| 封面 | `cover_data = jpeg` ✅（PDF 内嵌封面被读取）|
+
+该文件本身元数据完整（pypdf 实测：`/Title=秒懂速解小学数字画图`、`/Author=燕晓`、
+XMP 一致、第 1 页 1145×1566 封面图）。截图中的现象（标题=完整文件名 + 作者 Unknown）
+正是 **-15 及以前**分片上传「无条件取文件名做标题 + 无条件佚名」的行为——
+**NAS 上跑的还是旧包**。部署本版后删掉这本书重新导入即恢复。
+
+判定 NAS 版本：
+
+```sh
+docker exec audiobook-mybooks-1 grep -c merge_meta_from_file /var/www/mybooks/webserver/handlers/book.py
+# 0    = 旧包（-15 及以前），需要升级
+# 非 0 = 已是 -16 及以后
+```
+
+---
+
+## 4.6.0-16
 
 > **修「同步到文件」看起来没生效**。改后端 3 个文件 + 前端 2 个组件 + 3 份语言包，
 > **需要重建前端**。
