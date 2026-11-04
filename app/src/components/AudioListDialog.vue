@@ -3,6 +3,8 @@
         <v-card class="dialog-border">
             <v-toolbar flat dense dark color="#003153" class="dialog-toolbar">
                 {{ $t('book.audioList') }}
+                <!-- 诊断入口：连点 5 次标题切换诊断模式，不占正常界面 -->
+                <span class="ml-2" style="cursor:default" @click="diagTap">·</span>
                 <span v-if="audios.status === audioStatus.PROCESSING && audios.progress && audios.progress.converted_chapters !== undefined"
                       class="ml-2 text-caption">
                     ({{ audios.progress.converted_chapters }}/{{ audios.progress.total_chapters }})
@@ -41,6 +43,15 @@
                                 <v-icon>{{ playing_audio_index === idx && !audio_paused ? 'mdi-pause' : 'mdi-play' }}</v-icon>
                             </v-btn>
                             <span class="ml-2">{{ audio_item.filename }}</span>
+                            <!-- §诊断按钮§ 只在"诊断模式"下出现（弹窗里连按 5 次标题）。
+                                 直接用原生 Audio 播同一个 url，绕开本组件所有状态与事件，
+                                 用来区分「文件/网络问题」还是「组件状态打架」。 -->
+                            <v-btn
+                                v-if="diagMode"
+                                x-small text color="orange"
+                                class="ml-2"
+                                @click="diagPlay(audio_item, idx)"
+                            >裸播</v-btn>
                             <!-- 上次听到哪：只有存在进度且不是刚从头开始才显示 -->
                             <span v-if="resumeHint(idx)" class="ml-2 text-caption orange--text">
                                 {{ $t('book.audioResumeAt') }} {{ fmtTime(resumeHint(idx)) }}
@@ -124,6 +135,9 @@ export default {
             sliderPct: 0,
             // 上一次重建 resumeMap 时的列表签名，深比较的廉价替代
             _lastAudiosSig: null,
+            // 诊断模式：连点标题 5 次开启，列表出现「裸播」按钮
+            diagMode: false,
+            _diagTaps: 0,
         };
     },
     mounted() {
@@ -183,6 +197,72 @@ export default {
         this.stopAudioFilePlayback();
     },
     methods: {
+        // ---------- 诊断 ----------
+        diagTap() {
+            this._diagTaps += 1;
+            if (this._diagTaps >= 5) {
+                this._diagTaps = 0;
+                this.diagMode = !this.diagMode;
+                // eslint-disable-next-line no-console
+                console.log('[DIAG] 诊断模式', this.diagMode ? '开启' : '关闭');
+            }
+        },
+        diagPlay(item, idx) {
+            // 完全绕开组件状态：原生 Audio 播同一个 url，把每个事件都打出来。
+            // 如果这里能正常出声、currentTime 正常前进，就证明文件/网络/后端都没问题，
+            // 问题 100% 在本组件的状态管理；反之就是更底层的原因。
+            const el = new Audio();
+            el.preload = 'auto';
+            ['loadstart', 'loadedmetadata', 'canplay', 'playing', 'pause',
+             'abort', 'emptied', 'stalled', 'waiting', 'error', 'ended'].forEach((t) => {
+                el.addEventListener(t, () => {
+                    // eslint-disable-next-line no-console
+                    console.log(`[DIAG ${idx}] ${t} t=${(el.currentTime || 0).toFixed(1)} `
+                        + `rs=${el.readyState} ns=${el.networkState} `
+                        + `err=${el.error ? el.error.code : '-'}`);
+                });
+            });
+            // §异常自检§ 若 currentTime 在连续多次 timeupdate 里都没前进，说明
+            // 有东西在不断打断/回滚播放。此时打印调用栈供定位，只打一次免刷屏。
+            let _stuckCount = 0;
+            let _lastT = -1;
+            el.addEventListener('timeupdate', () => {
+                const _t = el.currentTime || 0;
+                if (Math.abs(_t - _lastT) < 0.01 && !el.paused) {
+                    _stuckCount += 1;
+                } else {
+                    _stuckCount = 0;
+                }
+                _lastT = _t;
+                if (_stuckCount === 3) {
+                    // eslint-disable-next-line no-console
+                    console.warn('[PLAY] 卡住：t=' + _t.toFixed(2)
+                        + ' rs=' + el.readyState + ' ns=' + el.networkState
+                        + ' paused=' + el.paused
+                        + ' 当前实例=' + (this.currentAudioFile === el)
+                        + ' playing_idx=' + this.playing_audio_index
+                        + ' stack=' + (new Error().stack || '').split('\n').slice(1, 6).join(' <- '));
+                }
+                // 每 2 秒打一次，避免刷屏
+                this._diagLast = this._diagLast || 0;
+                if (el.currentTime - this._diagLast >= 2) {
+                    this._diagLast = el.currentTime;
+                    // eslint-disable-next-line no-console
+                    console.log(`[DIAG ${idx}] timeupdate t=${el.currentTime.toFixed(1)}`
+                        + `/${(el.duration || 0).toFixed(1)}`);
+                }
+            });
+            el.src = item.url;
+            // eslint-disable-next-line no-console
+            console.log('[DIAG] 裸播开始', item.url);
+            return el.play().then(() => {
+                // eslint-disable-next-line no-console
+                console.log('[DIAG] play() 已 resolve');
+            }).catch((e) => {
+                // eslint-disable-next-line no-console
+                console.log('[DIAG] play() 被拒:', e && e.name, e && e.message);
+            });
+        },
         // ---------- 进度存储 ----------
         _userId() {
             try {
@@ -277,6 +357,9 @@ export default {
                 }
                 return;
             }
+            // eslint-disable-next-line no-console
+            console.log('[PLAY] 开始', index, audioItem && audioItem.url,
+                'resumeMap=', JSON.stringify(this.resumeMap));
             this.saveProgress();
             this.stopAudioFilePlayback();
             // §通知父组件停掉语音试听§ 父页面 stopCurrentAudio() 已改为幂等
@@ -309,6 +392,10 @@ export default {
                 if (this.currentAudioFile !== el || played) return;
                 played = true;
                 this.audio_loading = false;
+                // eslint-disable-next-line no-console
+                console.log('[PLAY] onReady rs=' + el.readyState
+                    + ' dur=' + (el.duration || 0).toFixed(2)
+                    + ' saved=' + this.resumeMap[index]);
                 if (!el._resumeApplied) {
                     el._resumeApplied = true;
                     const saved = this.resumeMap[index];
@@ -322,7 +409,11 @@ export default {
                 }
                 el.play().then(() => {
                     this.audio_paused = false;
+                    // eslint-disable-next-line no-console
+                    console.log('[PLAY] play() resolve t=' + (el.currentTime || 0).toFixed(2));
                 }).catch((err) => {
+                    // eslint-disable-next-line no-console
+                    console.log('[PLAY] play() 被拒:', err && err.name, err && err.message);
                     // 被新的切换打断属正常，不弹错误框
                     if (err && err.name === 'AbortError') return;
                     this.stopAudioFilePlayback();

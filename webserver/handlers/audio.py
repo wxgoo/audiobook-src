@@ -31,6 +31,7 @@ from webserver.models import BizKey, ReaderPaidBook, ReaderLog, Message
 from webserver.worker.epub2audio_worker import EpubToAudioWorker
 from webserver.constants import ENABLE_VIP_QUOTA_KEY, SUPPORTED_AUDIO_FORMATS, SUPPORTED_SUBTITLE_FORMATS
 from webserver.services.background_service import BackgroundService, BackgroundTask
+from email.utils import formatdate
 
 
 CONF = loader.get_settings()
@@ -942,6 +943,33 @@ class AudioFile(BaseHandler):
             # 获取文件大小
             file_size = os.path.getsize(file_path)
 
+            # §缓存校验头§ 没有 ETag/Last-Modified 时，浏览器每次 seek 完都要
+            # 重新走一遍完整请求；更糟的是配了 max-age=0 后连内存缓存都不复用，
+            # 同一个音频在短时间内被反复整段重新请求。音频是只读静态文件，
+            # 用 etag = 大小-修改时间即可，命中后浏览器直接本地取。
+            try:
+                st = os.stat(file_path)
+                self.set_header(
+                    "ETag", '"%x-%x"' % (int(st.st_size), int(st.st_mtime))
+                )
+                self.set_header(
+                    "Last-Modified",
+                    formatdate(st.st_mtime, usegmt=True),
+                )
+                # 私有缓存 1 小时：音频内容不会变（换章节就是换文件名）
+                self.set_header("Cache-Control", "private, max-age=3600")
+            except OSError:
+                pass
+
+            # §HEAD 请求不能带 body§ BaseHandler.head() 直接转调 get()，会把
+            # 整个音频文件当成 HEAD 响应体写出去：既浪费带宽，又让浏览器/
+            # 播放器拿到一个「有 body 的 HEAD」，部分实现会据此判为异常响应并
+            # 重新发起请求，表现为音频反复重载、进度条不动。
+            if self.request.method == "HEAD":
+                self.set_header("Content-Length", str(file_size))
+                self.set_status(200)
+                return
+
             # 处理范围请求
             range_header = self.request.headers.get("Range")
             if range_header:
@@ -955,7 +983,18 @@ class AudioFile(BaseHandler):
                     )
 
                     if start >= file_size:
+                        # RFC 7233：416 必须带 Content-Range: bytes */size
                         self.set_status(416)  # Range Not Satisfiable
+                        self.set_header("Content-Range", f"bytes */{file_size}")
+                        return
+                    # 客户端可能给超出文件末尾的 end（如 bytes=0-999999999），
+                    # 不夹紧就会写出比实际内容多的 Content-Length，浏览器读不满
+                    # 会一直等，表现为「卡住不动」。
+                    if end >= file_size:
+                        end = file_size - 1
+                    if end < start:
+                        self.set_status(416)
+                        self.set_header("Content-Range", f"bytes */{file_size}")
                         return
 
                     self.set_status(206)  # Partial Content
