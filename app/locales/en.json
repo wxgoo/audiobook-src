@@ -1628,7 +1628,17 @@
     "batchCancelling": "Cancelling...",
     "batchCancelled": "Cancelled",
     "batchClose": "Close",
-    "batchStartFailed": "Failed to start batch import"
+    "batchStartFailed": "Failed to start batch import",
+    "uploadSuccessMerged": "Uploaded and merged into the existing book. Metadata updated from file: {fields}",
+    "metaField": {
+      "title": "title",
+      "authors": "authors",
+      "publisher": "publisher",
+      "tags": "tags",
+      "series": "series",
+      "comments": "description",
+      "languages": "language"
+    }
   },
   "readingState": {
     "reading": "Reading",

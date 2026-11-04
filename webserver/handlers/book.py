@@ -74,6 +74,133 @@ def _load_jieba():
         return None
 
 
+# §PDF 占位标题§ 这些标题是 PDF 生成工具留下的痕迹，没有任何书名信息，视同"没有标题"。
+# 4.6.0-16：原来只有单文件上传一处判 SSReader Print.，分片上传/分离格式两处
+# 直接把标题覆盖成文件名——同一个文件走不同上传入口得到不同书名，无法解释。
+PDF_PLACEHOLDER_TITLES = frozenset(("SSReader Print.", "Microsoft Word - ", "Untitled"))
+
+# PDF 标题里出现这些词说明是"下载工具"写的，同样不可信
+_PDF_BAD_TITLE_MARKERS = ("下载工具",)
+
+# 作者占位值：calibre 读不出作者时填 Unknown，等效于没读到
+_AUTHOR_PLACEHOLDERS = frozenset(("unknown", "未知", "佚名", "anonymous", "none"))
+
+
+def normalize_pdf_meta(mi, filename_stem, prefer_filename=None):
+    """统一 PDF 的标题/作者取值口径，消除三处上传路径各写一套的分裂。
+
+    取值优先级（prefer_filename 为 None 时读 CONF["PDF_TILE_WITH_FILE_NAME"]）：
+      1. prefer_filename=True  -> 一律用文件名（用户明确要求"以文件名为准"）
+      2. 内嵌标题可信（非空、非占位）-> 用内嵌标题
+      3. 否则回退文件名
+
+    作者：内嵌作者非空且不是占位值时保留，否则置为"佚名"。
+    ⚠️ 4.6.0-16 之前分片上传把作者**无条件**改成"佚名"，导致刚同步进 PDF 的
+       作者元数据在重新导入时被丢弃——用户反馈"改了等于没改"的直接原因。
+    """
+    if prefer_filename is None:
+        prefer_filename = CONF.get("PDF_TILE_WITH_FILE_NAME", False)
+
+    stem = utils.remove_zlibrary_suffix(filename_stem or "")
+    if prefer_filename:
+        mi.title = stem
+    else:
+        title = (mi.title or "").strip()
+        bad = (
+            not title
+            or title in PDF_PLACEHOLDER_TITLES
+            or any(marker in title for marker in _PDF_BAD_TITLE_MARKERS)
+        )
+        mi.title = stem if bad else utils.remove_zlibrary_suffix(title)
+
+    authors = mi.authors or []
+    if not authors or str(authors[0]).strip().lower() in _AUTHOR_PLACEHOLDERS:
+        mi.authors = [_("佚名")]
+    return mi
+
+
+def normalize_txt_meta(mi, filename_stem):
+    """统一 TXT 的标题/作者取值：文件名里"作者：某某"的约定优先。"""
+    title = utils.remove_zlibrary_suffix(filename_stem or "")
+    title, author = utils.guess_title_author_from_filename(title)
+    mi.title = title if title else (filename_stem or "")
+    mi.authors = [author] if author else [_("佚名")]
+    return mi
+
+
+# 重新导入时，允许从文件补进书库的字段（顺序即比较顺序）
+_FORMAT_MERGE_FIELDS = ("title", "authors", "publisher", "tags", "series", "comments", "languages")
+
+
+def _meta_value_present(mi, name):
+    """字段是否有"实质内容"（空列表/占位作者/空字符串都算没有）。"""
+    value = mi.get(name) if hasattr(mi, "get") else getattr(mi, name, None)
+    if name == "authors":
+        return bool(value) and str(value[0]).strip().lower() not in _AUTHOR_PLACEHOLDERS
+    if name in ("tags", "languages"):
+        return bool(value)
+    if name == "comments":
+        text = (value or "").strip()
+        return bool(text) and text not in ("<>", _("无详细介绍"))
+    return bool(str(value or "").strip())
+
+
+def merge_meta_from_file(db, book_id, file_mi, force=False):
+    """把文件内元数据补进已有书记录；force=True 时有值也覆盖。
+
+    §为什么需要§ 重新导入一本"刚同步过元数据"的书时，书名与库内一致 -> 判重命中
+    同一本 -> 走 add_format 只换文件、不动记录，用户看到"元数据没变"。
+    默认只补空字段（不破坏书库记录权威性），force=True 时整体覆盖。
+    返回实际改动的字段名列表，供前端提示。
+    """
+    if file_mi is None:
+        return []
+    try:
+        current = db.get_metadata(book_id, index_is_id=True, get_user_categories=False)
+    except Exception as err:
+        logging.info("[META_MERGE] get_metadata failed for book %s: %s", book_id, err)
+        return []
+    if current is None:
+        return []
+    changed = []
+    for name in _FORMAT_MERGE_FIELDS:
+        try:
+            incoming = file_mi.get(name) if hasattr(file_mi, "get") else getattr(file_mi, name, None)
+            if not _meta_value_present(file_mi, name):
+                continue
+            if not force and _meta_value_present(current, name):
+                continue
+            old = current.get(name) if hasattr(current, "get") else getattr(current, name, None)
+            if old == incoming:
+                continue
+            current.set(name, incoming)
+            changed.append(name)
+        except Exception as err:  # 单个字段异常不影响其它字段
+            logging.info("[META_MERGE] skip field %s for book %s: %s", name, book_id, err)
+    if not changed:
+        return []
+    try:
+        if current.title:
+            current.title_sort = utils.get_title_sort(current.title)
+        if current.authors:
+            current.author_sort = utils.super_strip(current.authors[0])
+        db.set_metadata(book_id, current, force_changes=True)
+    except Exception as err:
+        logging.error("[META_MERGE] failed to apply merged meta for book %s: %s", book_id, err)
+        logging.error(traceback.format_exc())
+        return []
+    logging.info("[META_MERGE] book %s merged fields from file: %s (force=%s)", book_id, changed, force)
+    return changed
+
+
+def _merge_meta_force(handler):
+    """读 merge_meta_force 开关；非请求上下文（单测/内部调用）安全返回 False。"""
+    try:
+        return str(handler.get_argument("merge_meta_force", "0")).lower() in ("1", "true")
+    except Exception:
+        return False
+
+
 CONF = loader.get_settings()
 
 
@@ -1013,12 +1140,16 @@ class BookRefer(BaseHandler):
         if org_mi.title and org_mi.title == CALIBRE_ERROR_FLAG:
             return {"err": "book.invalid", "msg": _("此书籍文件无法识别, 或者受DRM保护无法处理")}
 
+        # 4.6.0-16：PDF 不再无条件把作者改成"佚名"——文件里若已写入可信作者就保留。
+        # 标题仍以库内记录为准（重置语义就是"恢复库里那一份"）。
         if fmt == "txt":
             org_mi.title = book.get("title", book_name[:-4])
             org_mi.authors = [_("佚名")]
         elif fmt == "pdf":
-            org_mi.title = book.get("title", org_mi.title)
-            org_mi.authors = [_("佚名")]
+            org_mi.title = book.get("title") or org_mi.title
+            authors = org_mi.authors or []
+            if not authors or str(authors[0]).strip().lower() in _AUTHOR_PLACEHOLDERS:
+                org_mi.authors = [_("佚名")]
 
         if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
             return {"err": "user.no_permission", "msg": _("无权限")}
@@ -3276,15 +3407,22 @@ class BookUpload(BaseHandler):
                 kind, payload = await self.run_calibre_async(self._resolve_same_title, mi, fmt)
             if kind == "samebook":
                 return payload
+            merged = []
             if kind == "existing":
                 book_id = payload
                 await self.run_calibre_async(self.calibre_db.add_format, book_id, fmt.upper(), fpath, True)
+                # 4.6.0-16：并入既有书时把文件里的元数据补进记录（默认只补空字段）
+                merged = await self.run_calibre_async(
+                    merge_meta_from_file, self.calibre_db, book_id, mi, _merge_meta_force(self),
+                ) or []
             else:
                 book_id = await self._add_new_book_async(mi, [fpath], fmt)
                 if payload and translators:
                     await self.run_calibre_async(self.calibre_db_cache.set_field, CALIBRE_COLUMN_TRANSLATORS, {book_id: ",".join(translators)})
             self.add_msg("success", _("导入书籍成功！"))
-            return {"err": "ok", "book_id": book_id}
+            # merged 让前端能告诉用户"本次并入了哪本书、补了哪些字段"，
+            # 否则用户只看到"导入成功"，以为改动被吞了。
+            return {"err": "ok", "book_id": book_id, "merged_fields": merged}
         finally:
             self._remove_staged_file(fpath)
 
@@ -3342,21 +3480,9 @@ class BookUpload(BaseHandler):
 
         name = name[:-len(fmt) - 1]
         if fmt == "txt":
-            mi.title = utils.remove_zlibrary_suffix(name)
-            title, author = utils.guess_title_author_from_filename(mi.title)
-            mi.title = title if title else mi.title
-            mi.authors = [author] if author else [_("佚名")]
+            normalize_txt_meta(mi, name)
         elif fmt == "pdf":
-            if CONF["PDF_TILE_WITH_FILE_NAME"]:
-                mi.title = utils.remove_zlibrary_suffix(name)
-            else:
-                title = mi.title.strip() if mi.title else ""
-                if not title or title.find(_("下载工具")) >= 0 or title == "SSReader Print.":
-                    mi.title = utils.remove_zlibrary_suffix(name)
-                else:
-                    mi.title = utils.remove_zlibrary_suffix(title)
-            if mi.authors is None or len(mi.authors) == 0 or mi.authors[0].lower() == "unknown":
-                mi.authors = [_("佚名")]
+            normalize_pdf_meta(mi, name)
 
         logging.info("upload mi.title = " + repr(mi.title))
         if mi.cover_data and mi.cover_data[1] and mi.cover_data[1][:4] == b"RIFF":
@@ -3577,6 +3703,7 @@ class BookUploadChunk(BaseHandler):
             failed = False
             _translators = []
             _authors = []
+            merged_fields = []
             try:
                 validate_book_file(final_path, fmt)
             except InvalidBookFileError as e:
@@ -3598,10 +3725,13 @@ class BookUploadChunk(BaseHandler):
             if failed:
                 return {"err": "book.invalid", "msg": _("此书籍文件无法识别, 或者受DRM保护无法导入")}
 
-            # Handle special formats like txt and pdf
-            if fmt in ["txt", "pdf"]:
-                mi.title = utils.remove_zlibrary_suffix(filename.replace("." + fmt, ""))
-                mi.authors = [_("佚名")]
+            # 4.6.0-16：与单文件上传对齐（原来这里 pdf 无条件覆盖标题为文件名、
+            # 作者无条件改成"佚名"，把文件里刚同步进去的元数据全丢了）
+            stem = filename[:-len(fmt) - 1] if fmt else filename
+            if fmt == "txt":
+                normalize_txt_meta(mi, stem)
+            elif fmt == "pdf":
+                normalize_pdf_meta(mi, stem)
 
             logging.info("chunked upload mi.title = " + repr(mi.title))
 
@@ -3637,6 +3767,10 @@ class BookUploadChunk(BaseHandler):
                     book_id = self._add_new_book(mi, [final_path])
                 else:
                     self.calibre_db.add_format(book_id, fmt.upper(), final_path, True)
+                    # 4.6.0-16：并入既有书时，文件里的元数据不能白读——补进记录
+                    merged_fields = merge_meta_from_file(
+                        self.calibre_db, book_id, mi, force=_merge_meta_force(self),
+                    ) or []
             else:
                 book_id = self._add_new_book(mi, [final_path])
                 if _translators:
@@ -3644,7 +3778,7 @@ class BookUploadChunk(BaseHandler):
                     self.calibre_db_cache.set_field(CALIBRE_COLUMN_TRANSLATORS, {book_id: translators})
 
             self.add_msg("success", _("导入书籍成功！"))
-            return {"err": "ok", "book_id": book_id}
+            return {"err": "ok", "book_id": book_id, "merged_fields": merged_fields}
 
         except Exception as e:
             logging.error("Error in chunked upload: %s", str(e))
@@ -4642,10 +4776,13 @@ class BookSperate(BaseHandler):
             if failed:
                 return {"err": "book.invalid", "msg": _("此书籍文件无法识别, 或者受DRM保护无法处理")}
 
-            # 对于txt和pdf格式，从文件名提取信息
-            if fmt in ["txt", "pdf"]:
-                mi.title = utils.remove_zlibrary_suffix(filename.replace("." + fmt, ""))
-                mi.authors = [_("佚名")]
+            # 对于txt和pdf格式，从文件名提取信息（4.6.0-16：走统一口径，
+            # 不再无条件覆盖成文件名+佚名）
+            stem = filename[:-len(fmt) - 1] if fmt else filename
+            if fmt == "txt":
+                normalize_txt_meta(mi, stem)
+            elif fmt == "pdf":
+                normalize_pdf_meta(mi, stem)
 
             # 创建新书籍
             fpaths = [upload_path]

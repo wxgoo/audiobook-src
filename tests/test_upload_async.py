@@ -90,7 +90,8 @@ class TestImportFlow(unittest.TestCase):
 
     def test_new_book_sets_translators_and_cleans_file(self):
         result, calls, path, handler = self.run_flow(("new", True), ["tr"])
-        self.assertEqual(result, {"err": "ok", "book_id": 42})
+        # 4.6.0-16：成功响应多带 merged_fields（并书时补了哪些字段），新建书时为空
+        self.assertEqual(result, {"err": "ok", "book_id": 42, "merged_fields": []})
         self.assertIn(handler.calibre_db_cache.set_field, calls)
         self.assertFalse(os.path.exists(path))
 
@@ -102,6 +103,32 @@ class TestImportFlow(unittest.TestCase):
         result, calls, _, handler = self.run_flow(("existing", 9), [])
         self.assertEqual(result["book_id"], 9)
         self.assertIn(handler.calibre_db.add_format, calls)
+
+    def test_existing_book_reports_merged_fields(self):
+        """4.6.0-16：并入既有书要把"补了哪些字段"回报前端，否则用户以为改动被吞了。"""
+        from webserver.handlers import book as bm
+
+        handler = make_upload()
+        fd, path = tempfile.mkstemp()
+        os.close(fd)
+
+        async def run_calibre(func, *args, **kwargs):
+            if func == handler._resolve_same_title:
+                return ("existing", 9)
+            if func is bm.merge_meta_from_file:
+                return ["authors", "publisher"]
+            return None
+
+        async def threadpool(func, *args, **kwargs):
+            return (None, path, FakeMeta(), [])
+
+        handler.run_calibre_async = run_calibre
+        handler.calibre_db = mock.Mock()
+        handler.calibre_db_cache = mock.Mock()
+        with mock.patch.object(bm.utils, "run_in_threadpool", threadpool):
+            result = asyncio.run(handler._import_uploaded_book("a.epub", b"x", "epub"))
+        self.assertEqual(result["merged_fields"], ["authors", "publisher"])
+        self.assertFalse(os.path.exists(path))
 
     def test_samebook_returned_and_file_removed(self):
         response = {"err": "samebook", "book_id": 3}

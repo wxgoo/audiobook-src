@@ -472,7 +472,17 @@ export default {
 
         handleUploadResponse(rsp) {
             if (rsp.err === 'ok') {
-                this.$alert("success", this.$t('upload.uploadSuccess'), "/book/" + rsp.book_id);
+                // 4.6.0-16：并入既有书时后端会把"文件里补进记录的字段"报回来。
+                // 不提示的话，用户只看到"上传成功"，会以为元数据又被吞了。
+                const merged = rsp.merged_fields || [];
+                if (merged.length) {
+                    const names = merged.map((f) => this.$t('upload.metaField.' + f)).join('、');
+                    this.$alert("success",
+                        this.$t('upload.uploadSuccessMerged', { fields: names }),
+                        "/book/" + rsp.book_id);
+                } else {
+                    this.$alert("success", this.$t('upload.uploadSuccess'), "/book/" + rsp.book_id);
+                }
                 this.$router.push("/book/" + rsp.book_id);
             } else if (rsp.err === 'samebook') {
                 this.$alert("error", rsp.msg, "/book/" + rsp.book_id);

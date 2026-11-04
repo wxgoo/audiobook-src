@@ -2,6 +2,7 @@
 # -*- coding: UTF-8 -*-
 
 import logging
+import math
 import time
 from webserver.i18n import _
 
@@ -256,11 +257,16 @@ class AutoFillService(AsyncService):
                 # 间歇性正常限流不累计）
                 self._throttle_pause_rounds = 0
                 return True
-            wait = int(wait)
+            # §向上取整§ wait 是浮点秒数（限流窗口按毫秒算），int() 会把它截短：
+            # 1.8s -> 1s，实际只睡 1 秒就重试，比服务端窗口早走 0.8 秒，大概率再撞一次限流。
+            # 用 ceil 保证"至少等够"，宁可多等不到 1 秒。
+            wait = int(math.ceil(wait))
             if wait > PAUSE_MAX_SECONDS or self._throttle_pause_rounds >= PAUSE_MAX_ROUNDS:
                 return False
             self._throttle_pause_rounds += 1
-            resume_at = int(time.time() + wait)
+            # resume_at 也不截断：否则前端显示的恢复时刻比真实时刻早最多 1 秒，
+            # 用户照着它刷新会看到"还没恢复"。保留毫秒精度。
+            resume_at = time.time() + wait
             logging.warning(_("元数据源请求频率已达上限，暂停 %d 秒后自动继续"), wait)
             self._update_paused_progress(resume_at, wait)
             deadline = time.time() + wait

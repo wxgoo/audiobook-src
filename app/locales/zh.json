@@ -1631,7 +1631,17 @@
     "batchCancelling": "正在取消...",
     "batchCancelled": "已取消",
     "batchClose": "关闭",
-    "batchStartFailed": "批量导入启动失败"
+    "batchStartFailed": "批量导入启动失败",
+    "uploadSuccessMerged": "上传成功，已并入同名的既有书籍，并从文件更新了：{fields}",
+    "metaField": {
+      "title": "书名",
+      "authors": "作者",
+      "publisher": "出版社",
+      "tags": "标签",
+      "series": "丛书",
+      "comments": "简介",
+      "languages": "语言"
+    }
   },
   "readingState": {
     "reading": "在读",

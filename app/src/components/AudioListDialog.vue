@@ -132,11 +132,8 @@ export default {
             resumeMap: {},
             seekDragging: false,
             sliderPct: 0,
-            // 上一次重建 resumeMap 时的列表签名，深比较的廉价替代
-            _lastAudiosSig: null,
             // 诊断模式：连点标题 5 次开启，列表出现「裸播」按钮
             diagMode: false,
-            _diagTaps: 0,
         };
     },
     created() {
@@ -144,6 +141,11 @@ export default {
         // 数次，一旦它成为响应式依赖，任何 timeupdate 都会让整棵子树重新求值，
         // 与 v-slider 的 v-model 互相踩，最后表现为进度被按住不动。
         this._el = null;
+        // §非响应式状态§ Vue 2 把 `_` 开头的键视为保留键（vue/no-reserved-keys），
+        // 放进 data 会 lint 报错。这两个字段只用于内部比较计数，不需要响应式，
+        // 与 _el 一样挂在实例上即可。
+        this._lastAudiosSig = null;
+        this._diagTaps = 0;
     },
     mounted() {
         this.loadResumeMap();

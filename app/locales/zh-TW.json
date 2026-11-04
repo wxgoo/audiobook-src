@@ -1621,7 +1621,17 @@
     "batchCancelling": "正在取消...",
     "batchCancelled": "已取消",
     "batchClose": "關閉",
-    "batchStartFailed": "批次匯入啟動失敗"
+    "batchStartFailed": "批次匯入啟動失敗",
+    "uploadSuccessMerged": "上傳成功，已併入同名的既有書籍，並從檔案更新了：{fields}",
+    "metaField": {
+      "title": "書名",
+      "authors": "作者",
+      "publisher": "出版社",
+      "tags": "標籤",
+      "series": "叢書",
+      "comments": "簡介",
+      "languages": "語言"
+    }
   },
   "readingState": {
     "reading": "閱讀中",
