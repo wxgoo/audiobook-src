@@ -120,6 +120,10 @@ class ToolSet:
         from .chinese_converter_tool import ChineseConverterTool
         from .epub_beautify import EpubBeautifyTool
         from .epub_merge import EpubMergeTool
+        # 这两个是「注册壳」：真实页面/后端在别处（见各文件 docstring），
+        # 补注册只为在 /admin/toolbox 列表里可见、可从工具箱跳转。
+        from .audio_transcode_tool import AudioTranscodeTool
+        from .book_dedup_tool import BookDedupTool
 
         ToolSet.register(MergeFormatsTool.info())
         ToolSet.register(EpubBeautifyTool.info())
@@ -138,6 +142,8 @@ class ToolSet:
         ToolSet.register(EpubFixerTool.info())
         ToolSet.register(MinifyPdfTool.info())
         ToolSet.register(BookBarnAcceptorTool.info())
+        ToolSet.register(AudioTranscodeTool.info())
+        ToolSet.register(BookDedupTool.info())
 
         MinifyPdfTool.cleanup_old_files()
 
