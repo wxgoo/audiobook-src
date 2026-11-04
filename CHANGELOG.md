@@ -11,9 +11,11 @@
 
 ## 4.6.0-17（当前）
 
-> **修「books/audios/ 删了又回来」**。改 `Dockerfile` + `docker/start.sh` 两个文件，
-> 不动 Python，不需要重建前端，但 start.sh 在镜像里——**必须重建镜像**（或按下面的
-> 热修命令处理现有容器）。
+> **两件事**：①根治「books/audios/ 删了又回来」（改 `Dockerfile` + `docker/start.sh`）；
+> ②补漏「扫描目录导入并入既有书时，作者与封面不更新」（改 `scan_service.py`）。
+> **必须重建镜像**——`start.sh` 在镜像里，光重启容器不会生效。
+> 只想先验证 ② 的话，`docker cp webserver/services/scan_service.py audiobook-mybooks-1:/var/www/mybooks/webserver/services/`
+> 再 `supervisorctl restart mybooks:tornado` 即可（热更不持久，验证完仍要重建）。
 
 ### 背景：删掉的 audios 目录重新部署后又出现
 
@@ -68,6 +70,39 @@ rm -rf /volume1/docker/audiobook-data/books/audios
 - `sh -n docker/start.sh` 通过
 - `grep -n audios Dockerfile` 0 命中
 - `scripts/upgrade.sh` 的旧布局残留检查（步骤 1.5）保留，装包时仍会提醒
+
+### 补漏：扫描目录导入并入既有书时，作者与封面仍不更新
+
+部署 -16 后用户反馈「那个 PDF 重新导入还是封面和作者没提取出来」。
+追问得知走的是**扫描目录导入**，不是网页上传——这正是 -16 漏掉的入口。
+
+`add_format` 在全项目有 **6 个**调用点，-16 只把 `merge_meta_from_file` 挂在了
+其中 2 个（单文件上传、分片上传）。扫描导入并入既有书那条分支
+（`scan_service.py:1436`）原样不动：
+
+```python
+self.db.add_format(row.book_id, fmt.upper(), fpath, True)   # 只换格式文件
+row.status = ScanFile.IMPORTED                              # 标题/作者/封面一概不动
+```
+
+**修法**：新增 `ScanService._merge_meta_into_existing()`
+
+- 文本字段复用 `merge_meta_from_file`（默认只补空字段）
+- **封面单独补**：`merge_meta_from_file` 不管 `cover_data`（二进制，走 calibre 的
+  `set_cover`），这一步只有并入路径需要
+- 默认不覆盖已有封面（用户可能手动设过），`merge_meta_force` 时才整体覆盖
+- 全程 try/except：任何一步失败只记日志，不能让已成功的 `add_format` 被打回 INVALID
+
+**容器内实测**（用户那份 31MB PDF）：
+
+| 阶段 | 结果 |
+|---|---|
+| 造一本同名旧书 | authors=['佚名']，has_cover 空 |
+| 扫描导入并入 | merge 改动字段 `['authors', 'publisher']` |
+| 读回 | authors=['燕晓']、has_cover=**Yes** |
+
+标题那步没进 changed 是因为旧书标题已对（非空即不覆盖）；文件名里的
+「- 燕晓」后缀由 -16 的 `normalize_pdf_meta` 已经从标题去掉。
 
 ### 另：用户实测报告（-16 的元数据修复有效，需部署后重新导入）
 
