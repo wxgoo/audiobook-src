@@ -51,6 +51,53 @@ TTS 输出、重复书合并，一律只认 `.audio/`。
 > 必须先手工把音频搬进对应书目录的 `.audio/`，否则升级后那些音频不可见。
 > upgrade.sh 会在动手前提醒。
 
+### 音频播放链路三处根治（弹窗卡死 / 进度不动）
+
+现象：详情页有声书弹窗、`/audio/<id>` 播放页都出现过「点播放一动不动，
+进度停在某个值，Ctrl+F5 才能恢复」。定位下来是三处独立缺陷叠加：
+
+1. **nginx 覆盖缓存头**：`location ~ ^/(api|get|read|opds|auth)/` 里的
+   `expires $get_expires` 使 `/api/` 命中 `default -1s`，强行下发
+   `Cache-Control: no-cache` + 过去的 `Expires`，把后端下发的 ETag/
+   Last-Modified 全部盖掉 → 播放器每次 seek 都要整段重下。
+   新增 `location ~ ^/api/audio/[0-9]+/`（置于通用规则之前），不设 expires，
+   透传 Range 并关闭 `proxy_buffering`。
+2. **后端 HTTP 不合规**：`BaseHandler.head()` 直接转调 `get()`，HEAD 请求
+   把整个音频文件当响应体写出；且 `AudioFile` 无 ETag/Last-Modified，
+   Range 的 `end` 未夹紧（`bytes=0-999999999` 会写出超出实际内容的
+   Content-Length，浏览器读不满一直等）；416 缺 `Content-Range`。
+   现 HEAD 提前返回、补 `ETag`/`Last-Modified`/`private, max-age=3600`、
+   夹紧 `end` 并按 RFC 7233 补 416 头。
+3. **前端 seek 时序**：`/audio/<id>` 的 `mounted` 里 `initializePlayer()`
+   先 `loadTrack(0)`、`restorePlaybackPosition()` 又 `loadTrack(同一集, 上次时间)`，
+   第二次走 `isSameFile` 分支直接写 `currentTime`，打断加载 →
+   `loadedmetadata` 再触发 → 再写，形成死循环。此外「未缓冲任何数据就 seek」
+   会立刻发中段 Range 请求，在网络盘环境下迟迟不回，元素永远停在
+   `readyState=1`。
+   现改为：加载只走一次；`seek` 等 `canplay`（rs>=3）后再落地并对齐整秒；
+   `play()` 全部接住 Promise；恢复位置同步到进度条；`preload` 改 `auto`；
+   新增 `@error`/`@stalled` 日志。
+
+> 顺带：详情页「有声书」按钮不再打开内嵌弹窗，直接跳转 `/audio/<id>`
+> （与顶部按钮一致）。弹窗组件保留但入口不再触发。
+
+### 新增工具箱：音频批量转码
+
+`/toolbox/audio_transcode`（侧栏「管理 → 音频转码」）。把书 `.audio/`
+里的 mp3 批量转 m4a：`-map_metadata -1` 洗掉杂乱的 ID3 标签（此前正是
+播音员名被当成作者、导致建错书），`-movflags +faststart` 让浏览器秒开可拖，
+AAC 码率可选 64k/96k/128k。
+
+- 支持**批量**：可扫描全库后多选，按队列逐本处理；无 mp3 的书自动跳过
+- 安全：m4a 成功生成后才删除对应 mp3；单文件失败不中断，失败的 mp3 保留并列出原因
+- 后台线程执行，页面轮询进度（当前书/总进度/失败明细）；同一时刻只允许一个任务
+
+### 修复
+
+- 扫描导入时同目录音频不随书挂载（`scan_service._sync_sidecar_audio`）
+- `audiobooks/` 导入目录内含 epub 时电子书优先合并（不再按 ID3 建错书）
+- 弹窗续播同会话即时生效；清除音频/取消转换加二次确认
+
 ---
 
 ## 4.6.0-14
