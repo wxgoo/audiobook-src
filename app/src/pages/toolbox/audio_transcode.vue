@@ -160,16 +160,20 @@
     </v-row>
 
     <!-- 确认框 -->
+    <!-- §必须防 null§ scanResult 初值就是 null，而 v-dialog 即使关闭也会渲染内容，
+         所以这里不能直接读 scanResult.title，否则首屏就抛
+         "Cannot read properties of null (reading 'title')"，整页白屏。 -->
     <v-dialog v-model="confirmStart" width="360">
-      <v-card class="pa-4">
+      <v-card v-if="confirmStart" class="pa-4">
         <p v-if="selectedBooks.length">
           将把选中的 {{ selectedBooks.length }} 本书里所有 mp3 转成
           {{ bitrate }} 的 m4a，成功后删除原 mp3。确认开始？
         </p>
-        <p v-else>
+        <p v-else-if="scanResult">
           将把《{{ scanResult.title }}》里 {{ scanResult.mp3_count }} 个 mp3
           转成 {{ bitrate }} 的 m4a，成功后删除原 mp3。确认开始？
         </p>
+        <p v-else>没有选中任何书，也没有扫描结果。</p>
         <div class="d-flex justify-end">
           <v-btn text small @click="confirmStart = false">取消</v-btn>
           <v-btn color="primary" small :loading="starting" @click="start">确认</v-btn>
