@@ -1556,3 +1556,10 @@ chunk、caller 副本 2 处，全部修补，`node --check` 全过）：
 | 4.6.0-3 | 设置页保存优化 | |
 | 4.6.0-2 | 读者组 KeyError 修复 | 未单独出成品包 |
 | 4.6.0-1 | 全部定制基线（原 v4.8.2/v4.8.3） | |
+
+### 追记（4.6.0-15 发布后热修，914e11d）
+
+**播放请求 500（`'AudioFile' object has no attribute 'db'`）**：-14 字幕热修把
+`scan.py` 里的 `self.db` 习惯带进了 `audio.py`/`podcast.py`——BaseHandler 上没有
+这个属性（只有 `self.calibre_db`）。症状极具迷惑性：播放列表能显示（走扫描）、
+详情页计数正常，**一点播放就 500**。全部改用 `self.calibre_db`。
