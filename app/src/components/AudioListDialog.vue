@@ -188,8 +188,13 @@ export default {
                 // 浏览器在文件开头附近 seek，AAC 上偶发解码杂音。
                 if (d && t >= d - 3) {
                     localStorage.removeItem(key);
+                    delete this.resumeMap[idx];
                 } else if (t > 5) {
                     localStorage.setItem(key, JSON.stringify({ t: t }));
+                    // §同步内存§ 只写 localStorage 不够：同一次打开会话里切走再
+                    // 切回来，canplay 读的是内存 resumeMap（mounted 时加载的旧
+                    // 值），不同步就会「重开页面才有记忆」。用展开重建保证响应式。
+                    this.resumeMap = { ...this.resumeMap, [idx]: t };
                 }
             } catch (e) { /* 隐私模式写不进去，忽略 */ }
         },

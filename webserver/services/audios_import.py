@@ -326,8 +326,13 @@ class AudioBookImporter(AsyncService):
             os.makedirs(dest_dir)
         for fname in os.listdir(src_dir):
             src = os.path.join(src_dir, fname)
-            if os.path.isfile(src):
-                _copy_or_convert_file(src, dest_dir)
+            if not os.path.isfile(src):
+                continue
+            # 增量同步同样跳过电子书：它们走 add_format 挂到书本身，不进 .audio/
+            _ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+            if _ext in constants.SUPPORTED_EBOOK_FORMATS and _ext != "txt":
+                continue
+            _copy_or_convert_file(src, dest_dir)
 
     @AsyncService.register_service
     def do_import(self, user_id):
@@ -459,13 +464,47 @@ class AudioBookImporter(AsyncService):
             # dir_name 为 "." 表示音频直接放在 audiobooks/ 根目录（见上面的兜底）。
             # 这时目录名不能当书名，依次退回：ID3 标签 → 第一个音频文件名。
             fallback_title = "" if dir_name == "." else dir_name
-            title, author = _extract_audio_metadata(first_audio, fallback_title)
-            if not author:
-                author = _("佚名")
-            title = utils.super_strip(title) if title else ""
-            if not title:
-                title = fallback_title or os.path.splitext(audio_files[0])[0]
-            author = utils.super_strip(author) if author else _("佚名")
+            # §电子书优先§（4.6.0-15）目录里同时有 epub/mobi 等电子书和音频时
+            # （典型：有声书资源包，epub+mp3 混在一个目录），以电子书的元数据
+            # 建书，而不是 mp3 的 ID3 标签——ID3 的 artist 常是播音员（如
+            # 「李慧敏」），title 也常是乱七八糟的源名，会把书建错。电子书随后
+            # add_format 挂到该书，音频复制到 .audio/：一本书、书音频齐全。
+            ebook_file = None
+            ebook_fmt = None
+            ebook_mi = None
+            for _f in sorted(os.listdir(dir_path)):
+                _ext = _f.rsplit(".", 1)[-1].lower() if "." in _f else ""
+                if _ext in constants.SUPPORTED_EBOOK_FORMATS and _ext != "txt":
+                    ebook_file = os.path.join(dir_path, _f)
+                    ebook_fmt = _ext
+                    break
+            if ebook_file:
+                try:
+                    from webserver.base.book_files import read_book_metadata
+                    ebook_mi = read_book_metadata(
+                        ebook_file, ebook_fmt, os.path.basename(ebook_file))
+                    logging.info("[AUDIO_IMPORT] 目录内发现电子书 %s，元数据以电子书为准",
+                                 os.path.basename(ebook_file))
+                except Exception as err:
+                    logging.warning("[AUDIO_IMPORT] 读取电子书元数据失败(%s): %s",
+                                    ebook_file, err)
+                    ebook_mi = None
+            ebook_title = ebook_author = None
+            if ebook_mi is not None:
+                ebook_title = utils.super_strip(ebook_mi.title or "") or None
+                if ebook_mi.authors and ebook_mi.authors[0]:
+                    ebook_author = utils.super_strip(str(ebook_mi.authors[0])) or None
+            if ebook_title:
+                title = ebook_title
+                author = ebook_author or _("佚名")
+            else:
+                title, author = _extract_audio_metadata(first_audio, fallback_title)
+                if not author:
+                    author = _("佚名")
+                title = utils.super_strip(title) if title else ""
+                if not title:
+                    title = fallback_title or os.path.splitext(audio_files[0])[0]
+                author = utils.super_strip(author) if author else _("佚名")
             # 4.6.0-9：有声书是作者名最脏的来源——ID3 的 artist 字段里
             # 常见 "某某听书"、"酷我音乐"、多歌手用逗号连写、带国籍前缀等。
             # 这里做两步：先 L1 清洗（去前缀后缀、拆多人后取第一个），
@@ -544,8 +583,26 @@ class AudioBookImporter(AsyncService):
                     _stage = "复制音频"
                     for fname in os.listdir(dir_path):
                         src = os.path.join(dir_path, fname)
-                        if os.path.isfile(src):
-                            _copy_or_convert_file(src, dest_dir)
+                        if not os.path.isfile(src):
+                            continue
+                        # 电子书已 add_format 挂到书本身，不复制进 .audio/
+                        if ebook_file and os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(ebook_file)):
+                            continue
+                        _copy_or_convert_file(src, dest_dir)
+                    # §电子书优先§ 把目录里的电子书挂为书的格式文件
+                    if ebook_file:
+                        try:
+                            _bmi = self.db.get_metadata(book_id, index_is_id=True, get_user_categories=False)
+                            if _bmi.formats and ebook_fmt.upper() in _bmi.formats:
+                                logging.info("[AUDIO_IMPORT] 书 %s 已有 %s 格式，跳过 add_format",
+                                             book_id, ebook_fmt.upper())
+                            else:
+                                self.db.add_format(book_id, ebook_fmt.upper(), ebook_file, index_is_id=True)
+                                logging.info("[AUDIO_IMPORT] 电子书已挂到书 %s：%s",
+                                             book_id, os.path.basename(ebook_file))
+                        except Exception as err:
+                            logging.warning("[AUDIO_IMPORT] add_format 失败(%s): %s",
+                                            ebook_file, err)
                     if linked_to_existing:
                         AudioBookImporter.static_status["linked"] += 1
                         logging.info("[AUDIO_IMPORT] 音频已挂到已有书籍 book_id=%s 的目录 %s",

@@ -2903,6 +2903,15 @@ export default {
         },
         async clearConversion() {
             this.stopCurrentAudio();
+            // §二次确认§ 删除音频是物理删除 .audio/ 里的文件，无法恢复；
+            // 误点代价太大，必须明确确认一次。
+            const isDeleteConfirm = this.audios.status === this.AUDIO_STATUS.CONVERTED;
+            const confirmed = window.confirm(
+                isDeleteConfirm
+                    ? this.$t('book.clearAudioConfirm')
+                    : this.$t('book.cancelConversionConfirm')
+            );
+            if (!confirmed) return;
             try {
                 let endpoint;
                 let successMessage;
