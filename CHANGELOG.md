@@ -42,6 +42,10 @@ TTS 输出、重复书合并，一律只认 `.audio/`。
   -13 就没了，页面一开就 ImportError）。`DuplicateBookMerger` 去 `audio_root` 参数，
   音频目录改由 `audio_dir_for_read/for_write` 从 calibre 库解析，搬移目标变为
   保留书目录的 `.audio/`；测试夹具同步重写为 library 布局（43 项全过）。
+- **修复 -14 引入的统计接口 NameError 回归**：P1 时区改造重写「本月起止」时删掉了
+  `current_year`/`current_month` 的计算，返回值仍引用旧变量 → `/api/reading/stats`
+  每次调用都 500（前端 `.catch` 吞掉，历史页统计卡片静默消失）。现从月起点取
+  站点时区的年/月，与统计口径一致。前端未消费这两个字段，纯后端修复。
 
 > **升级注意**：如果你的 `audiobook-data/books/audios/` 里还有书（-12 及更早导入的），
 > 必须先手工把音频搬进对应书目录的 `.audio/`，否则升级后那些音频不可见。

@@ -1788,8 +1788,12 @@ class BookReadingStats(BaseHandler):
                 "total_read_done": total_read_done,
                 "month_reading": month_reading,
                 "month_read_done": month_read_done,
-                "current_year": current_year,
-                "current_month": current_month
+                # 4.6.0-14 改时区口径时误删了这两个变量，返回时 NameError，
+                # 整个统计接口 500（前端 .catch 吞掉，历史页统计卡片静默消失）。
+                # 从月起点取：_month_start 是按站点时区切的 naive 服务器本地时刻，
+                # 其年/月就是站点时区的「当前年月」，与上面的统计口径一致。
+                "current_year": _month_start.year,
+                "current_month": _month_start.month,
             },
             "month_read_done_books": month_read_done_books,
             "current_reading_books": current_reading_books
