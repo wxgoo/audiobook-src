@@ -282,7 +282,9 @@
       @ended="onTrackEnded"
       @play="onPlay"
       @pause="onPause"
-      preload="metadata"
+      @error="onAudioError"
+      @stalled="onAudioStalled"
+      preload="auto"
     ></audio>
 
     <!-- VIP信息对话框 -->
@@ -488,8 +490,12 @@ export default {
         this.showLyrics = true;
       }
     }
-    this.initializePlayer();
-    this.restorePlaybackPosition();
+    // §顺序关键§ 必须先尝试恢复播放位置，再决定要不要从第 0 集开头加载。
+    // 反过来会先 load 一遍再 seek 一遍，两次操作互相打断（见 loadTrack 注释）。
+    const restored = this.restorePlaybackPosition();
+    if (!restored) {
+      this.loadTrack(0);
+    }
     this.startProgressSaving();
     this.escKeyListener = (event) => {
       if (event.key === 'Escape' || event.keyCode === 27) {
@@ -512,42 +518,84 @@ export default {
   methods: {
     initializePlayer() {
       if (this.audioFiles.length > 0) {
-        this.loadTrack(0);
+        // §不再在这里 loadTrack§ 旧代码 initializePlayer() 先 loadTrack(0)，
+        // 紧接着 restorePlaybackPosition() 又 loadTrack(同一集, 上次时间)：
+        // 第二次进来 isSameFile 为 true，于是「刚 load() 就写 currentTime」，
+        // 打断加载 → loadedmetadata 再触发 → 再写 currentTime … 播放器永远
+        // 起不来，表现就是「点播放一动不动，必须 Ctrl+F5」。真正的首次加载
+        // 交给 restorePlaybackPosition() 统一决定（有记录就恢复到该集该位置，
+        // 没记录就从第 0 集开头）。
       }
     },
 
+    // 真正的「切集/定位」入口。targetTime 是相对章节的秒数（不含 start_time）
     loadTrack(index, initialTime = null) {
-      if (index >= 0 && index < this.audioFiles.length) {
-        this.currentTrackIndex = index;
-        const audio = this.audioFiles[index];
-        this.loadSubtitle(audio.subtitle);
-        const player = this.$refs.audioPlayer;
-        if (!player) return;
+      if (!(index >= 0 && index < this.audioFiles.length)) return;
+      const player = this.$refs.audioPlayer;
+      if (!player) return;
 
-        const isSameFile = (player.getAttribute('src') === audio.url || player.src === audio.url) && audio.url;
-        const targetTime = (initialTime !== null ? initialTime : 0) + (audio.start_time || 0);
+      this.currentTrackIndex = index;
+      const audio = this.audioFiles[index];
+      this.loadSubtitle(audio.subtitle);
 
-        if (isSameFile) {
-          player.currentTime = targetTime;
-          if (audio.start_time !== undefined && audio.end_time !== undefined) {
-            this.duration = audio.end_time - audio.start_time;
-          } else {
-            this.duration = player.duration || 0;
-          }
-        } else {
-          player.src = audio.url;
-          player.load();
-          const onLoadedMetadata = () => {
+      const base = audio.start_time || 0;
+      const rel = (initialTime !== null && initialTime > 0) ? initialTime : 0;
+      // 对齐整秒：非整秒位置会让 AAC/m4a 从帧中间解码，听感是爆音/电流声
+      const targetTime = Math.floor(rel) + base;
+
+      const curSrc = player.getAttribute('src') || '';
+      const isSameFile = !!audio.url && curSrc === audio.url;
+
+      // §统一的 seek 落地§ 只在「元数据就绪」后写 currentTime，且只写一次。
+      // 之前 isSameFile 分支直接写 currentTime，若此刻还在 loading 会打断
+      // 加载；非同一文件分支的 onLoadedMetadata 又没做去重，多次切集会叠加
+      // 一堆监听器，同时写 currentTime，互相打架。
+      const applyPosition = () => {
+        // 期间用户可能已经切到别的集了，校验一下再写
+        if (this.currentTrackIndex !== index) return;
+        try {
+          if (targetTime > 0 && isFinite(player.duration)
+              && targetTime < player.duration - 1) {
             player.currentTime = targetTime;
-            if (audio.start_time !== undefined && audio.end_time !== undefined) {
-              this.duration = audio.end_time - audio.start_time;
-            } else {
-              this.duration = player.duration || 0;
-            }
-            player.removeEventListener('loadedmetadata', onLoadedMetadata);
-          };
-          player.addEventListener('loadedmetadata', onLoadedMetadata);
+          }
+        } catch (e) { /* 忽略 */ }
+        this.syncDurationFromAudio(audio, player);
+      };
+
+      if (isSameFile) {
+        // §避免同一位置反复 seek§ 重入同一集同一位置（比如 mounted 时的
+        // 初始化 + 恢复那条路径）不应该再写一次 currentTime——写一次就会
+        // 触发一次 seek/缓冲。只有目标位置真的变了才动。
+        const alreadyThere = player.readyState >= 1
+          && Math.abs((player.currentTime || 0) - targetTime) < 0.75;
+        if (alreadyThere) {
+          this.syncDurationFromAudio(audio, player);
+          return;
         }
+        if (player.readyState >= 1) {
+          // 已经能读到时长，直接定位
+          applyPosition();
+        } else {
+          // 还在加载：等元数据，别硬写 currentTime
+          player.addEventListener('loadedmetadata', applyPosition, { once: true });
+        }
+        return;
+      }
+
+      // 换文件：先挂一次性监听，再赋值 src —— 顺序反了会漏事件
+      player.addEventListener('loadedmetadata', applyPosition, { once: true });
+      player.src = audio.url;
+      // 不调 load()：给它设 src 已经会触发加载，额外调 load() 会把刚挂的
+      // 监听器之前的状态清掉，Chrome 上表现为加载被打断后再重来一遍。
+    },
+
+    // 时长：优先用切片区间（start_time/end_time），否则用真实 duration
+    syncDurationFromAudio(audio, player) {
+      if (audio && audio.start_time !== undefined && audio.end_time !== undefined) {
+        this.duration = audio.end_time - audio.start_time;
+      } else {
+        const d = player ? player.duration : 0;
+        this.duration = (isFinite(d) && d > 0) ? d : 0;
       }
     },
 
@@ -564,7 +612,7 @@ export default {
         this.loadTrack(index);
         // 自动开始播放新选择的音频
         this.$nextTick(() => {
-          this.$refs.audioPlayer.play();
+          this.safePlay();
         });
       } else {
         // 如果点击的是当前正在播放的音频，则切换播放/暂停状态
@@ -573,13 +621,33 @@ export default {
     },
 
     togglePlay() {
-      if (!this.$refs.audioPlayer) return;
+      const player = this.$refs.audioPlayer;
+      if (!player) return;
 
       if (this.isPlaying) {
-        this.$refs.audioPlayer.pause();
+        player.pause();
       } else {
-        this.$refs.audioPlayer.play();
+        this.safePlay();
       }
+    },
+
+    // §统一的安全播放§ 裸调 play() 不接 Promise 的后果是：被中断时抛
+    // "play() request was interrupted by a new load request"，错误无人处理，
+    // 播放器停在一个既没播也没暂停的状态 —— 点多少次都没反应。
+    safePlay() {
+      const player = this.$refs.audioPlayer;
+      if (!player || !player.src) return;
+      const p = player.play();
+      if (!p || !p.then) return;
+      p.catch((err) => {
+        const name = err && err.name;
+        if (name === 'AbortError' || name === 'NotAllowedError') {
+          // AbortError：被新的加载/定位打断，属正常
+          // NotAllowedError：浏览器自动播放策略，等用户手势
+          return;
+        }
+        console.error('[AUDIO] play() 失败', name, err && err.message);
+      });
     },
 
     previousTrack() {
@@ -590,7 +658,7 @@ export default {
         this.loadTrack(this.currentTrackIndex - 1);
         if (this.isPlaying) {
           this.$nextTick(() => {
-            this.$refs.audioPlayer.play();
+            this.safePlay();
           });
         }
       }
@@ -604,7 +672,7 @@ export default {
         this.loadTrack(this.currentTrackIndex + 1);
         if (forcePlay || this.isPlaying) {
           this.$nextTick(() => {
-            this.$refs.audioPlayer.play();
+            this.safePlay();
           });
         }
       }
@@ -664,13 +732,13 @@ export default {
 
     // 音频事件处理
     onLoadedMetadata() {
-      const audio = this.currentAudio;
-      if (audio && audio.end_time !== undefined && audio.start_time !== undefined) {
-        this.duration = audio.end_time - audio.start_time;
-      } else {
-        this.duration = this.$refs.audioPlayer.duration || 0;
+      const player = this.$refs.audioPlayer;
+      if (!player) return;
+      this.syncDurationFromAudio(this.currentAudio, player);
+      // 只在真正不一致时写，避免每次元数据变化都触发 ratechange 重排音频
+      if (player.playbackRate !== this.playbackRate) {
+        player.playbackRate = this.playbackRate;
       }
-      this.$refs.audioPlayer.playbackRate = this.playbackRate;
     },
 
     onTimeUpdate() {
@@ -714,6 +782,25 @@ export default {
         // 整本书播放完成，可以选择清除播放位置记录
         // this.clearPlaybackPosition();
       }
+    },
+
+    onAudioError() {
+      const player = this.$refs.audioPlayer;
+      const err = player && player.error;
+      // code 1 = MEDIA_ERR_ABORTED，是我们主动换集/定位打断的，属正常
+      if (err && err.code !== 1) {
+        console.error('[AUDIO] 媒体错误', err.code, err.message,
+          '第' + (this.currentTrackIndex + 1) + '集', this.currentAudio && this.currentAudio.url);
+        this.isPlaying = false;
+      }
+    },
+
+    // stalled 在网络卡顿时会触发。打出来便于区分「网络问题」还是「逻辑问题」，
+    // 只记一条，不刷屏。
+    onAudioStalled() {
+      if (this._stalledLogged) return;
+      this._stalledLogged = true;
+      console.warn('[AUDIO] 网络停滞 stalled，第' + (this.currentTrackIndex + 1) + '集');
     },
 
     onPlay() {
@@ -955,12 +1042,13 @@ export default {
       }
     },
 
+    // 返回 true 表示成功把播放器指到了上次的位置（调用方不要再 loadTrack(0)）
     restorePlaybackPosition() {
-      if (!process.client || !this.bookId || this.audioFiles.length === 0) return;
+      if (!process.client || !this.bookId || this.audioFiles.length === 0) return false;
 
       try {
         const saved = localStorage.getItem(this.getStorageKey());
-        if (!saved) return;
+        if (!saved) return false;
 
         const progressData = JSON.parse(saved);
 
@@ -972,19 +1060,18 @@ export default {
         ) {
           console.log('Restoring playback position:', progressData);
 
-          // 恢复播放位置
-          this.currentTrackIndex = progressData.trackIndex;
+          // loadTrack 内部会设置 currentTrackIndex，这里不用再赋一遍
+          this.loadTrack(progressData.trackIndex, progressData.currentTime);
 
-          // 加载对应的音频文件并传入保存的时间
-          this.loadTrack(this.currentTrackIndex, progressData.currentTime);
-
-          // 显示恢复提示信息
-          if (this.$refs.audioPlayer && progressData.currentTime > 10) {
+          if (progressData.currentTime > 10) {
             this.showRestoreMessage(progressData);
           }
+          return true;
         }
+        return false;
       } catch (error) {
         console.error('Error restoring playback position:', error);
+        return false;
       }
     },
 
