@@ -183,10 +183,12 @@ export default {
             const t = this.currentAudioFile.currentTime || 0;
             const d = this.currentAudioFile.duration || 0;
             try {
-                // 听完（相差 3 秒内）就清掉，下次从头听；否则记位置
+                // 听完（相差 3 秒内）就清掉，下次从头听；否则记位置。
+                // 5 秒内也视为「没真听」——从这种位置续播既无意义，又容易让
+                // 浏览器在文件开头附近 seek，AAC 上偶发解码杂音。
                 if (d && t >= d - 3) {
                     localStorage.removeItem(key);
-                } else if (t > 1) {
+                } else if (t > 5) {
                     localStorage.setItem(key, JSON.stringify({ t: t }));
                 }
             } catch (e) { /* 隐私模式写不进去，忽略 */ }
@@ -231,13 +233,18 @@ export default {
 
             el.addEventListener('loadstart', () => { this.audio_loading = true; });
             el.addEventListener('canplay', () => {
+                if (this.currentAudioFile !== el) return;
                 this.audio_loading = false;
                 // 恢复上次进度：只在真的拿到时长之后再设，否则会被浏览器的
-                // 元数据刷新打回 0（这是 HTMLAudio 常见的坑）
+                // 元数据刷新打回 0（这是 HTMLAudio 常见的坑）。
+                // §只在暂停态恢复§ 若此时已经在播（play() 已 resolve），再 seek
+                // 会打断解码器当前帧边界——AAC 从半帧开始解码就是「电流声」。
+                // 所以仅在尚未开始播放时恢复。
                 const saved = this.resumeMap[index];
-                if (saved && el.duration && saved < el.duration - 3) {
-                    try { el.currentTime = saved; } catch (e) { /* 忽略 */ }
-                }
+                if (!saved || !el.duration || el.paused === false) return;
+                if (saved >= el.duration - 3 || saved < 2) return;
+                // 对齐到整秒，避免落在帧中间
+                try { el.currentTime = Math.floor(saved); } catch (e) { /* 忽略 */ }
             });
             el.addEventListener('timeupdate', () => {
                 this.currentTime = el.currentTime || 0;
@@ -267,15 +274,16 @@ export default {
         stopAudioFilePlayback() {
             if (this.currentAudioFile) {
                 const el = this.currentAudioFile;
-                // 只 pause() 不清 src，Chrome 会保留解码器与网络流。快速切歌/重播时
-                // 旧实例仍可能后台解码，和新实例叠在一起——听起来就是「声音发抖」
-                // （实际是两路同源音频错了几十毫秒在打架）。这里彻底拆掉。
+                // 先摘掉引用，让各事件回调的「是否当前实例」校验立刻失效，
+                // 避免下面 pause/清 src 触发的事件打到新播放器上。
+                this.currentAudioFile = null;
                 try {
                     el.pause();
+                    // 只清 src 不 load()：load() 会立刻触发 drained/error 并重新
+                    // 初始化解码器，紧接着又 new 一个 Audio，短时间内两套解码器
+                    // 叠加，AAC 上表现为爆音/电流声。浏览器在引用释放后自会回收。
                     el.removeAttribute('src');
-                    el.load();
                 } catch (e) { /* 忽略 */ }
-                this.currentAudioFile = null;
             }
             this.playing_audio_index = null;
             this.audio_loading = false;
