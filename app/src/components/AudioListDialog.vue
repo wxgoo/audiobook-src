@@ -54,6 +54,8 @@
                 <v-slider
                     :value="progressPct"
                     @input="seekPct"
+                    @start="seekDragging = true"
+                    @end="onSeekEnd"
                     :min="0" :max="100" :step="0.1"
                     hide-details
                     dense
@@ -119,6 +121,7 @@ export default {
             currentTime: 0,
             duration: 0,
             resumeMap: {},
+            seekDragging: false,
         };
     },
     mounted() {
@@ -278,8 +281,26 @@ export default {
             this.duration = 0;
         },
         seekPct(pct) {
+            // 记录最后一次拖动位置，@end 时兜底
+            this._lastSeekPct = pct;
+            // §防回环§ Vuetify v-slider 在外部 :value 变化时也会 emit input：
+            // 播放走到 0.2s → progressPct≈0.016% → 被步长 0.1 四舍五入成 0 →
+            // emit → seek 回 0 →「播 0.2 秒弹回 0」无限循环（表现为进度不走、
+            // 声音发抖/同一句重复）。所以只有用户真实拖动（@start..@end 之间）
+            // 才允许 seek，来自组件回环的 input 一律忽略。
+            if (!this.seekDragging) return;
             if (!this.currentAudioFile || !this.duration) return;
             this.currentAudioFile.currentTime = (pct / 100) * this.duration;
+        },
+        onSeekEnd() {
+            // 松手时把最终位置补一次 seek（拖动期间的 input 已实时 seek 过，
+            // 这里兜底最后一次的值，避免停在不准的位置）
+            const pct = this._lastSeekPct;
+            this.seekDragging = false;
+            if (pct !== null && this.currentAudioFile && this.duration) {
+                this.currentAudioFile.currentTime = (pct / 100) * this.duration;
+            }
+            this._lastSeekPct = null;
         },
     },
     computed: {
