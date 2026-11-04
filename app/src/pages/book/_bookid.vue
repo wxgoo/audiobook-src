@@ -2245,13 +2245,12 @@ export default {
             }
 
             if (this.hasAudio) {
-                // 已经有音频：直接看列表（不再弹「用 EPUB 转换」的对话框）
-                this.dialog_audiolist = !this.dialog_audiolist
-                if (this.dialog_audiolist && this.audios.status === this.AUDIO_STATUS.PROCESSING) {
-                    this.startAudioProgressPolling();
-                } else {
-                    this.stopAudioProgressPolling();
-                }
+                // §直接进播放页§ 与顶部按钮行为一致（switchToAudioPlayer）。
+                // 详情页内嵌弹窗的播放实现在网络盘环境下反复出问题（seek 卡死、
+                // 状态互相打断），而独立播放页 /audio/<id> 一直稳定，且功能更全
+                // （字幕/倍速/定时）。管理类操作（重新生成/清除音频）仍保留在
+                // 顶部下拉里。
+                this.$router.push("/audio/" + this.book.id);
                 return;
             }
 

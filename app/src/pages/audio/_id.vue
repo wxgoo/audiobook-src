@@ -557,6 +557,12 @@ export default {
           if (targetTime > 0 && isFinite(player.duration)
               && targetTime < player.duration - 1) {
             player.currentTime = targetTime;
+            // 把恢复的位置立刻反映到界面：暂停状态下进度条/时间也显示
+            // 上次听到的地方，而不是 0:00（否则看起来像"没记忆"）。
+            this.currentTime = Math.max(0, targetTime - base);
+            if (this.duration > 0) {
+              this.progress = (this.currentTime / this.duration) * 100;
+            }
           }
         } catch (e) { /* 忽略 */ }
         this.syncDurationFromAudio(audio, player);
