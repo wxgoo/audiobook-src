@@ -9,7 +9,125 @@
 
 ---
 
-## 4.6.0-15（当前）
+## 4.6.0-16（当前）
+
+> **修「同步到文件」看起来没生效**。改后端 3 个文件 + 前端 2 个组件 + 3 份语言包，
+> **需要重建前端**。
+
+### 背景：用户反馈「元数据根本没改」
+
+> 「文件处理的同步文件信息，能不能真的更改 pdf、epub 的元数据，我感觉根本没改，
+> 重新导入这本改过的书，元数据提取还是不正确」
+
+先做底层闭环验证（容器内真实写入 + 读回 + 重新导入）：
+
+| 格式 | 文件字节变化 | 读回 title | 读回 authors | 重新导入一致 |
+|---|---|---|---|---|
+| EPUB | 1910 → 2400 ✅ | ✅ | ✅ | ✅ |
+| PDF | 1821 → 2060 ✅ | ✅ | ✅ | ✅ |
+
+**写入链路本身是通的**。问题全在「重新导入」这一步，共三处缺陷，另有顺带两修。
+
+### 缺陷 1：重新导入并回原书，而 `add_format` 不动元数据（主因）
+
+改完书名点同步，文件里确实写进了新书名。再把这本书重新导入时：
+
+```
+文件内现在: '新书名-WEB修改' ['新作者-WEB修改']
+books_with_same_title(miB): {1}     ← 命中了自己
+```
+
+命中同名 → 走 `add_format` 并入原书。但实测 `add_format` **只替换格式文件，
+完全不碰 title/authors**。文件换了、记录没换，用户看到的就是「改了等于没改」。
+
+**修法**：新增 `merge_meta_from_file()`。并入既有书时把文件里的元数据补进记录。
+
+- **默认只补空字段**（书名/作者/出版社/标签/丛书/简介/语言），不破坏「书库记录是权威」的既有设计
+- `merge_meta_force=1` 时整体覆盖（给需要「以文件为准」的场景）
+- 返回实际改动的字段名，前端提示「已从文件更新了：作者、出版社」
+
+> 为什么默认不覆盖：`_add_format_to_existing_book` 这条路径本来就是「把库内元数据
+> **写回**新格式文件」，设计意图明确是库内记录权威。无条件覆盖会反过来把它们冲掉。
+
+### 缺陷 2：分片上传把 PDF 作者无条件改成「佚名」
+
+```python
+# Handle special formats like txt and pdf
+if fmt in ["txt", "pdf"]:
+    mi.title = utils.remove_zlibrary_suffix(filename.replace("." + fmt, ""))
+    mi.authors = [_("佚名")]          # ← 无条件
+```
+
+大文件走分片上传，PDF 标题**无条件取文件名**、作者**无条件回退佚名**，
+刚同步进 PDF 的元数据在这里被直接丢掉。
+
+### 缺陷 3：PDF/TXT 标题作者口径三处各写一套
+
+同一个 PDF 走不同入口，得到三个不同结果：
+
+| 入口 | 标题 | 作者 |
+|---|---|---|
+| `_receive_new_book`（单文件） | 三态判断（空/下载工具/SSReader Print. 才用文件名） | 仅 `unknown` 才换佚名 |
+| `BookUploadChunk`（分片） | 无条件文件名 | 无条件佚名 |
+| `BookSperate`（分离格式） | 无条件文件名 | 无条件佚名 |
+
+**修法**：抽 `normalize_pdf_meta()` / `normalize_txt_meta()`，四处调用点全部收口。
+
+- `PDF_PLACEHOLDER_TITLES` 收纳 `SSReader Print.` / `Microsoft Word - ` / `Untitled`
+- `_AUTHOR_PLACEHOLDERS` 收纳 `unknown` / `未知` / `佚名` / `anonymous` / `none`
+- `PDF_TILE_WITH_FILE_NAME` 现在**真正对所有入口生效**（之前只有单文件上传读它）
+- `reset_book_meta` 的 PDF 分支也不再无条件把作者打成佚名
+
+### 顺带修一：限流暂停时间被截断
+
+`autofill.py` 里 `wait = int(wait)` 把浮点秒数直接截短：1.8s → 1s，
+实际只睡 1 秒就重试，比服务端窗口早走 0.8 秒，大概率再撞一次限流。
+`resume_at` 又被 `int()` 截断，进度条显示的恢复时刻比真实时刻早最多 1 秒。
+
+改为 `math.ceil(wait)`，`resume_at` 保留毫秒精度。这是既有回归用例
+`test_pause_then_retry_completes_all` 一直在报的错，之前没修。
+
+### 顺带修二：弹窗组件构建失败
+
+`AudioListDialog.vue` 把 `_lastAudiosSig` / `_diagTaps` 放在 `data` 里，
+`_` 开头是 Vue 2 保留键，触发 `vue/no-reserved-keys`，**前端构建直接失败**。
+改为在 `created` 里挂到实例上（与 `_el` 一致）。
+
+### 补充：远程缺失的 epub 阅读器模板
+
+`webserver/resources/book/epubjs.html` 在远程分支里不存在，但
+`book.py` 的 `html_page("book/epubjs.html")` 要读它——缺了则在线读 EPUB 失败。
+本版补回。
+
+### 影响面
+
+| 文件 | 改动 |
+|---|---|
+| `webserver/handlers/book.py` | 新增 4 个 helper + 5 处调用点收口 |
+| `webserver/services/autofill.py` | 限流等待取整方式 |
+| `app/src/components/Upload.vue` | 上传结果提示带上「更新了哪些字段」 |
+| `app/src/components/AudioListDialog.vue` | 保留键改为实例字段 |
+| `app/locales/{zh,zh-TW,en}.json` | 新增 `uploadSuccessMerged` + `metaField.*` |
+| `webserver/resources/book/epubjs.html` | 补回缺失模板 |
+| `myreader-dist` | 删除 8 个悬空符号链接，`pack.sh` 收紧为断链必须为 0 |
+| `tests/test_meta_merge.py` | 新增 24 项用例 |
+
+### 验证
+
+```
+Ran 1287 tests — 以远程分支为基线逐条对比
+差异（仅出现在改动后 = 新引入）: 无
+```
+
+### 怎么用
+
+1. 改完元数据，先点「同步到文件」（这一步一直是好的）
+2. 重新导入同一个文件时，如果并进了同名书，提示会告诉你补了哪些字段
+3. 想强制以文件为准：上传请求带 `merge_meta_force=1`
+
+---
+
+## 4.6.0-15
 
 ### 彻底移除旧布局 `audios/<book_id>/`
 
