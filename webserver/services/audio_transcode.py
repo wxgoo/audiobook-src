@@ -47,6 +47,9 @@ _task = {
     "message": "",
     "started_at": 0,
     "finished_at": 0,
+    "queue": [],
+    "queue_index": 0,
+    "skipped": [],
 }
 
 
@@ -76,24 +79,44 @@ def list_mp3_files(db, book_id):
     )
 
 
-def start(db, book_id, bitrate="64k", title=""):
-    """启动转码线程。返回 (ok, msg)。db 与书名由 handler 传入。"""
+def start(db, book_ids, bitrate="64k", titles=None):
+    """启动转码队列。book_ids 可传单本 int 或多本 list。
+
+    多本时按顺序逐书处理；某书没有 mp3 直接跳过（计入 skipped）。
+    返回 (ok, msg)。
+    """
+    if isinstance(book_ids, int):
+        book_ids = [book_ids]
+    book_ids = [int(b) for b in (book_ids or []) if int(b) > 0]
+    if not book_ids:
+        return False, _("未指定书籍")
+
+    titles = titles or {}
     with _task_lock:
         if _task["running"]:
-            return False, _("已有转码任务在进行中（书 %s）") % _task.get("book_id")
+            return False, _("已有转码任务在进行中（书 %s）") % _task.get("book_title")                 or _task.get("book_id")
 
-        files = list_mp3_files(db, book_id)
-        if files is None:
-            return False, _("书籍不存在")
-        if not files:
-            return False, _("该书的 .audio/ 目录里没有 mp3 文件")
+        # 预检：过滤掉没有 mp3 的书
+        queue = []
+        skipped = []
+        for bid in book_ids:
+            files = list_mp3_files(db, bid)
+            if files is None:
+                skipped.append({"book_id": bid, "reason": "not_found"})
+            elif not files:
+                skipped.append({"book_id": bid, "reason": "no_mp3"})
+            else:
+                queue.append({"book_id": bid, "files": files})
+
+        if not queue:
+            return False, _("所选书籍都没有需要转码的 mp3")
 
         _task.update({
             "running": True,
-            "book_id": int(book_id),
-            "book_title": title or "",
+            "book_id": queue[0]["book_id"],
+            "book_title": titles.get(str(queue[0]["book_id"]), ""),
             "bitrate": bitrate if bitrate in ("64k", "96k", "128k") else "64k",
-            "total": len(files),
+            "total": sum(len(q["files"]) for q in queue),
             "done": 0,
             "failed": 0,
             "current": "",
@@ -102,20 +125,53 @@ def start(db, book_id, bitrate="64k", title=""):
             "message": "",
             "started_at": time.time(),
             "finished_at": 0,
+            # 多书队列信息（单书时只有一个元素）
+            "queue": [
+                {"book_id": q["book_id"], "title": titles.get(str(q["book_id"]), ""),
+                 "total": len(q["files"]), "done": 0, "failed": 0}
+                for q in queue
+            ],
+            "queue_index": 0,
+            "skipped": skipped,
         })
 
-    t = threading.Thread(target=_run, args=(db, int(book_id)), daemon=True)
+    t = threading.Thread(target=_run_queue, args=(db, queue), daemon=True)
     t.start()
-    return True, _("转码已启动，共 %d 个文件") % len(files)
+    if len(queue) == 1:
+        return True, _("转码已启动，共 %d 个文件") % _task["total"]
+    return True, _("批量转码已启动：%d 本书，共 %d 个文件") % (len(queue), _task["total"])
 
 
-def _run(db, book_id):
+def _run_queue(db, queue):
+    """按队列逐书转码。queue 元素: {book_id, files}。"""
+    try:
+        for qi, item in enumerate(queue):
+            if not _task["running"]:
+                break
+            _task["queue_index"] = qi
+            _task["book_id"] = item["book_id"]
+            _task["book_title"] = _task["queue"][qi]["title"]
+            _transcode_one_book(db, item["book_id"], item["files"], qi)
+        _task["status"] = "done"
+        _task["message"] = _("完成：%d 本书 %d 成功 %d 失败（失败的 mp3 已保留）") % (
+            len(queue), _task["done"], _task["failed"])
+        if _task.get("skipped"):
+            _task["message"] += _(", 跳过 %d 本（无 mp3 或书不存在）") % len(_task["skipped"])
+    except Exception as e:
+        _task["status"] = "error"
+        _task["message"] = _("任务异常：%s") % e
+        logging.exception("[audio_transcode] 任务异常")
+    finally:
+        _task["running"] = False
+        _task["current"] = ""
+        _task["finished_at"] = time.time()
+
+
+def _transcode_one_book(db, book_id, files, queue_index):
     try:
         audio_dir, _legacy = audio_dir_for_read(db, book_id)
-        files = sorted(
-            f for f in os.listdir(audio_dir)
-            if f.lower().endswith(".mp3") and os.path.isfile(os.path.join(audio_dir, f))
-        )
+        if not audio_dir or not os.path.isdir(audio_dir):
+            raise RuntimeError("audio dir missing")
         bitrate = _task["bitrate"]
         for name in files:
             if not _task["running"]:  # 预留：将来支持取消
@@ -153,10 +209,12 @@ def _run(db, book_id):
                 os.replace(tmp, dst)          # 转码成功：m4a 就位
                 os.remove(src)                # mp3 只有在 m4a 成功后才删
                 _task["done"] += 1
+                _task["queue"][queue_index]["done"] += 1
                 logging.info("[audio_transcode] %s -> %s OK", name, stem + ".m4a")
             except Exception as e:
                 # 失败：清掉半成品，保留 mp3，继续下一个
                 _task["failed"] += 1
+                _task["queue"][queue_index]["failed"] += 1
                 _task["errors"].append({"file": name, "error": str(e)[:300]})
                 try:
                     if os.path.exists(tmp):
@@ -164,14 +222,10 @@ def _run(db, book_id):
                 except OSError:
                     pass
                 logging.warning("[audio_transcode] %s 失败: %s", name, e)
-        _task["status"] = "done"
-        _task["message"] = _("完成：%d 成功，%d 失败（失败的 mp3 已保留）") % (
-            _task["done"], _task["failed"])
     except Exception as e:
-        _task["status"] = "error"
-        _task["message"] = _("任务异常：%s") % e
-        logging.exception("[audio_transcode] 任务异常")
-    finally:
-        _task["running"] = False
-        _task["current"] = ""
-        _task["finished_at"] = time.time()
+        # 单书级异常（如目录消失）：记错误，队列继续下一本
+        _task["failed"] += len(files) - (_task["queue"][queue_index]["done"]
+                                          + _task["queue"][queue_index]["failed"])
+        _task["errors"].append({
+            "file": _("书 #%s 整体失败" % book_id), "error": str(e)[:300]})
+        logging.warning("[audio_transcode] 书 %s 整体失败: %s", book_id, e)

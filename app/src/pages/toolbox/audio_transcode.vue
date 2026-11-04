@@ -43,17 +43,46 @@
             @keyup.enter="scan"
           ></v-text-field>
 
-          <div class="d-flex align-center mb-4">
+          <div class="d-flex align-center mb-4 flex-wrap">
             <v-btn
               color="primary" outlined small
               :loading="scanning"
               :disabled="!bookIdInput || phase === 'running'"
               @click="scan"
-            >扫描</v-btn>
+            >扫描单本</v-btn>
+            <v-btn
+              color="secondary" outlined small class="ml-2"
+              :loading="scanningAll"
+              :disabled="phase === 'running'"
+              @click="scanAll"
+            >扫描全库（批量）</v-btn>
             <span v-if="scanResult" class="ml-3 text-caption">
               《{{ scanResult.title }}》：{{ scanResult.mp3_count }} 个 mp3
             </span>
           </div>
+
+          <!-- 全库批量：多选列表 -->
+          <template v-if="allBooks.length">
+            <div class="d-flex align-center mb-2">
+              <span class="text-subtitle-2">
+                全库共 {{ allBooks.length }} 本含 mp3，已选 {{ selectedBooks.length }} 本
+              </span>
+              <v-spacer></v-spacer>
+              <v-btn text x-small color="primary" @click="selectedBooks = allBooks.map(b => b.book_id)">全选</v-btn>
+              <v-btn text x-small class="ml-1" @click="selectedBooks = []">清空</v-btn>
+            </div>
+            <v-card flat outlined class="mb-4">
+              <div style="max-height:220px;overflow-y:auto">
+                <v-checkbox
+                  v-for="b in allBooks" :key="b.book_id"
+                  v-model="selectedBooks"
+                  :value="b.book_id"
+                  :label="'#' + b.book_id + ' 《' + b.title + '》 ' + b.mp3_count + ' 个 mp3'"
+                  hide-details dense class="ml-3"
+                ></v-checkbox>
+              </div>
+            </v-card>
+          </template>
 
           <!-- 文件列表 -->
           <v-card v-if="scanResult && scanResult.files.length" flat outlined class="mb-4">
@@ -89,7 +118,12 @@
           <template v-if="phase === 'running' || phase === 'done'">
             <div class="mt-6">
               <div class="d-flex text-caption mb-1">
-                <span>{{ task.book_title || ('书 #' + task.book_id) }}</span>
+                <span>
+                  {{ task.book_title || ('书 #' + task.book_id) }}
+                  <template v-if="(task.queue || []).length > 1">
+                    （第 {{ task.queue_index + 1 }}/{{ task.queue.length }} 本）
+                  </template>
+                </span>
                 <v-spacer></v-spacer>
                 <span>{{ task.done }}/{{ task.total }}
                   <template v-if="task.failed">（失败 {{ task.failed }}）</template>
@@ -128,8 +162,14 @@
     <!-- 确认框 -->
     <v-dialog v-model="confirmStart" width="360">
       <v-card class="pa-4">
-        <p>将把《{{ scanResult.title }}》里 {{ scanResult.mp3_count }} 个 mp3
-          转成 {{ bitrate }} 的 m4a，成功后删除原 mp3。确认开始？</p>
+        <p v-if="selectedBooks.length">
+          将把选中的 {{ selectedBooks.length }} 本书里所有 mp3 转成
+          {{ bitrate }} 的 m4a，成功后删除原 mp3。确认开始？
+        </p>
+        <p v-else>
+          将把《{{ scanResult.title }}》里 {{ scanResult.mp3_count }} 个 mp3
+          转成 {{ bitrate }} 的 m4a，成功后删除原 mp3。确认开始？
+        </p>
         <div class="d-flex justify-end">
           <v-btn text small @click="confirmStart = false">取消</v-btn>
           <v-btn color="primary" small :loading="starting" @click="start">确认</v-btn>
@@ -155,6 +195,9 @@ export default {
       bookIdInput: "",
       bitrate: "64k",
       scanning: false,
+      scanningAll: false,
+      allBooks: [],
+      selectedBooks: [],
       starting: false,
       confirmStart: false,
       scanResult: null,
@@ -165,8 +208,9 @@ export default {
   },
   computed: {
     canStart() {
-      return this.scanResult && this.scanResult.mp3_count > 0
-        && this.phase !== "running";
+      if (this.phase === "running") return false;
+      if (this.selectedBooks.length) return true;          // 批量模式
+      return this.scanResult && this.scanResult.mp3_count > 0; // 单本模式
     },
     phase() {
       if (!this.task || !this.task.status) return "idle";
@@ -213,16 +257,32 @@ export default {
         this.scanning = false;
       }
     },
+    async scanAll() {
+      this.scanningAll = true;
+      try {
+        const rsp = await this.$backend("/toolbox/audio_transcode/scan_all");
+        if (rsp.err !== "ok") {
+          this.toast(rsp.msg || "扫描失败", "error");
+          return;
+        }
+        this.allBooks = rsp.data.books || [];
+        this.selectedBooks = this.allBooks.map((b) => b.book_id);
+        this.scanResult = null;
+        if (!this.allBooks.length) this.toast("全库没有需要转码的 mp3", "success");
+      } finally {
+        this.scanningAll = false;
+      }
+    },
     async start() {
       this.starting = true;
       try {
+        const payload = this.selectedBooks.length
+          ? { book_ids: this.selectedBooks, bitrate: this.bitrate }
+          : { book_id: parseInt(this.bookIdInput, 10), bitrate: this.bitrate };
         const rsp = await this.$backend("/toolbox/audio_transcode/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            book_id: parseInt(this.bookIdInput, 10),
-            bitrate: this.bitrate,
-          }),
+          body: JSON.stringify(payload),
         });
         if (rsp.err !== "ok") {
           this.toast(rsp.msg || "启动失败", "error");

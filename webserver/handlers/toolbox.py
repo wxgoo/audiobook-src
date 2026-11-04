@@ -729,21 +729,57 @@ class AdminAudioTranscodeScan(BaseHandler):
         }}
 
 
+class AdminAudioTranscodeScanAll(BaseHandler):
+    """扫描整个 library，列出所有含 mp3 的书（供一键批量）。"""
+    @js
+    @is_admin
+    def get(self):
+        if audio_transcode.is_running():
+            return {"err": "task.running", "msg": _("已有转码任务在进行中")}
+        from webserver.base.audio_dir import find_audios_by_scanning_library
+        audio_books = find_audios_by_scanning_library()
+        result = []
+        for bid, adir in sorted(audio_books.items()):
+            mp3s = [f for f in os.listdir(adir)
+                    if f.lower().endswith(".mp3")
+                    and os.path.isfile(os.path.join(adir, f))]
+            if not mp3s:
+                continue
+            try:
+                title = self.calibre_db_cache.field_for("title", bid) or ""
+            except Exception:
+                title = ""
+            result.append({"book_id": bid, "title": title, "mp3_count": len(mp3s)})
+        return {"err": "ok", "data": {"books": result}}
+
+
 class AdminAudioTranscodeStart(BaseHandler):
     @js
     @is_admin
     def post(self):
         data = tornado.escape.json_decode(self.request.body)
+        bitrate = (data.get("bitrate") or "64k").strip()
+
+        # 兼容两种入参：book_id（单本）或 book_ids（批量）
+        book_ids = data.get("book_ids")
+        if not book_ids:
+            book_ids = [data.get("book_id") or 0]
         try:
-            book_id = int(data.get("book_id") or 0)
+            book_ids = [int(b) for b in book_ids if b]
         except (TypeError, ValueError):
             return {"err": "params.book_id.invalid", "msg": _("书籍 ID 必须是数字")}
-        bitrate = (data.get("bitrate") or "64k").strip()
-        try:
-            title = self.calibre_db_cache.field_for("title", book_id) or ""
-        except Exception:
-            title = ""
-        ok, msg = audio_transcode.start(self.calibre_db, book_id, bitrate, title)
+        if not book_ids:
+            return {"err": "params.book_id.missing", "msg": _("请提供书籍 ID")}
+
+        # 批量取书名
+        titles = {}
+        for bid in book_ids:
+            try:
+                titles[str(bid)] = self.calibre_db_cache.field_for("title", bid) or ""
+            except Exception:
+                titles[str(bid)] = ""
+
+        ok, msg = audio_transcode.start(self.calibre_db, book_ids, bitrate, titles)
         if not ok:
             return {"err": "task.start_failed", "msg": msg}
         return {"err": "ok", "msg": msg}
@@ -1683,6 +1719,7 @@ def routes():
                 (r"/api/toolbox/epub_split/generate", AdminEpubSplitGenerate),
                 (r"/api/toolbox/author_clean", AdminAuthorClean),
                 (r"/api/toolbox/audio_transcode/scan", AdminAudioTranscodeScan),
+                (r"/api/toolbox/audio_transcode/scan_all", AdminAudioTranscodeScanAll),
                 (r"/api/toolbox/audio_transcode/start", AdminAudioTranscodeStart),
                 (r"/api/toolbox/audio_transcode/progress", AdminAudioTranscodeProgress),
                 (r"/api/toolbox/bookbarn_acceptor/status", AdminBookBarnAcceptorStatus),
