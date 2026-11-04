@@ -211,7 +211,7 @@
                         class="mx-2 d-flex d-sm-flex"
                         :style="tiny ? { padding: '0px', margin: '0px 1px !important' } : {}"
                         @click="switchToAudioPlayer"
-                        v-if="hasEBooks"
+                        v-if="hasEBooks || hasAudio"
                     >
                         <v-icon v-if="tiny">mdi-music-note</v-icon>
                         <template v-else>
