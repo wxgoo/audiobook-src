@@ -387,6 +387,53 @@ class ScanService(AsyncService):
             logging.warning("[SCAN] Existence check failed for book_id=%s, treat as missing: %s", book_id, err)
             return False
 
+    def _merge_meta_into_existing(self, book_id, mi, fpath, fmt):
+        """扫描导入并入既有书后，把文件里的元数据与封面补进记录。
+
+        §为什么需要单独一份§ `merge_meta_from_file` 只管 title/authors/publisher/
+        tags/series/comments/languages 这些文本字段，**不管封面**——封面是
+        `mi.cover_data` 二进制，走的是 calibre 的 `set_cover`。而 add_format
+        只替换格式文件，两者都不会被动过，所以并入路径上必须自己补。
+
+        策略与上传路径一致：默认只补空字段（书库记录权威），
+        配置 `merge_meta_force` 打开时连封面一起覆盖。
+
+        尽力而为：任何一步失败只记日志，不能让已经成功的 add_format 被回滚成 INVALID。
+        """
+        try:
+            from webserver.handlers.book import merge_meta_from_file
+        except Exception as err:
+            logging.info("[IMPORT] merge helper unavailable, skip meta merge: %s", err)
+            return
+        force = bool(CONF.get("merge_meta_force", False))
+        try:
+            changed = merge_meta_from_file(self.db, book_id, mi, force) or []
+            if changed:
+                logging.info("[IMPORT] Merged meta into book %s from %s: %s", book_id, fpath, changed)
+        except Exception as err:
+            logging.warning("[IMPORT] Meta merge failed for book %s: %s", book_id, err)
+
+        # 封面：仅当书仍无封面时才补（否则会覆盖用户手动设的封面）
+        try:
+            if not mi.cover_data or not mi.cover_data[1]:
+                return
+            if not force:
+                try:
+                    current = self.db.get_metadata(book_id, index_is_id=True, get_user_categories=False)
+                except Exception:
+                    current = None
+                if current is not None and getattr(current, "has_cover", False):
+                    return
+            data = mi.cover_data[1]
+            if data[:4] == b"RIFF":
+                from webserver.base.image_helper import ImageHelper
+                data = ImageHelper.convert_to_jpeg(data)
+            # 用 calibre 的 set_cover(book_id, bytes)，与 toolbox/core_api.py 同口径
+            self.db.set_cover(book_id, data)
+            logging.info("[IMPORT] Cover merged into book %s from %s (%d bytes)", book_id, fpath, len(data))
+        except Exception as err:
+            logging.warning("[IMPORT] Cover merge failed for book %s: %s", book_id, err)
+
     def _title_dedup_ids(self, mi):
         """标题判重入口：批量达标时用运行级落盘索引点查（语义与 calibre
         books_with_same_title 逐位一致——同 icu_lower 折叠 + 等值比较），未达
@@ -1438,6 +1485,11 @@ class ScanService(AsyncService):
                     self.db.add_format(row.book_id, fmt.upper(), fpath, True)
                     row.status = ScanFile.IMPORTED
                     logging.info("[IMPORT] Added format to existing book, book_id=%d [%.3fs]", row.book_id, time.time() - start_time)
+                    # §并入后必须补元数据与封面§ add_format 只换格式文件，title/authors/
+                    # 封面一概不动。4.6.0-16 只修了网页上传的两条路径，扫描导入漏了，
+                    # 表现为「扫描导入的 PDF 作者仍显示 Unknown、封面还是占位图」。
+                    # 默认只补空字段（书库记录权威），merge_meta_force 时整体覆盖。
+                    self._merge_meta_into_existing(row.book_id, mi, fpath, fmt)
 
             if not existed_ebook:
                 logging.info("[IMPORT] Importing new book [%s] from %s", repr(mi.title), fpath)
