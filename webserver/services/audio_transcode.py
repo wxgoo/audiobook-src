@@ -20,6 +20,7 @@
 import json
 import logging
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -43,36 +44,60 @@ _task = {
     "total": 0,
     "done": 0,
     "failed": 0,
+    "kept": 0,               # delete_source=False 时保留原 mp3 的个数
     "current": "",          # 正在处理的文件名
     "errors": [],           # [(filename, errmsg)]
-    "status": "idle",       # idle / running / done / error
+    "status": "idle",       # idle / running / done / error / cancelling / cancelled
     "message": "",
     "started_at": 0,
     "finished_at": 0,
     "queue": [],
     "queue_index": 0,
     "skipped": [],
+    "cancel_requested": False,
 }
 
 
 def task_snapshot():
-    return dict(_task)
+    """任务状态快照。
+
+    必须拷贝嵌套结构：轮询接口把这个 dict 直接 JSON 序列化，浅拷贝会让
+    errors/queue/skipped 仍与后台线程共享，序列化迭代时后台线程并发修改
+    可能抛 RuntimeError（dict changed size during iteration）。
+    """
+    with _task_lock:
+        snap = dict(_task)
+    snap["errors"] = list(snap.get("errors") or [])
+    snap["skipped"] = [dict(x) for x in (snap.get("skipped") or [])]
+    snap["queue"] = [dict(x) for x in (snap.get("queue") or [])]
+    return snap
 
 
 def is_running():
-    return _task["running"]
+    """handler 侧的「忙」判定：running 或正在收尾取消（旧线程还没退干净）。
+
+    cancel() 会立刻把 running 置 False，但工作线程要等当前 ffmpeg 结束才真正
+    退出；这个窗口里允许 start() 会覆盖掉取消中的任务状态，所以也算忙。
+    """
+    return _task["running"] or _task.get("status") == "cancelling"
 
 
-def list_mp3_files(db, book_id):
-    """返回该书 .audio/ 下 mp3 文件名列表（按文件名排序）。
+def book_audio_dir(db, book_id):
+    """解析书的 .audio/ 目录（calibre 只读操作）。
 
-    db 由调用方（handler）传入。书不存在返回 None，没有音频返回空表。
+    纯 field_for 读取，不碰文件系统之外的任何东西，设计为可放进
+    run_calibre_read_async 在 calibre 池里调用。书不存在/无路径返回 None。
     """
     try:
         audio_dir, _legacy = audio_dir_for_read(db, int(book_id))
     except Exception as e:
         LOG.warning("[audio_transcode] 解析音频目录失败 book=%s: %s", book_id, e)
-        return None  # 书不存在
+        return None
+    return audio_dir or None
+
+
+def list_mp3_in_dir(audio_dir):
+    """列出目录下的 mp3（纯文件系统操作，不碰 db，可放线程池）。"""
     if not audio_dir or not os.path.isdir(audio_dir):
         return []
     return sorted(
@@ -81,13 +106,26 @@ def list_mp3_files(db, book_id):
     )
 
 
+def list_mp3_files(db, book_id):
+    """返回该书 .audio/ 下 mp3 文件名列表（按文件名排序）。
+
+    db 由调用方（handler）传入。书不存在返回 None，没有音频返回空表。
+    注意：内含 calibre 读调用 + 目录遍历，事件循环上调用会阻塞 ioloop——
+    handler 里请先 run_calibre_read_async(book_audio_dir) 再在线程池里
+    list_mp3_in_dir，本函数留给兼容旧调用方和非 ioloop 场景。
+    """
+    audio_dir = book_audio_dir(db, book_id)
+    if audio_dir is None:
+        return None  # 书不存在
+    return list_mp3_in_dir(audio_dir)
+
+
 def _audio_dir_of(db, book_id):
     """取书的音频目录（只读）；取不到返回 None。"""
-    try:
-        audio_dir, _legacy = audio_dir_for_read(db, int(book_id))
-    except Exception:
-        return None
-    return audio_dir if audio_dir and os.path.isdir(audio_dir) else None
+    audio_dir = book_audio_dir(db, book_id)
+    if audio_dir and os.path.isdir(audio_dir):
+        return audio_dir
+    return None
 
 
 def probe_mp3(path):
@@ -133,22 +171,23 @@ def probe_mp3(path):
     return info
 
 
-def probe_book_audio(db, book_id, files=None, limit=200):
-    """探测一本书的音频概况，给前端展示「现在是什么样」。
+def probe_files_in_dir(audio_dir, files=None, limit=200):
+    """探测目录下 mp3 的概况（纯文件系统 + ffprobe 子进程，不碰 db）。
+
+    一个文件一次 ffprobe 子进程，单本书最多 limit 次——**必须**在
+    utils.run_in_threadpool 之类的线程池里调用；放 Tornado handler（ioloop
+    线程）同步跑会把全站请求冻住几十秒。
 
     返回 dict：files 明细、总大小、总时长、平均码率、最低/最高码率。
-    files 超过 limit 时只探测前 limit 个（全库扫描时避免几百次 ffprobe 卡住），
-    此时 sampled=True，前端应说明「基于抽样」。
+    files 超过 limit 时只探测前 limit 个，此时 sampled=True，
+    前端应说明「基于抽样」。
     """
-    audio_dir = _audio_dir_of(db, book_id)
-    if not files:
-        files = list_mp3_files(db, book_id) or []
-    if not audio_dir:
-        return None
+    if files is None:
+        files = list_mp3_in_dir(audio_dir)
     picked = files[:limit] if limit and len(files) > limit else files
     details = []
     for name in picked:
-        details.append(probe_mp3(os.path.join(audio_dir, name)))
+        details.append(probe_mp3(os.path.join(audio_dir or "", name)))
 
     total_size = sum(d["size"] or 0 for d in details)
     known = [d for d in details if d["bitrate"]]
@@ -167,39 +206,77 @@ def probe_book_audio(db, book_id, files=None, limit=200):
     }
 
 
+def probe_book_audio(db, book_id, files=None, limit=200):
+    """探测一本书的音频概况，给前端展示「现在是什么样」。
 
-def start(db, book_ids, bitrate="64k", titles=None, delete_source=True):
-    """启动转码队列。book_ids 可传单本 int 或多本 list。
+    兼容封装：先解析音频目录（calibre 读），再对目录做纯文件系统探测。
+    同样**不能**在 ioloop 上直接调用（内含多次 ffprobe）——handler 里请
+    分两步：run_calibre_read_async(book_audio_dir) + run_in_threadpool(
+    probe_files_in_dir)。
+    """
+    audio_dir = _audio_dir_of(db, book_id)
+    if not audio_dir:
+        return None
+    if not files:
+        files = list_mp3_in_dir(audio_dir)
+    return probe_files_in_dir(audio_dir, files, limit=limit)
+
+
+def start(books, bitrate="64k", titles=None, delete_source=True):
+    """启动转码队列。books 为 [{"book_id": int, "audio_dir": str}]。
+
+    4.6.0-19 起不再接收 db：音频目录由 handler 先在 calibre 池里解析好
+    （book_audio_dir），后台线程只做纯文件系统/子进程操作，不再持有任何
+    calibre 对象。
 
     delete_source: 转码成功后是否删除原 mp3。默认 True（沿用原行为），
     但用户可以在页面上取消勾选，保留原文件自己核对后再删。
     失败的 mp3 无论如何都保留。
 
     多本时按顺序逐书处理；某书没有 mp3 直接跳过（计入 skipped）。
-    返回 (ok, msg)。
+    返回 (ok, msg)。内部做文件系统遍历，handler 里建议经线程池调用。
     """
-    if isinstance(book_ids, int):
-        book_ids = [book_ids]
-    book_ids = [int(b) for b in (book_ids or []) if int(b) > 0]
-    if not book_ids:
+    if shutil.which("ffmpeg") is None:
+        # ffmpeg 预检：环境里没有 ffmpeg 时每个文件都会失败，与其启动后
+        # 逐个报 "No such file or directory"，不如直接拒绝并说明原因。
+        return False, _("未找到 ffmpeg，无法转码（请确认运行环境已安装）")
+
+    if isinstance(books, dict):
+        books = [books]
+    normalized = []
+    for b in books or []:
+        try:
+            bid = int(b.get("book_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if bid <= 0:
+            continue
+        normalized.append({"book_id": bid, "audio_dir": b.get("audio_dir")})
+    if not normalized:
         return False, _("未指定书籍")
 
     titles = titles or {}
     with _task_lock:
-        if _task["running"]:
-            return False, _("已有转码任务在进行中（书 %s）") % _task.get("book_title")                 or _task.get("book_id")
+        if _task["running"] or _task.get("status") == "cancelling":
+            # cancel() 后旧线程可能还没退（当前文件转完才停），这个窗口里
+            # 启动新任务会覆盖取消中的状态，一并拒绝。
+            # % 优先级高于 or：必须先拼好兜底字符串再格式化，
+            # 否则 book_title 为空时 or 兜底永远不会生效。
+            label = _task.get("book_title") or ("#%s" % _task.get("book_id"))
+            return False, _("已有转码任务在进行中（%s）") % label
 
-        # 预检：过滤掉没有 mp3 的书
+        # 预检：过滤掉没有 mp3 的书（纯文件系统操作）
         queue = []
         skipped = []
-        for bid in book_ids:
-            files = list_mp3_files(db, bid)
-            if files is None:
-                skipped.append({"book_id": bid, "reason": "not_found"})
+        for item in normalized:
+            files = list_mp3_in_dir(item["audio_dir"])
+            if item["audio_dir"] is None:
+                skipped.append({"book_id": item["book_id"], "reason": "not_found"})
             elif not files:
-                skipped.append({"book_id": bid, "reason": "no_mp3"})
+                skipped.append({"book_id": item["book_id"], "reason": "no_mp3"})
             else:
-                queue.append({"book_id": bid, "files": files})
+                queue.append({"book_id": item["book_id"],
+                              "audio_dir": item["audio_dir"], "files": files})
 
         if not queue:
             return False, _("所选书籍都没有需要转码的 mp3")
@@ -213,6 +290,7 @@ def start(db, book_ids, bitrate="64k", titles=None, delete_source=True):
             "total": sum(len(q["files"]) for q in queue),
             "done": 0,
             "failed": 0,
+            "kept": 0,
             "current": "",
             "errors": [],
             "status": "running",
@@ -227,34 +305,71 @@ def start(db, book_ids, bitrate="64k", titles=None, delete_source=True):
             ],
             "queue_index": 0,
             "skipped": skipped,
+            "cancel_requested": False,
         })
+        total = _task["total"]
 
-    t = threading.Thread(target=_run_queue, args=(db, queue), daemon=True)
+    t = threading.Thread(target=_run_queue, args=(queue,), daemon=True)
+    global _thread
+    _thread = t
     t.start()
     if len(queue) == 1:
-        return True, _("转码已启动，共 %d 个文件") % _task["total"]
-    return True, _("批量转码已启动：%d 本书，共 %d 个文件") % (len(queue), _task["total"])
+        return True, _("转码已启动，共 %d 个文件") % total
+    return True, _("批量转码已启动：%d 本书，共 %d 个文件") % (len(queue), total)
 
 
-def _run_queue(db, queue):
-    """按队列逐书转码。queue 元素: {book_id, files}。"""
+def cancel():
+    """请求取消进行中的转码任务。
+
+    粒度是「当前文件」：正在跑的 ffmpeg 等它转完（或超时）后停止，
+    后续文件不再处理；已转成功的 m4a 保留，失败/未处理的 mp3 原样保留。
+    """
+    with _task_lock:
+        if not _task["running"]:
+            return False, _("当前没有进行中的转码任务")
+        _task["cancel_requested"] = True
+        _task["running"] = False
+        _task["status"] = "cancelling"
+        _task["message"] = _("正在取消：当前文件转完即停，后续文件不再处理")
+    return True, _("已请求取消，正在停止")
+
+
+# 当前工作线程引用（仅供测试等待任务收尾用，不参与业务逻辑）
+_thread = None
+
+
+def _join_for_tests(timeout=30):
+    """测试钩子：等后台转码线程跑完。生产代码不要调用。"""
+    t = _thread
+    if t and t.is_alive():
+        t.join(timeout=timeout)
+
+
+def _run_queue(queue):
+    """按队列逐书转码。queue 元素: {book_id, audio_dir, files}。"""
     try:
         for qi, item in enumerate(queue):
-            if not _task["running"]:
+            if not _task["running"]:  # cancel() 置 False 后逐书停
                 break
             _task["queue_index"] = qi
             _task["book_id"] = item["book_id"]
             _task["book_title"] = _task["queue"][qi]["title"]
-            _transcode_one_book(db, item["book_id"], item["files"], qi)
-        _task["status"] = "done"
-        if _task.get("delete_source", True):
-            _task["message"] = _("完成：%d 本书 %d 成功 %d 失败（失败的 mp3 已保留）") % (
-                len(queue), _task["done"], _task["failed"])
-        else:
-            _task["message"] = _("完成：%d 本书 %d 成功 %d 失败（原 mp3 已按要求保留）") % (
-                len(queue), _task["done"], _task["failed"])
-        if _task.get("skipped"):
-            _task["message"] += _(", 跳过 %d 本（无 mp3 或书不存在）") % len(_task["skipped"])
+            _transcode_one_book(item, qi)
+        with _task_lock:
+            if _task.get("cancel_requested"):
+                _task["status"] = "cancelled"
+                _task["message"] = _("已取消：%d 成功 %d 失败（其余 mp3 原样保留）") % (
+                    _task["done"], _task["failed"])
+            else:
+                _task["status"] = "done"
+                if _task.get("delete_source", True):
+                    _task["message"] = _("完成：%d 本书 %d 成功 %d 失败（失败的 mp3 已保留）") % (
+                        len(queue), _task["done"], _task["failed"])
+                else:
+                    _task["message"] = _("完成：%d 本书 %d 成功 %d 失败（原 mp3 已按要求保留）") % (
+                        len(queue), _task["done"], _task["failed"])
+                if _task.get("skipped"):
+                    _task["message"] += _(", 跳过 %d 本（无 mp3 或书不存在）") % len(_task["skipped"])
     except Exception as e:
         _task["status"] = "error"
         _task["message"] = _("任务异常：%s") % e
@@ -263,16 +378,24 @@ def _run_queue(db, queue):
         _task["running"] = False
         _task["current"] = ""
         _task["finished_at"] = time.time()
+        with _task_lock:
+            # 兜底：cancel() 恰好落在「循环已结束、状态已写完」之后的窗口时，
+            # 会把 status 改成 cancelling 但再没有人收尾，is_busy 就永远为真。
+            if _task["status"] == "cancelling":
+                _task["status"] = "cancelled"
+                _task["message"] = _("已取消：%d 成功 %d 失败（其余 mp3 原样保留）") % (
+                    _task["done"], _task["failed"])
 
 
-def _transcode_one_book(db, book_id, files, queue_index):
+def _transcode_one_book(item, queue_index):
+    book_id = item["book_id"]
     try:
-        audio_dir, _legacy = audio_dir_for_read(db, book_id)
+        audio_dir = item["audio_dir"]
         if not audio_dir or not os.path.isdir(audio_dir):
             raise RuntimeError("audio dir missing")
         bitrate = _task["bitrate"]
-        for name in files:
-            if not _task["running"]:  # 预留：将来支持取消
+        for name in item["files"]:
+            if not _task["running"]:  # cancel() 请求后逐文件停
                 break
             _task["current"] = name
             src = os.path.join(audio_dir, name)
@@ -335,9 +458,10 @@ def _transcode_one_book(db, book_id, files, queue_index):
                     pass
                 logging.warning("[audio_transcode] %s 失败: %s", name, e)
     except Exception as e:
-        # 单书级异常（如目录消失）：记错误，队列继续下一本
-        _task["failed"] += len(files) - (_task["queue"][queue_index]["done"]
-                                          + _task["queue"][queue_index]["failed"])
+        # 单书级异常（如目录消失）：把剩余未处理的文件记为失败，队列继续下一本
+        qi = _task["queue"][queue_index]
+        remaining = len(item["files"]) - (qi["done"] + qi["failed"])
+        _task["failed"] += remaining
         _task["errors"].append({
             "file": _("书 #%s 整体失败" % book_id), "error": str(e)[:300]})
         logging.warning("[audio_transcode] 书 %s 整体失败: %s", book_id, e)

@@ -797,7 +797,9 @@ class UserAvatar(BaseHandler):
                 "msg": "",
                 "avatar_url": self.site_url + "/avatar/%s" % user.avatar,
             }
-        except:
+        except Exception:
+            # 裸 except + 不记日志会把真实 DB 异常埋掉，排障只能靠猜
+            logging.exception("save avatar failed for user %s", user.id)
             return {"err": "db.error", "msg": _("数据库操作异常，请重试")}
 
 

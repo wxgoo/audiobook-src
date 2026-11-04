@@ -54,6 +54,13 @@ class BatchAddService(AsyncService):
         """启动批量添加任务"""
         if BatchAddService.static_is_running:
             logging.error("Batch adding is running, please wait...")
+            # 提前返回不会经过下面的 finally，临时 CSV 在这里也要清掉，
+            # 否则每次「已有任务在跑时又提交一份」都泄漏一个文件
+            try:
+                if csv_path and os.path.exists(csv_path):
+                    os.unlink(csv_path)
+            except Exception:
+                pass
             return 0
 
         BatchAddService.static_is_running = True

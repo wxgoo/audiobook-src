@@ -9,7 +9,98 @@
 
 ---
 
-## 4.6.0-18（当前）
+## 4.6.0-19（当前）
+
+> **性能与稳健性专项**：修掉一批「同步 handler 阻塞事件循环冻住全站」的重 IO
+> 调用、两个前端时序死锁、一个并发序列化崩溃，并给音频批量转码补上取消能力。
+
+### 一、音频批量转码：扫描不再冻住全站 + 新增取消
+
+**事件循环阻塞**（最重的一类问题）：`/api/toolbox/audio_transcode/scan` 与
+`scan_all` 原来在 Tornado ioloop 线程上同步跑 ffprobe——单本书最多 200 个文件
+逐个起子进程（单个超时上限 20s），扫描期间**全站请求**（包括不碰数据库的
+`/api/user/info`）一起被冻住；「扫描全库」还要全库目录遍历 + 每本书一个 ffprobe。
+
+修法（与 `utils.run_in_threadpool` 注释里自己警告过的反模式对齐）：
+
+1. `audio_transcode.py` 拆出纯文件系统/子进程函数：`book_audio_dir`（calibre 读）、
+   `list_mp3_in_dir`（FS）、`probe_files_in_dir`（FS + ffprobe）；
+2. handler 改 `async def`：calibre 读走 `run_calibre_read_async`，探测走
+   `run_in_threadpool`，书名一次批量取；
+3. `start()` 不再接收 db——音频目录由 handler 先在 calibre 池里解析好，后台
+   转码线程只做 FS/子进程操作，不再持有任何 calibre 对象。
+
+**新增「取消任务」**：几小时的批量转码点错了只能干等。新增
+`POST /api/toolbox/audio_transcode/cancel` + 页面「取消任务」按钮。粒度是
+「当前文件」：正在跑的 ffmpeg 等它转完（或超时）即停，后续文件不处理；
+已转成功的 m4a 保留，失败/未处理的 mp3 原样保留。取消收尾窗口内拒绝启动
+新任务（否则会覆盖取消中的状态），`finally` 兜底保证状态不卡死在 cancelling。
+
+**其它**：ffmpeg 预检（环境缺 ffmpeg 直接拒绝而不是逐文件报错）；
+`task_snapshot()` 改深拷贝（浅拷贝把 errors/queue/skipped 与后台线程共享，
+轮询序列化可能撞 `dict changed size during iteration`）；
+修复报错文案里 `%` 优先级错误（`% x or y` 的 y 兜底永远不可达）；
+`kept` 计数入初始状态字典。
+
+### 二、转码页两个前端死锁 + 杂修
+
+- **进页死锁**：`mounted` 只调一次 `refreshProgress()`，若进页时已有任务在跑
+  （别的标签页启动的），`pollTimer` 不会启动——进度永久冻结、`canStart` 一直
+  false，只能 F5。现在 `refreshProgress` 发现在跑且无定时器时自动补起轮询。
+- 网络失败从 unhandled rejection 改为 toast 提示；单本模式 `canStart` 校验
+  输入框里的 ID（clearable 清空后原来会发 `book_id:null`）；
+  文件列表最多渲染 200 行 + 「共 N 个」提示。
+- 「重复书清理」合并成功后的自动重扫不再把「已合并 N 组/备份路径」提示
+  冲掉（`doScan(keepResult)`）。
+- 顶栏：`/user/info` 迟到导致消息角标/后台任务图标最多延迟 30 秒——登录态
+  就位后立即重 kick 轮询；后台任务类型映射补齐 `catalog_extract`/`transcribe`/
+  `other`（工具箱任务默认就是 other，缺了渲染成空白），三语言 locale 补齐
+  `taskTypeSaveMeta` 等缺失键。
+
+### 三、有声书转换与音频接口
+
+- `epub2audio` 进度：读取线程往 `chapters` 插键与轮询 handler 的 JSON 序列化
+  并发跑，无锁时进度接口随机 500。加 `_plock` 互斥 + 快照深拷贝；
+  `end_time` 初值 0 改 None（`is None` 判断在 0 上恒假，异常路径 execution_time
+  算负数）。
+- `AudioConversion.post` 改异步：`save_book_meta` 会整本 EPUB 读入再写回
+  （含封面），大书秒级~分钟级，挪进 calibre 池；删除末尾复制粘贴出来的
+  永不可达的第二组 `except` 死代码；`AudioConversionCancel` 去掉同步
+  `time.sleep(1)`（纯冻住事件循环 1 秒）。
+- **CIP 文件过滤条件写反**：`file.find(PREFIX) > 0` 恰好放过以
+  「图书在版编目CIP数据」**开头**的文件（find 返回 0），反而过滤了前缀在
+  中间的。两处改 `startswith`。
+- **合集下载 key 未绑定书**：一张有效下载 key 可以拉任意书的合集 zip，
+  开 VIP 配额时等于买过 A 书就能绕过付费校验拉 B 书。下载时按 key 属主
+  补一次购买校验。
+- `DailyDownloadMap` 只增不清 → 写入路径上超限时清两天前的旧记录。
+
+### 四、零散修复
+
+| 位置 | 问题 |
+|---|---|
+| `services/batch_add.py` | 已有任务在跑时提前 return 跳过 finally，临时 CSV 泄漏 |
+| `services/converter.py` | 转换超时只 kill 不 wait：僵尸进程 + stderr 管道不收尾 |
+| `handlers/admin.py` | nginx `-t`/reload 的 subprocess 无超时（nginx 卡住会挂死请求），加 60s 兜底并处理 TimeoutExpired |
+| `handlers/toolbox.py` | PDF 瘦身的 filename 未清洗直接拼路径，`../` 可指到 sources 之外（管理员接口也收紧） |
+| `handlers/static_files.py` | `_open_zip` 缓存 miss 竞态：两线程同时 miss 各开一个 ZipFile，被顶掉的句柄永不 close；打开动作移入锁内 |
+| `models.py` | `raise "bug"`（Python 3 必然 TypeError）改 `raise TypeError`；裸 `except` 收窄 |
+| `handlers/user.py` | 头像保存失败裸 `except` 不记日志，补 `logging.exception` |
+
+### 五、测试
+
+- 新增 `tests/test_audio_transcode.py`（24 例）：快照隔离、start 校验
+  （ffmpeg 预检/运行中拒绝/取消窗口拒绝/无效码率回退）、转码成功/失败/取消
+  三条路径的文件系统行为、run_queue 终态（done/cancelled）、探测聚合与抽样。
+  首跑就抓到重构引入的真 bug（外层 except 引用旧参数名 `files` → NameError）。
+- 新增 `tests/test_epub2audio_worker_progress.py`（5 例）：快照隔离、并发解析
+  下序列化不崩、end_time 初值、计数正确性。
+- 存量回归：`test_meta_merge.py` + `test_audio_narrator.py`（89 例）与
+  `test_models.py` + `test_utils.py` 全部通过。
+
+---
+
+## 4.6.0-18
 
 > **只改元数据，不动业务流程**。6 个文件，可热更，不必重建镜像。
 > ①根治「扫描导入 PDF 作者变佚名」；②「有声书演播者不再冒充作者」。

@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from webserver.i18n import _
+from webserver import utils
 from webserver.loader import get_settings
 from webserver.toolbox.toolset import ToolSet
 from webserver.toolbox import toolbox_manager
@@ -354,6 +355,11 @@ class AdminMinifyPdfProcess(BaseHandler):
         filename = data.get("filename")
         if not filename:
             return {"err": "params.missing", "msg": _("请提供文件名")}
+        # 只取文件名部分：filename 来自请求体，携带 ../ 或绝对路径时会把
+        # 拼接点带出 sources 目录（管理员接口也不该放大成任意路径读）。
+        filename = os.path.basename(str(filename).replace("\\", "/"))
+        if not filename or filename in (".", ".."):
+            return {"err": "params.invalid", "msg": _("无效的文件名")}
 
         tool = MinifyPdfTool()
         if tool.is_running():
@@ -386,6 +392,10 @@ class AdminMinifyPdfProgress(BaseHandler):
         filename = self.get_argument("filename", "")
         if not filename:
             return {"err": "params.missing", "msg": _("请提供文件名")}
+        # 同 AdminMinifyPdfProcess：只取文件名部分，防路径拼接逃逸
+        filename = os.path.basename(filename.replace("\\", "/"))
+        if not filename or filename in (".", ".."):
+            return {"err": "params.invalid", "msg": _("无效的文件名")}
 
         tool = MinifyPdfTool()
         work_dir = tool.get_work_dir("")
@@ -697,10 +707,15 @@ class AdminAuthorClean(BaseHandler):
 
 
 class AdminAudioTranscodeScan(BaseHandler):
-    """扫描指定书 .audio/ 下的 mp3，供前端确认后再启动。"""
+    """扫描指定书 .audio/ 下的 mp3，供前端确认后再启动。
+
+    4.6.0-19 起改为异步：探测可能对几百个文件逐个跑 ffprobe 子进程（每个
+    最长 20s），绝不能在 ioloop 线程上同步执行——否则扫描期间全站请求被
+    冻住。calibre 读走 run_calibre_read_async，文件系统+ffprobe 走线程池。
+    """
     @js
     @is_admin
-    def post(self):
+    async def post(self):
         data = tornado.escape.json_decode(self.request.body)
         try:
             book_id = int(data.get("book_id") or 0)
@@ -714,16 +729,28 @@ class AdminAudioTranscodeScan(BaseHandler):
             return {"err": "task.running", "msg": _("已有转码任务在进行中"),
                     "data": {"task": snap}}
 
-        files = audio_transcode.list_mp3_files(self.calibre_db, book_id)
-        if files is None:
+        audio_dir = await self.run_calibre_read_async(
+            audio_transcode.book_audio_dir, self.calibre_db, book_id)
+        if audio_dir is None:
             return {"err": "book.not_found", "msg": _("书籍不存在")}
+
+        def _scan():
+            files = audio_transcode.list_mp3_in_dir(audio_dir)
+            # 探测现有音频的码率/时长/体积：用户要先知道「现在是什么样」，
+            # 才能决定转不转、转多少码率。ffprobe 失败不影响扫描本身。
+            probe = audio_transcode.probe_files_in_dir(audio_dir, files)
+            return files, probe
+
         try:
-            title = self.calibre_db_cache.field_for("title", book_id) or ""
+            files, probe = await utils.run_in_threadpool(_scan)
+        except OSError as e:
+            logging.warning("[toolbox] audio scan failed book=%s: %s", book_id, e)
+            files, probe = [], None
+        try:
+            title = await self.run_calibre_read_async(
+                lambda: self.calibre_db_cache.field_for("title", book_id) or "")
         except Exception:
             title = ""
-        # 探测现有音频的码率/时长/体积：用户要先知道「现在是什么样」，
-        # 才能决定转不转、转多少码率。ffprobe 失败不影响扫描本身。
-        probe = audio_transcode.probe_book_audio(self.calibre_db, book_id, files)
         return {"err": "ok", "data": {
             "book_id": book_id,
             "title": title,
@@ -734,44 +761,64 @@ class AdminAudioTranscodeScan(BaseHandler):
 
 
 class AdminAudioTranscodeScanAll(BaseHandler):
-    """扫描整个 library，列出所有含 mp3 的书（供一键批量）。"""
+    """扫描整个 library，列出所有含 mp3 的书（供一键批量）。
+
+    4.6.0-19 起改为异步：全库目录遍历 + 每本书一个 ffprobe 子进程，
+    同步跑会把 ioloop 冻住数秒到数十秒。目录遍历与探测进线程池，
+    书名批量取一次（run_calibre_read_async）。
+    """
     @js
     @is_admin
-    def get(self):
+    async def get(self):
         if audio_transcode.is_running():
             return {"err": "task.running", "msg": _("已有转码任务在进行中")}
-        from webserver.base.audio_dir import find_audios_by_scanning_library
-        audio_books = find_audios_by_scanning_library()
-        result = []
-        for bid, adir in sorted(audio_books.items()):
-            mp3s = [f for f in os.listdir(adir)
-                    if f.lower().endswith(".mp3")
-                    and os.path.isfile(os.path.join(adir, f))]
-            if not mp3s:
-                continue
+
+        def _scan_all():
+            from webserver.base.audio_dir import find_audios_by_scanning_library
+            result = []
+            for bid, adir in sorted(find_audios_by_scanning_library().items()):
+                mp3s = audio_transcode.list_mp3_in_dir(adir)
+                if not mp3s:
+                    continue
+                # 全库可能有上千个 mp3，这里只探测首曲 + 统计体积，不做全量
+                # ffprobe（全量会让「扫描全库」从秒级变成分钟级）。
+                # 前端按"抽样估算"展示。mp3s 已按名排序，取第一个。
+                brief = {"book_id": bid, "title": "", "mp3_count": len(mp3s)}
+                try:
+                    total = sum(os.path.getsize(os.path.join(adir, f)) for f in mp3s)
+                    first = audio_transcode.probe_mp3(os.path.join(adir, mp3s[0]))
+                    brief["total_size"] = total
+                    brief["sample_bitrate"] = first.get("bitrate")
+                    brief["sample_rate"] = first.get("sample_rate")
+                except OSError:
+                    pass
+                result.append(brief)
+            return result
+
+        try:
+            result = await utils.run_in_threadpool(_scan_all)
+        except OSError as e:
+            logging.warning("[toolbox] audio scan_all failed: %s", e)
+            result = []
+
+        if result:
+            def _titles():
+                return {b["book_id"]: (self.calibre_db_cache.field_for("title", b["book_id"]) or "")
+                        for b in result}
+
             try:
-                title = self.calibre_db_cache.field_for("title", bid) or ""
+                titles = await self.run_calibre_read_async(_titles)
             except Exception:
-                title = ""
-            # 全库可能有上千个 mp3，这里只探测首曲 + 统计体积，不做全量 ffprobe
-            # （全量会让「扫描全库」从秒级变成分钟级）。前端按"抽样估算"展示。
-            brief = {"book_id": bid, "title": title, "mp3_count": len(mp3s)}
-            try:
-                total = sum(os.path.getsize(os.path.join(adir, f)) for f in mp3s)
-                first = audio_transcode.probe_mp3(os.path.join(adir, sorted(mp3s)[0]))
-                brief["total_size"] = total
-                brief["sample_bitrate"] = first.get("bitrate")
-                brief["sample_rate"] = first.get("sample_rate")
-            except OSError:
-                pass
-            result.append(brief)
+                titles = {}
+            for b in result:
+                b["title"] = titles.get(b["book_id"], "")
         return {"err": "ok", "data": {"books": result}}
 
 
 class AdminAudioTranscodeStart(BaseHandler):
     @js
     @is_admin
-    def post(self):
+    async def post(self):
         data = tornado.escape.json_decode(self.request.body)
         bitrate = (data.get("bitrate") or "64k").strip()
         # 转码后是否删原 mp3。前端不传时默认 True（沿用旧行为），
@@ -792,18 +839,50 @@ class AdminAudioTranscodeStart(BaseHandler):
         if not book_ids:
             return {"err": "params.book_id.missing", "msg": _("请提供书籍 ID")}
 
-        # 批量取书名
-        titles = {}
-        for bid in book_ids:
-            try:
-                titles[str(bid)] = self.calibre_db_cache.field_for("title", bid) or ""
-            except Exception:
-                titles[str(bid)] = ""
+        # 4.6.0-19：音频目录在 calibre 池里解析好再交给转码线程，
+        # 后台线程不再持有 calibre db 对象。书名顺便一起取（批量一次读）。
+        def _resolve():
+            out = {}
+            for bid in book_ids:
+                try:
+                    adir = audio_transcode.book_audio_dir(self.calibre_db, bid)
+                except Exception:
+                    adir = None
+                try:
+                    title = self.calibre_db_cache.field_for("title", bid) or ""
+                except Exception:
+                    title = ""
+                out[bid] = (adir, title)
+            return out
 
-        ok, msg = audio_transcode.start(
-            self.calibre_db, book_ids, bitrate, titles, delete_source=delete_source)
+        try:
+            resolved = await self.run_calibre_read_async(_resolve)
+        except Exception:
+            resolved = {}
+        books = [{"book_id": bid, "audio_dir": (resolved.get(bid) or (None, ""))[0]}
+                 for bid in book_ids]
+        titles = {str(bid): (resolved.get(bid) or (None, ""))[1] for bid in book_ids}
+
+        # start() 内部有 ffmpeg 预检与目录遍历，放线程池执行
+        ok, msg = await utils.run_in_threadpool(
+            audio_transcode.start, books, bitrate, titles, delete_source)
         if not ok:
             return {"err": "task.start_failed", "msg": msg}
+        return {"err": "ok", "msg": msg}
+
+
+class AdminAudioTranscodeCancel(BaseHandler):
+    """取消进行中的转码任务。
+
+    粒度是「当前文件」：正在跑的 ffmpeg 等它转完（或超时）后停止，
+    后续文件不再处理；已转成功的 m4a 保留，失败/未处理的 mp3 原样保留。
+    """
+    @js
+    @is_admin
+    def post(self):
+        ok, msg = audio_transcode.cancel()
+        if not ok:
+            return {"err": "task.not_running", "msg": msg}
         return {"err": "ok", "msg": msg}
 
 
@@ -1740,10 +1819,11 @@ def routes():
                 (r"/api/toolbox/epub_split/chapters", AdminEpubSplitChapters),
                 (r"/api/toolbox/epub_split/generate", AdminEpubSplitGenerate),
                 (r"/api/toolbox/author_clean", AdminAuthorClean),
-                (r"/api/toolbox/audio_transcode/scan", AdminAudioTranscodeScan),
-                (r"/api/toolbox/audio_transcode/scan_all", AdminAudioTranscodeScanAll),
-                (r"/api/toolbox/audio_transcode/start", AdminAudioTranscodeStart),
-                (r"/api/toolbox/audio_transcode/progress", AdminAudioTranscodeProgress),
+        (r"/api/toolbox/audio_transcode/scan", AdminAudioTranscodeScan),
+        (r"/api/toolbox/audio_transcode/scan_all", AdminAudioTranscodeScanAll),
+        (r"/api/toolbox/audio_transcode/start", AdminAudioTranscodeStart),
+        (r"/api/toolbox/audio_transcode/cancel", AdminAudioTranscodeCancel),
+        (r"/api/toolbox/audio_transcode/progress", AdminAudioTranscodeProgress),
                 (r"/api/toolbox/bookbarn_acceptor/status", AdminBookBarnAcceptorStatus),
                 (r"/api/toolbox/bookbarn_acceptor/toggle", AdminBookBarnAcceptorToggle),
                 (r"/api/toolbox/bookbarn_acceptor/apply_token", AdminBookBarnAcceptorApplyToken),

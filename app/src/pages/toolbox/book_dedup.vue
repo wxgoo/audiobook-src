@@ -221,10 +221,15 @@ export default {
     },
   },
   methods: {
-    doScan() {
+    doScan(keepResult = false) {
       this.scanning = true;
-      this.resultMsg = "";
-      this.backupPath = "";
+      // 合并完的自动重扫要保留结果提示（resultMsg/backupPath）——
+      // 否则这里先清空、响应回来再填新 groups，用户根本看不到
+      // 「已合并 N 组/备份在哪」就被冲掉了。
+      if (!keepResult) {
+        this.resultMsg = "";
+        this.backupPath = "";
+      }
       this.$backend("/admin/book_dedup/scan")
         .then((rsp) => {
           if (rsp.err !== "ok") {
@@ -273,8 +278,9 @@ export default {
           this.resultFailed = (rsp.failed || 0) > 0;
           this.resultMsg = rsp.msg;
           this.backupPath = rsp.backup || "";
-          // 合并完重新扫一遍，让用户看到剩下的（通常是跳过项）
-          this.doScan();
+          // 合并完重新扫一遍，让用户看到剩下的（通常是跳过项）；
+          // keepResult=true 保留刚写入的结果提示
+          this.doScan(true);
         })
         .catch(() => {
           this.confirmDialog = false;

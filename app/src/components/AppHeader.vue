@@ -868,7 +868,16 @@ export default {
                     this.miniVariant = this.$vuetify.breakpoint.lgAndUp;
                     localStorage.setItem('drawerMiniVariant', this.miniVariant);
                 }
+                // 登录态此刻才就位：mounted 同步发起的那次轮询读到的还是
+                // 初始 is_login=false，只会排 30s 的空转定时器——消息角标和
+                // 后台任务图标要等下个周期（最多 30s）才出现。重 kick 一次。
+                this.stopPolling();
+                this.pollMessages();
+                this.loadRunningTasks();
             }
+        }).catch((err) => {
+            // 无 catch 时网络失败会变成 unhandled rejection，头部停留初始态
+            console.error("Failed to load user info:", err);
         });
         this.pollMessages();
         this.loadRunningTasks();
@@ -1220,8 +1229,13 @@ export default {
                 'cover_update': this.$t('appHeader.taskTypeCoverUpdate'),
                 'save_meta': this.$t('appHeader.taskTypeSaveMeta'),
                 'bulk_delete': this.$t('appHeader.taskTypeBulkDelete'),
+                // 后端还有三种真实类型（background_service.py）：工具箱任务默认
+                // 就是 other，缺了会在下拉里渲染成空白
+                'catalog_extract': this.$t('appHeader.taskTypeCatalogExtract'),
+                'transcribe': this.$t('appHeader.taskTypeTranscribe'),
+                'other': this.$t('appHeader.taskTypeOther'),
             };
-            return typeMap[serviceType] || "";
+            return typeMap[serviceType] || serviceType || "";
         },
         getTaskProgress(task) {
             return Math.round(task.progress);

@@ -126,6 +126,9 @@
                 <span class="ml-3 text-no-wrap">{{ f.meta }}</span>
               </div>
             </div>
+            <div v-if="fileRowsTruncated" class="pa-2 text-caption grey--text">
+              仅列出前 200 个，共 {{ scanResult.files.length }} 个文件
+            </div>
           </v-card>
 
           <v-alert
@@ -193,8 +196,21 @@
                 :value="task.total ? (task.done / task.total) * 100 : 0"
                 color="primary" height="8" rounded
               ></v-progress-linear>
-              <div v-if="task.current" class="text-caption grey--text mt-1">
-                正在转：{{ task.current }}
+              <div class="d-flex align-center mt-1">
+                <div v-if="task.current" class="text-caption grey--text flex-grow-1">
+                  正在转：{{ task.current }}
+                </div>
+                <div v-else-if="phase === 'running'" class="text-caption grey--text flex-grow-1"></div>
+                <v-spacer v-if="!task.current"></v-spacer>
+                <v-btn
+                  v-if="phase === 'running'"
+                  text x-small color="error"
+                  :loading="cancelling"
+                  @click="cancelTask"
+                >取消任务</v-btn>
+              </div>
+              <div v-if="phase === 'running' && task.message" class="text-caption orange--text text--darken-3">
+                {{ task.message }}
               </div>
             </div>
           </template>
@@ -256,6 +272,8 @@
 <script>
 // 音频批量转码工具：扫描 → 确认 → 后台 ffmpeg 逐个转 → 轮询进度。
 // 后端逻辑见 webserver/services/audio_transcode.py。
+const MAX_FILE_ROWS = 200;
+
 export default {
   created() {
     this.$store.commit("navbar", true);
@@ -270,6 +288,7 @@ export default {
       allBooks: [],
       selectedBooks: [],
       starting: false,
+      cancelling: false,
       confirmStart: false,
       scanResult: null,
       task: {},
@@ -281,12 +300,17 @@ export default {
     canStart() {
       if (this.phase === "running") return false;
       if (this.selectedBooks.length) return true;          // 批量模式
+      // 单本模式：输入框是 clearable 的，扫完把 ID 清掉后 parseInt 是 NaN，
+      // 不拦住就会发出 book_id:null 只能收到后端报错
+      if (!parseInt(this.bookIdInput, 10)) return false;
       return this.scanResult && this.scanResult.mp3_count > 0; // 单本模式
     },
     phase() {
       if (!this.task || !this.task.status) return "idle";
-      if (this.task.status === "running") return "running";
-      if (this.task.status === "done" || this.task.status === "error") return "done";
+      if (this.task.status === "running" || this.task.status === "cancelling") {
+        return "running";
+      }
+      if (["done", "error", "cancelled"].includes(this.task.status)) return "done";
       return "idle";
     },
     globalTask() {
@@ -320,19 +344,24 @@ export default {
       return `所选码率（${this.bitrate}）高于源文件平均码率（${Math.round(src / 1000)} kbps）：`
         + "转码后体积会变大，但音质不会提升。建议选择不高于源码率的档位，或直接不转。";
     },
-    // 文件列表：把文件名与探测到的码率拼成一行
+    // 文件列表：把文件名与探测到的码率拼成一行。文件很多时只渲染前
+    // MAX_FILE_ROWS 条（几百行的 DOM 没必要全画），超出部分用提示说明。
     fileRows() {
       const files = (this.scanResult && this.scanResult.files) || [];
       const details = (this.scanResult && this.scanResult.probe && this.scanResult.probe.files) || [];
       const byName = {};
       details.forEach((d) => { byName[d.name] = d; });
-      return files.map((name) => {
+      return files.slice(0, MAX_FILE_ROWS).map((name) => {
         const d = byName[name];
         const bits = [];
         if (d && d.bitrate) bits.push(`${Math.round(d.bitrate / 1000)}kbps`);
         if (d && d.size) bits.push(this.fmtSize(d.size));
         return { name, meta: bits.join(" · ") };
       });
+    },
+    fileRowsTruncated() {
+      return !!this.scanResult && this.scanResult.files
+        && this.scanResult.files.length > MAX_FILE_ROWS;
     },
   },
   mounted() {
@@ -380,6 +409,8 @@ export default {
         if (rsp.data.mp3_count === 0) {
           this.toast("这本书没有 mp3，无需转码", "success");
         }
+      } catch (e) {
+        this.toast("扫描请求失败：网络或服务异常", "error");
       } finally {
         this.scanning = false;
       }
@@ -396,6 +427,8 @@ export default {
         this.selectedBooks = this.allBooks.map((b) => b.book_id);
         this.scanResult = null;
         if (!this.allBooks.length) this.toast("全库没有需要转码的 mp3", "success");
+      } catch (e) {
+        this.toast("扫描请求失败：网络或服务异常", "error");
       } finally {
         this.scanningAll = false;
       }
@@ -420,8 +453,28 @@ export default {
         this.refreshProgress();
         if (this.pollTimer) clearInterval(this.pollTimer);
         this.pollTimer = setInterval(() => this.refreshProgress(), 2000);
+      } catch (e) {
+        this.toast("启动请求失败：网络或服务异常", "error");
       } finally {
         this.starting = false;
+      }
+    },
+    async cancelTask() {
+      this.cancelling = true;
+      try {
+        const rsp = await this.$backend("/toolbox/audio_transcode/cancel", {
+          method: "POST",
+        });
+        if (rsp.err !== "ok") {
+          this.toast(rsp.msg || "取消失败", "warning");
+          return;
+        }
+        this.toast(rsp.msg, "info");
+        this.refreshProgress();
+      } catch (e) {
+        this.toast("取消请求失败：网络或服务异常", "error");
+      } finally {
+        this.cancelling = false;
       }
     },
     async refreshProgress() {
@@ -429,6 +482,12 @@ export default {
         const rsp = await this.$backend("/toolbox/audio_transcode/progress");
         if (rsp.err !== "ok") return;
         this.task = rsp.data.task || {};
+        // §进页时可能已有任务在跑§ mounted 只调一次本方法：如果那次发现
+        // running 却不补起定时器，进度就永久冻结（phase 停在 running，
+        // canStart 一直 false），只能整页刷新。发现在跑且没有定时器就补上。
+        if (this.phase === "running" && !this.pollTimer) {
+          this.pollTimer = setInterval(() => this.refreshProgress(), 2000);
+        }
         if (this.phase === "done" && this.pollTimer) {
           clearInterval(this.pollTimer);
           this.pollTimer = null;

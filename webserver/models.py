@@ -213,7 +213,9 @@ class Reader(Base, SQLAlchemyMixin):
     def set_permission(self, operations):
         ALL = "delprsuv"
         if not isinstance(operations, str):
-            raise "bug"
+            # Python 3 不能 raise 字符串：原写法 `raise "bug"` 自己就会
+            # TypeError: exceptions must derive from BaseException
+            raise TypeError("operations must be a string, got %r" % type(operations).__name__)
         v = list(self.permission)
         for p in operations:
             if p.lower() not in ALL:
@@ -221,7 +223,7 @@ class Reader(Base, SQLAlchemyMixin):
             r = p.upper() if p.islower() else p.lower()
             try:
                 v.remove(r)
-            except:
+            except ValueError:
                 pass
             v.append(p)
         self.permission = "".join(sorted(v))

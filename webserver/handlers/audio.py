@@ -39,6 +39,19 @@ CONF = loader.get_settings()
 ConversionWorkerMap: dict = {}
 # 每日下载记录，格式: {(user_id, book_id): datetime}
 DailyDownloadMap: dict = {}
+# DailyDownloadMap 只在有下载时插入、从不清理的话会随使用无限膨胀；
+# 超过上限时把两天前的旧记录顺手清掉（在写入路径上做，无需后台任务）。
+DAILY_DOWNLOAD_MAP_MAX = 4096
+
+
+def _record_daily_download(user_id, book_id):
+    if len(DailyDownloadMap) >= DAILY_DOWNLOAD_MAP_MAX:
+        cutoff = datetime.datetime.now() - datetime.timedelta(days=2)
+        stale = [k for k, ts in DailyDownloadMap.items() if ts < cutoff]
+        for k in stale:
+            DailyDownloadMap.pop(k, None)
+    DailyDownloadMap[(user_id, book_id)] = datetime.datetime.now()
+
 
 ALLOW_MAX_RUNNING_WORKERS = CONF.get("BOOK2AUDIO_MAX_WORKERS", 2)
 SKIP_AUDIO_FILE_PREFIX = "图书在版编目CIP数据"
@@ -376,7 +389,9 @@ class AudioDetail(BaseHandler):
 
                     file_urls = []
                     for file in sorted(audio_files, key=natural_sort_key):
-                        if file.find(SKIP_AUDIO_FILE_PREFIX) > 0:
+                        # find()>0 恰好放过以该前缀开头的文件（find 返回 0），
+                        # 语义按常量名来：文件名以 CIP 前缀开头的跳过。
+                        if file.startswith(SKIP_AUDIO_FILE_PREFIX):
                             continue
 
                         file_path = os.path.join(audio_dir, file)
@@ -530,7 +545,7 @@ class AudioConversion(BaseHandler):
 
     @js
     @is_admin
-    def post(self, bid):
+    async def post(self, bid):
         if not self.is_admin():
             return {
                 "err": "permission.not_admin",
@@ -585,7 +600,12 @@ class AudioConversion(BaseHandler):
                 return {"err": "params.book.epub_missing", "msg": _("未找到EPUB文件")}
 
             # Write the metadata
-            self.save_book_meta(book_id, fmt="epub")
+            # save_book_meta 会把整本 EPUB 读进内存再写回（含封面），大书可到
+            # 秒级~分钟级，放在 ioloop 上会冻住全站——丢进 calibre 池执行。
+            meta_result = await self.run_calibre_async(
+                lambda: self.save_book_meta(book_id, fmt="epub"))
+            if isinstance(meta_result, dict) and meta_result.get("err") == "book.not_found":
+                return {"err": "params.book.invalid", "msg": _("书籍未找到")}
 
             # Create output directory（书目录内的 .audio/）
             output_dir = audio_dir_for_write(self.calibre_db, book_id)
@@ -778,11 +798,6 @@ class AudioConversion(BaseHandler):
         except Exception as e:
             logging.error(f"Error in AudioConversion.post: {e}")
             return {"err": "server.error", "msg": str(e)}
-        except ValueError:
-            return {"err": "params.invalid", "msg": _("无效的书籍ID")}
-        except Exception as e:
-            logging.error(f"Error in AudioConversion.post: {e}")
-            return {"err": "server.error", "msg": str(e)}
 
 
 class AudioConversionCancel(BaseHandler):
@@ -803,7 +818,8 @@ class AudioConversionCancel(BaseHandler):
                 worker.stop()
                 ConversionWorkerMap.pop(book_id, None)
 
-                time.sleep(1)  # Give some time for the worker to stop
+                # 不 sleep：stop() 只是发停止信号，这里同步睡 1 秒纯粹把
+                # 事件循环冻住 1 秒（原实现）。worker 停没停由它的进程自己收尾。
                 return {
                     "err": "ok",
                     "msg": _("转换已取消, 可以使用恢复生成功能继续转换"),
@@ -1132,7 +1148,8 @@ class AudioCollection(BaseHandler):
                     ]
                     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
                         for audio_file in sorted(audio_files, key=natural_sort_key):
-                            if audio_file.find(SKIP_AUDIO_FILE_PREFIX) > 0:
+                            # 同上：以 CIP 前缀开头的文件跳过
+                            if audio_file.startswith(SKIP_AUDIO_FILE_PREFIX):
                                 continue
                             file_path = os.path.join(audio_dir, audio_file)
                             zipf.write(file_path, audio_file)
@@ -1161,7 +1178,7 @@ class AudioCollection(BaseHandler):
                 return {"err": "server.error", "msg": _("内部处理错误")}
 
             # 记录下载时间
-            DailyDownloadMap[(user.id, book_id)] = datetime.datetime.now()
+            _record_daily_download(user.id, book_id)
 
             # 生成下载链接
             download_url = f"/api/audios/{book_id}/collection/download?key={download_key}"
@@ -1209,6 +1226,18 @@ class AudioCollectionDownloadFile(BaseHandler):
                 # 清理过期的key
                 biz_key.delete()
                 raise web.HTTPError(403, "Download key expired")
+
+            # key 与书是分开传的：一张有效 key 原本可以下载任意书的合集。
+            # 开启 VIP 配额时在这里按 key 属主补一次购买校验——否则买过 A 书
+            # 的用户拿同一个 key 就能绕过付费检查拉走 B 书的合集。
+            if CONF.get(ENABLE_VIP_QUOTA_KEY, False):
+                paid = (
+                    self.sqlite_session.query(ReaderPaidBook)
+                    .filter_by(reader_id=biz_key.reader_id, book_id=book_id)
+                    .first()
+                )
+                if not paid:
+                    raise web.HTTPError(403, "Book not purchased")
 
             # 检查zip文件
             audio_dir = resolve_audio_dir_or_404(self.calibre_db, book_id)

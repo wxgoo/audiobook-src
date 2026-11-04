@@ -9,6 +9,7 @@ import mimetypes
 import os
 import random
 import re
+import threading
 import time
 import unicodedata
 import urllib
@@ -677,15 +678,16 @@ class EpubReader(BaseHandler):
     # 但为了多进程/多线程下不出岔子，加锁保护字典本身，ZipFile 读取交给
     # Python 自己的内部锁（zipfile 的 read 对同一 ZipFile 是线程安全的）。
     _zip_cache = {}
-    _zip_lock = None
+    _zip_lock = threading.Lock()
 
     @classmethod
     def _open_zip(cls, fpath):
-        """带缓存的打开 zip：文件 mtime/size 未变就复用已解析的中央目录。"""
-        import threading
+        """带缓存的打开 zip：文件 mtime/size 未变就复用已解析的中央目录。
 
-        if cls._zip_lock is None:
-            cls._zip_lock = threading.Lock()
+        打开动作在锁内做：原来 miss 后在锁外 open、回锁插入，两个线程同时
+        miss 会各开一个 ZipFile，后插的把先插的顶掉——被顶掉的那个句柄
+        永远没人 close（句柄泄漏）。
+        """
         try:
             st = os.stat(fpath)
             key = (st.st_mtime, st.st_size)
@@ -697,8 +699,7 @@ class EpubReader(BaseHandler):
             if cached and cached[0] == key and cached[1] is not None:
                 return cached[1]
 
-        zf = zipfile.ZipFile(fpath, "r")
-        with cls._zip_lock:
+            zf = zipfile.ZipFile(fpath, "r")
             # 缓存上限，防止书多了句柄泄漏；超了就丢最旧的一半
             if len(cls._zip_cache) > 64:
                 for k in list(cls._zip_cache)[:32]:

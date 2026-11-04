@@ -740,10 +740,12 @@ class SSLHandlerLogic:
             f.write(key_body)
 
     def nginx_check(self):
-        return subprocess.run(["nginx", "-t"], check=True)
+        # 无超时的同步 subprocess 在 handler 里跑：nginx 卡住（配置死锁、
+        # 信号量丢失）会把整个请求乃至 ioloop 挂死，必须给兜底时限
+        return subprocess.run(["nginx", "-t"], check=True, timeout=60)
 
     def nginx_reload(self):
-        return subprocess.run(["service", "nginx", "reload"], check=True)
+        return subprocess.run(["service", "nginx", "reload"], check=True, timeout=60)
 
     def run(self, ssl_crt, ssl_key):
         err = self.check_ssl_chain(ssl_crt, ssl_key)
@@ -769,6 +771,11 @@ class SSLHandlerLogic:
                 "err": "internal.nginx_test_error",
                 "msg": _("NGINX配置异常: %s") % err,
             }
+        except subprocess.TimeoutExpired:
+            return {
+                "err": "internal.nginx_test_error",
+                "msg": _("NGINX配置检测超时，请检查 nginx 状态"),
+            }
 
         # reload nginx config
         try:
@@ -777,6 +784,11 @@ class SSLHandlerLogic:
             return {
                 "err": "internal.nginx_reload_error",
                 "msg": _("NGINX重新加载配置异常: %s") % err,
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "err": "internal.nginx_reload_error",
+                "msg": _("NGINX重新加载超时，请检查 nginx 状态"),
             }
 
         return {"err": "ok", "msg": _("成功")}

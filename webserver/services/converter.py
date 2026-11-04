@@ -129,6 +129,11 @@ class ConverterService(AsyncService):
             except subprocess.TimeoutExpired:
                 logging.info("ebook-convert timeout: %s" % new_path)
                 p.kill()
+                try:
+                    # kill 后必须收尸：不 wait 会留僵尸进程，stderr 管道也不再被读
+                    p.wait(timeout=30)
+                except Exception:
+                    pass
                 return False
             # 崩溃 ≠ 正常结束：glibc 熵源失败、Chromium 沙箱拒绝等都会让
             # ebook-convert 非零退出且不产出文件。只判超时会让上游拿到

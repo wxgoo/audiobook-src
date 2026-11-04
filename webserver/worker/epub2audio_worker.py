@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import os
+import copy
 import signal
 import sys
 import json
@@ -51,6 +52,10 @@ class EpubToAudioWorker:
         self.main_py_path = main_py_path or "webserver/epub_to_audio/main.py"
         self.timeout = timeout
         self.process = None
+        # progress_data 由 2 个输出读取线程 + ioloop 上的轮询 handler 并发访问，
+        # 轮询侧要做 JSON 序列化（迭代 chapters dict），读线程在往里插入键——
+        # 不加锁时序列化可能撞上 dict changed size during iteration，轮询随机 500。
+        self._plock = threading.RLock()
         self.progress_data = {
             "status": self.STATUS_PROCESSING,
             "total_chapters": 0,
@@ -174,7 +179,9 @@ class EpubToAudioWorker:
                 if line:
                     decoded_line = line.decode('utf-8', errors='replace').rstrip()
                     data_list.append(decoded_line)
-                    self._parse_bookbarn_log(decoded_line)
+                    # 与 get_progress() 的快照互斥：解析会改 chapters 等嵌套结构
+                    with self._plock:
+                        self._parse_bookbarn_log(decoded_line)
 
                     if show_output:
                         print(f"[OUTPUT] {decoded_line}")
@@ -218,7 +225,9 @@ class EpubToAudioWorker:
             "output_folder": '',
             "error_message": '',
             "start_time": int(time.time()),
-            "end_time": 0,
+            # 必须是 None 而不是 0：后面用 `is None` 判断「还没结束」，
+            # 初始 0 会让该判断恒假，异常路径下 execution_time 算出负数
+            "end_time": None,
             "execution_time": 0
         }
 
@@ -284,31 +293,34 @@ class EpubToAudioWorker:
                 logging.warning(f"[WARNING] Conversion timed out after {self.timeout} seconds")
                 self._kill_process()
                 return_code = -9  # SIGKILL
-                self.progress_data["status"] = self.STATUS_FAILED
-                self.progress_data["error_message"] = f"Conversion timed out after {self.timeout} seconds"
+                with self._plock:  # 读取线程可能还没退，写状态同样要持锁
+                    self.progress_data["status"] = self.STATUS_FAILED
+                    self.progress_data["error_message"] = f"Conversion timed out after {self.timeout} seconds"
             except KeyboardInterrupt:
                 logging.info("[INFO] Conversion interrupted by user (Ctrl+C)")
                 self._kill_process()
                 return_code = -2  # Interrupted
-                self.progress_data["status"] = self.STATUS_FAILED
-                self.progress_data["error_message"] = "Conversion interrupted by user"
+                with self._plock:
+                    self.progress_data["status"] = self.STATUS_FAILED
+                    self.progress_data["error_message"] = "Conversion interrupted by user"
                 # Re-raise the exception to be handled by outer try-catch
                 raise
 
             stdout_thread.join(timeout=1)
             stderr_thread.join(timeout=1)
 
-            if self.progress_data["end_time"] is None:
-                self.progress_data["end_time"] = int(time.time())
+            with self._plock:
+                if self.progress_data["end_time"] is None:
+                    self.progress_data["end_time"] = int(time.time())
 
-            self.progress_data["execution_time"] = self.progress_data["end_time"] - self.progress_data["start_time"]
+                self.progress_data["execution_time"] = self.progress_data["end_time"] - self.progress_data["start_time"]
 
-            if self.progress_data["status"] == self.STATUS_PROCESSING:
-                if return_code == 0:
-                    self.progress_data["status"] = self.STATUS_CONVERTED
-                else:
-                    self.progress_data["status"] = self.STATUS_FAILED
-                    self.progress_data["error_message"] = f"Process exited with code {return_code}"
+                if self.progress_data["status"] == self.STATUS_PROCESSING:
+                    if return_code == 0:
+                        self.progress_data["status"] = self.STATUS_CONVERTED
+                    else:
+                        self.progress_data["status"] = self.STATUS_FAILED
+                        self.progress_data["error_message"] = f"Process exited with code {return_code}"
 
             success = return_code == 0 and self.progress_data["status"] == self.STATUS_CONVERTED
 
@@ -370,10 +382,13 @@ class EpubToAudioWorker:
         Returns:
             Progress data dictionary
         """
-        if self.progress_data["status"] == self.STATUS_PROCESSING and self.progress_data["start_time"]:
-            self.progress_data["execution_time"] = int(time.time()) - self.progress_data["start_time"]
+        with self._plock:
+            if self.progress_data["status"] == self.STATUS_PROCESSING and self.progress_data["start_time"]:
+                self.progress_data["execution_time"] = int(time.time()) - self.progress_data["start_time"]
 
-        return self.progress_data.copy()
+            # 深拷贝：浅拷贝的 chapters 仍与读线程共享，调用方（轮询 handler）
+            # 序列化时读线程并发插入键会炸 dict changed size during iteration
+            return copy.deepcopy(self.progress_data)
 
     def get_progress_json(self) -> str:
         """
