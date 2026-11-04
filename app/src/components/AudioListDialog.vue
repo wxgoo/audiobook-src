@@ -132,6 +132,18 @@ export default {
             window.addEventListener('pagehide', this._onHide);
         }
     },
+    watch: {
+        open(val) {
+            // §关弹窗即释放播放器§ 组件挂在书详情页上，关弹窗只是 v-dialog 隐藏，
+            // 实例不销毁。若不停，音频在后台继续播、解码器一直被占；随后离开
+            // 该页再回来，新的播放请求会和遗留的旧播放状态打架，表现就是
+            // 「点了没动静，必须 Ctrl+F5」。
+            if (!val) {
+                this.saveProgress();
+                this.stopAudioFilePlayback();
+            }
+        },
+    },
     beforeDestroy() {
         // 关闭时也要存一次，否则最后几秒的进度会丢
         this.saveProgress();
@@ -237,17 +249,40 @@ export default {
             this.currentAudioFile = el;
 
             el.addEventListener('loadstart', () => { this.audio_loading = true; });
+            // §先定位再播放§ 合并成一个 onReady：先应用续播 seek，再调 play()。
+            // 旧写法在 canplay 里 seek：play() 请求已发出，seek 又触发新的 load
+            // → 打断 play()（AbortError: interrupted by a new load request），
+            // 随后 seek 完又 canplay → 再 seek → 无限循环（Console 里 canplay
+            // 35.0/34.9 交替刷屏，表现为「一动不动」）。
+            let played = false;
+            const onReady = () => {
+                if (this.currentAudioFile !== el || played) return;
+                played = true;
+                this.audio_loading = false;
+                if (!el._resumeApplied) {
+                    el._resumeApplied = true;
+                    const saved = this.resumeMap[index];
+                    if (saved && el.duration && saved < el.duration - 3 && saved >= 5) {
+                        try {
+                            el.currentTime = Math.floor(saved);
+                            this.sliderPct = (Math.floor(saved) / el.duration) * 100;
+                            this.currentTime = Math.floor(saved);
+                        } catch (e) { /* 忽略 */ }
+                    }
+                }
+                el.play().then(() => {
+                    this.audio_paused = false;
+                }).catch((err) => {
+                    // 被新的切换打断属正常，不弹错误框
+                    if (err && err.name === 'AbortError') return;
+                    this.stopAudioFilePlayback();
+                    this.$alert("error", this.$t('message.audioPlayFailed'));
+                });
+            };
+            el.addEventListener('loadedmetadata', onReady, { once: true });
             el.addEventListener('canplay', () => {
                 if (this.currentAudioFile !== el) return;
                 this.audio_loading = false;
-                // 恢复上次进度：只在拿到时长之后设一次（用标志位防止被重复
-                // 触发覆盖）。§对齐整秒§ 非整秒位置会让 AAC 从帧中间解码出杂音。
-                if (el._resumeDone) return;
-                el._resumeDone = true;
-                const saved = this.resumeMap[index];
-                if (!saved || !el.duration) return;
-                if (saved >= el.duration - 3 || saved < 5) return;
-                try { el.currentTime = Math.floor(saved); } catch (e) { /* 忽略 */ }
             });
             el.addEventListener('timeupdate', () => {
                 this.currentTime = el.currentTime || 0;
@@ -270,13 +305,10 @@ export default {
                 this.stopAudioFilePlayback();
                 this.$alert("error", this.$t('message.audioLoadFailed'));
             });
-            el.play().then(() => {
-                this.audio_loading = false;
-                this.audio_paused = false;
-            }).catch(() => {
-                this.stopAudioFilePlayback();
-                this.$alert("error", this.$t('message.audioPlayFailed'));
-            });
+            // 元数据可能已经就绪（如命中缓存），此时不会再有 loadedmetadata 事件
+            if (el.readyState >= 1) {
+                onReady();
+            }
         },
         stopAudioFilePlayback() {
             if (this.currentAudioFile) {
