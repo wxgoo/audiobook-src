@@ -774,6 +774,12 @@ class AdminAudioTranscodeStart(BaseHandler):
     def post(self):
         data = tornado.escape.json_decode(self.request.body)
         bitrate = (data.get("bitrate") or "64k").strip()
+        # 转码后是否删原 mp3。前端不传时默认 True（沿用旧行为），
+        # 显式 false 才保留——避免参数缺失被误当成"保留"。
+        delete_source = data.get("delete_source", True)
+        if isinstance(delete_source, str):
+            delete_source = delete_source.lower() not in ("0", "false", "no", "")
+        delete_source = bool(delete_source)
 
         # 兼容两种入参：book_id（单本）或 book_ids（批量）
         book_ids = data.get("book_ids")
@@ -794,7 +800,8 @@ class AdminAudioTranscodeStart(BaseHandler):
             except Exception:
                 titles[str(bid)] = ""
 
-        ok, msg = audio_transcode.start(self.calibre_db, book_ids, bitrate, titles)
+        ok, msg = audio_transcode.start(
+            self.calibre_db, book_ids, bitrate, titles, delete_source=delete_source)
         if not ok:
             return {"err": "task.start_failed", "msg": msg}
         return {"err": "ok", "msg": msg}

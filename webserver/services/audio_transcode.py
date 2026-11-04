@@ -39,6 +39,7 @@ _task = {
     "book_id": None,
     "book_title": "",
     "bitrate": "64k",
+    "delete_source": True,   # 转码成功后是否删除原 mp3（页面可关）
     "total": 0,
     "done": 0,
     "failed": 0,
@@ -167,8 +168,12 @@ def probe_book_audio(db, book_id, files=None, limit=200):
 
 
 
-def start(db, book_ids, bitrate="64k", titles=None):
+def start(db, book_ids, bitrate="64k", titles=None, delete_source=True):
     """启动转码队列。book_ids 可传单本 int 或多本 list。
+
+    delete_source: 转码成功后是否删除原 mp3。默认 True（沿用原行为），
+    但用户可以在页面上取消勾选，保留原文件自己核对后再删。
+    失败的 mp3 无论如何都保留。
 
     多本时按顺序逐书处理；某书没有 mp3 直接跳过（计入 skipped）。
     返回 (ok, msg)。
@@ -204,6 +209,7 @@ def start(db, book_ids, bitrate="64k", titles=None):
             "book_id": queue[0]["book_id"],
             "book_title": titles.get(str(queue[0]["book_id"]), ""),
             "bitrate": bitrate if bitrate in ("64k", "96k", "128k") else "64k",
+            "delete_source": bool(delete_source),
             "total": sum(len(q["files"]) for q in queue),
             "done": 0,
             "failed": 0,
@@ -241,8 +247,12 @@ def _run_queue(db, queue):
             _task["book_title"] = _task["queue"][qi]["title"]
             _transcode_one_book(db, item["book_id"], item["files"], qi)
         _task["status"] = "done"
-        _task["message"] = _("完成：%d 本书 %d 成功 %d 失败（失败的 mp3 已保留）") % (
-            len(queue), _task["done"], _task["failed"])
+        if _task.get("delete_source", True):
+            _task["message"] = _("完成：%d 本书 %d 成功 %d 失败（失败的 mp3 已保留）") % (
+                len(queue), _task["done"], _task["failed"])
+        else:
+            _task["message"] = _("完成：%d 本书 %d 成功 %d 失败（原 mp3 已按要求保留）") % (
+                len(queue), _task["done"], _task["failed"])
         if _task.get("skipped"):
             _task["message"] += _(", 跳过 %d 本（无 mp3 或书不存在）") % len(_task["skipped"])
     except Exception as e:
@@ -273,7 +283,13 @@ def _transcode_one_book(db, book_id, files, queue_index):
                 # 已有同名 m4a：转出的会覆盖它，这是预期（以最新转码为准）
                 logging.info("[audio_transcode] 覆盖已有 m4a: %s", dst)
 
-            tmp = dst + ".tmp"
+            # §临时文件必须保住 .m4a 扩展名§
+            # 原来写 dst + ".tmp" → "xxx.m4a.tmp"，ffmpeg 只看最后一个后缀，
+            # 认不出容器格式，直接报
+            #   Error initializing the muxer for xxx.m4a.tmp: Invalid argument
+            # 于是每一次转码都失败（mp3 全保留，一个 m4a 也生成不出来）。
+            # 改成 xxx.tmp.m4a：后缀仍是 .m4a，同时用 -f mp4 双保险。
+            tmp = os.path.join(audio_dir, stem + ".tmp.m4a")
             cmd = FFMPEG_BASE + [
                 "-i", src,
                 "-map_metadata", "-1",       # 洗掉 ID3：作者/专辑等不再依赖 mp3 标签
@@ -281,6 +297,7 @@ def _transcode_one_book(db, book_id, files, queue_index):
                 "-c:a", "aac",
                 "-b:a", bitrate,
                 "-movflags", "+faststart",   # moov 前置，浏览器秒开可拖
+                "-f", "mp4",                 # 显式指定容器，不依赖后缀推断
                 tmp,
             ]
             try:
@@ -295,7 +312,14 @@ def _transcode_one_book(db, book_id, files, queue_index):
                                              err[-1] if err else "no output")
                     )
                 os.replace(tmp, dst)          # 转码成功：m4a 就位
-                os.remove(src)                # mp3 只有在 m4a 成功后才删
+                # §原 mp3 删不删由用户说了算§ 4.6.0-18
+                # 原来是无条件 os.remove(src)：用户想先试听对比、或磁盘够用想留底，
+                # 都没得选，转完原文件就没了。现在页面有开关，默认仍删（沿用旧行为）。
+                # 失败路径不受影响，mp3 一律保留。
+                if _task.get("delete_source", True):
+                    os.remove(src)
+                else:
+                    _task["kept"] = _task.get("kept", 0) + 1
                 _task["done"] += 1
                 _task["queue"][queue_index]["done"] += 1
                 logging.info("[audio_transcode] %s -> %s OK", name, stem + ".m4a")

@@ -148,6 +148,22 @@
             <span v-else>当前选择不高于源码率，不会白转。</span>
           </div>
 
+          <!-- 原文件处置 -->
+          <v-checkbox
+            v-model="deleteSource"
+            label="转码成功后删除原 mp3"
+            hide-details dense class="mt-2 mb-1"
+          ></v-checkbox>
+          <div class="text-caption grey--text mb-4">
+            <template v-if="deleteSource">
+              勾选：m4a 生成成功后才删对应 mp3（失败的一律保留）。
+            </template>
+            <template v-else>
+              不勾选：原 mp3 全部保留，方便你试听对比后自己决定何时删。
+              注意此时同一本书会同时存在 mp3 和 m4a，播放列表可能重复。
+            </template>
+          </div>
+
           <!-- 启动 -->
           <div class="d-flex justify-center">
             <v-btn
@@ -196,7 +212,13 @@
               </div>
             </div>
             <div class="text-caption mt-2">
-              转码完成后到该书详情页点「有声书」确认能播放；m4a 已自动生成，对应 mp3 已删除。
+              <template v-if="deleteSource">
+                转码完成后到该书详情页点「有声书」确认能播放；m4a 已自动生成，对应 mp3 已删除。
+              </template>
+              <template v-else>
+                转码完成后到该书详情页点「有声书」确认能播放；原 mp3 已按你的设置保留，
+                试听满意后请自行删除，避免同一本书出现重复音轨。
+              </template>
             </div>
           </v-alert>
         </v-card>
@@ -211,11 +233,11 @@
       <v-card v-if="confirmStart" class="pa-4">
         <p v-if="selectedBooks.length">
           将把选中的 {{ selectedBooks.length }} 本书里所有 mp3 转成
-          {{ bitrate }} 的 m4a，成功后删除原 mp3。确认开始？
+          {{ bitrate }} 的 m4a，{{ deleteSource ? '成功后删除原 mp3' : '原 mp3 保留' }}。确认开始？
         </p>
         <p v-else-if="scanResult">
           将把《{{ scanResult.title }}》里 {{ scanResult.mp3_count }} 个 mp3
-          转成 {{ bitrate }} 的 m4a，成功后删除原 mp3。确认开始？
+          转成 {{ bitrate }} 的 m4a，{{ deleteSource ? '成功后删除原 mp3' : '原 mp3 保留' }}。确认开始？
         </p>
         <p v-else>没有选中任何书，也没有扫描结果。</p>
         <div class="d-flex justify-end">
@@ -242,6 +264,7 @@ export default {
     return {
       bookIdInput: "",
       bitrate: "64k",
+      deleteSource: true,   // 转码成功后删原 mp3（默认沿用旧行为）
       scanning: false,
       scanningAll: false,
       allBooks: [],
@@ -381,8 +404,8 @@ export default {
       this.starting = true;
       try {
         const payload = this.selectedBooks.length
-          ? { book_ids: this.selectedBooks, bitrate: this.bitrate }
-          : { book_id: parseInt(this.bookIdInput, 10), bitrate: this.bitrate };
+          ? { book_ids: this.selectedBooks, bitrate: this.bitrate, delete_source: this.deleteSource }
+          : { book_id: parseInt(this.bookIdInput, 10), bitrate: this.bitrate, delete_source: this.deleteSource };
         const rsp = await this.$backend("/toolbox/audio_transcode/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
