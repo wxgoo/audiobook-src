@@ -165,42 +165,110 @@ def _fix_mojibake(text):
 
 
 def _extract_audio_metadata(audio_path, fallback_title):
+    """从音频标签读 (书名, 演播者)。
+
+    ⚠️ 返回的第二个值**不是作者**，是演播者（朗读者）。
+    中文有声资源的 ID3 里 TPE1(artist) 几乎一律填播音员——用户库里那本
+    「哈利波特与魔法石」的每首音轨都是 TPE1=李慧敏（央广播音员），
+    真作者 J·K·罗琳 一个字都没出现。把 artist 当作者会让书库里凭空多出一个
+    「李慧敏」作者，而这位其实是演播者，据此做的作者归类、去重、刮削全是错的。
+
+    所以调用方必须：作者另想办法（优先同名电子书，否则佚名），
+    演播者写进书的演播者字段/标签/简介——信息不丢，但不占作者位。
+    """
     try:
         import mutagen
         audio = mutagen.File(audio_path, easy=True)
         if audio is None:
             return fallback_title, None
         title = None
-        author = None
+        narrator = None
         if hasattr(audio, "tags") and audio.tags:
             title_tag = audio.tags.get("album") or audio.tags.get("title")
-            author_tag = audio.tags.get("artist") or audio.tags.get("albumartist")
+            # artist/albumartist 在中文有声书里是演播者，不是作者
+            narrator_tag = audio.tags.get("artist") or audio.tags.get("albumartist")
             if title_tag:
                 title = str(title_tag[0]).strip() if isinstance(title_tag, list) else str(title_tag).strip()
-            if author_tag:
-                author = str(author_tag[0]).strip() if isinstance(author_tag, list) else str(author_tag).strip()
+            if narrator_tag:
+                narrator = str(narrator_tag[0]).strip() if isinstance(narrator_tag, list) else str(narrator_tag).strip()
 
         # Fallback for some m4b files (e.g. lavf) where easy=True doesn't map the tags
-        if not title or not author:
+        if not title or not narrator:
             raw_audio = mutagen.File(audio_path, easy=False)
             if hasattr(raw_audio, "tags") and raw_audio.tags:
                 if not title:
                     title_tag = raw_audio.tags.get("\x00\x00\x00\x01")
                     if title_tag:
                         title = str(title_tag[0]).strip() if isinstance(title_tag, list) else str(title_tag).strip()
-                if not author:
-                    author_tag = raw_audio.tags.get("\x00\x00\x00\x02")
-                    if author_tag:
-                        author = str(author_tag[0]).strip() if isinstance(author_tag, list) else str(author_tag).strip()
+                if not narrator:
+                    narrator_tag = raw_audio.tags.get("\x00\x00\x00\x02")
+                    if narrator_tag:
+                        narrator = str(narrator_tag[0]).strip() if isinstance(narrator_tag, list) else str(narrator_tag).strip()
 
         title = _fix_mojibake(title)
-        author = _fix_mojibake(author)
+        narrator = _fix_mojibake(narrator)
 
-        logging.debug("[AUDIO_IMPORT] Extracted metadata from %s: title=%s, author=%s", audio_path, title, author)
-        return title or fallback_title, author
+        logging.debug("[AUDIO_IMPORT] Extracted metadata from %s: title=%s, narrator=%s", audio_path, title, narrator)
+        return title or fallback_title, narrator
     except Exception as e:
         logging.warning("[AUDIO_IMPORT] Failed to read audio metadata from %s: %s", audio_path, e)
         return fallback_title, None
+
+
+def attach_narrator(db, book_id, narrator):
+    """把演播者写进书里，三个地方都写：结构化列、标签、简介。
+
+    4.6.0-18。模块级函数而非实例方法，因为有两个调用方：
+      - AudioBookImporter.do_import（「导入有声书」入口）
+      - ScanService._sync_sidecar_audio（扫书时同目录音频随书带入）
+
+    为什么不全塞作者：中文有声资源的 ID3/ID 里 TPE1 填的是播音员，
+    把「李慧敏」当作者会让书库凭空长出一个伪作者，作者页、去重、
+    自动刮削全部跟着错。作者位要么是电子书带来的真作者，要么老实标佚名。
+
+    为什么三处都写：
+      - #narrator 列：结构化，以后能按演播者筛选/展示
+      - tags：书列表页就能看见，不用点进去
+      - comments：书详情页显眼位置，用户最可能看到
+
+    全部 best-effort：写失败只记日志，绝不能让导入失败。
+    """
+    if not narrator:
+        return
+    book_id = int(book_id)
+
+    # 1) 结构化列
+    try:
+        db.new_api.set_field(constants.CALIBRE_COLUMN_NARRATOR, {book_id: narrator})
+    except Exception as err:
+        logging.warning("[AUDIO_IMPORT] 写 #narrator 失败(book %s): %s", book_id, err)
+
+    # 2) 标签 + 3) 简介
+    try:
+        mi = db.get_metadata(book_id, index_is_id=True, get_user_categories=False)
+    except Exception as err:
+        logging.warning("[AUDIO_IMPORT] 读元数据失败(book %s): %s", book_id, err)
+        return
+    if mi is None:
+        return
+
+    try:
+        tags = list(mi.tags or [])
+        tag = _("演播:%s") % narrator
+        if tag not in tags:
+            tags.append(tag)
+            db.new_api.set_field("tags", {book_id: tags})
+    except Exception as err:
+        logging.warning("[AUDIO_IMPORT] 写 tags 失败(book %s): %s", book_id, err)
+
+    try:
+        comments = (mi.comments or "").strip()
+        line = _("演播：%s") % narrator
+        if line not in comments:
+            merged = (comments + "<br/>" + line) if comments else line
+            db.new_api.set_field("comments", {book_id: merged})
+    except Exception as err:
+        logging.warning("[AUDIO_IMPORT] 写 comments 失败(book %s): %s", book_id, err)
 
 
 class AudioBookImporter(AsyncService):
@@ -497,24 +565,31 @@ class AudioBookImporter(AsyncService):
             if ebook_title:
                 title = ebook_title
                 author = ebook_author or _("佚名")
+                narrator = None
             else:
-                title, author = _extract_audio_metadata(first_audio, fallback_title)
-                if not author:
-                    author = _("佚名")
+                # §artist 是演播者不是作者§ 4.6.0-18
+                # 中文有声资源的 ID3 里 TPE1(artist) 几乎一律填播音员，真作者缺失。
+                # 用户库里「哈利波特与魔法石」每首音轨都是 TPE1=李慧敏（央广播音员），
+                # J·K·罗琳 一个字都没有。此时：
+                #   1. 先找同名的电子书，用它的作者（下面的查重归并会把音频挂过去）
+                #   2. 找不到就老实标佚名——宁可没作者，也不能让演播者冒充作者
+                # 演播者不丢：写进 #narrator 列 + 标签 + 简介，见 attach_narrator。
+                title, narrator = _extract_audio_metadata(first_audio, fallback_title)
                 title = utils.super_strip(title) if title else ""
                 if not title:
                     title = fallback_title or os.path.splitext(audio_files[0])[0]
-                author = utils.super_strip(author) if author else _("佚名")
-            # 4.6.0-9：有声书是作者名最脏的来源——ID3 的 artist 字段里
-            # 常见 "某某听书"、"酷我音乐"、多歌手用逗号连写、带国籍前缀等。
-            # 这里做两步：先 L1 清洗（去前缀后缀、拆多人后取第一个），
-            # 再查别名表统一到标准名。有声书固定用单作者，不拆多人。
-            # 清洗结果为空时回退原文，避免把有作者的书标成"佚名"。
+                narrator = utils.super_strip(narrator) if narrator else None
+                author = _("佚名")
+
+            # 4.6.0-9：作者名最脏的来源是有声书的 ID3，但 4.6.0-18 起 artist 已不再
+            # 当作者用，这里只对「来自电子书」的作者做清洗（ID3 的演播者不需要
+            # 走作者归一化：别名表里没有播音员，硬套反而会误伤）。
             # ⚠️ 不能用 "_" 接收译者列表：本模块的 "_" 是 i18n 函数，
             # 覆盖后后面所有 _("...") 都会崩。
-            _cleaned, _cleaned_trans = guess_authors([author])
-            author = _cleaned[0] if _cleaned else author
-            author = resolve_alias(author) or author
+            if author and author != _("佚名"):
+                _cleaned, _cleaned_trans = guess_authors([author])
+                author = _cleaned[0] if _cleaned else author
+                author = resolve_alias(author) or author
 
             cover_path = _find_cover(dir_path)
             has_cover = cover_path is not None
@@ -612,6 +687,14 @@ class AudioBookImporter(AsyncService):
                         AudioBookImporter.static_status["imported"] += 1
                     if not has_cover:
                         imported_without_cover.append(book_id)
+                    # §把演播者落到书里，别丢§ 4.6.0-18
+                    # 作者位让给真作者（或佚名），演播者信息单独存：
+                    # #narrator 列（结构化，可按演播者筛选/展示）+ 简介 + 标签（人能看见）。
+                    # 只在没被电子书接管时写——有电子书的书，演播者信息以电子书元数据为准。
+                    if narrator:
+                        attach_narrator(self.db, book_id, narrator)
+                        # 挂靠到已有电子书的场景下，原书作者是对的，不改
+                        logging.info("[AUDIO_IMPORT] book %s 演播者：%s", book_id, narrator)
                 else:
                     AudioBookImporter.static_status["exist"] += 1
 

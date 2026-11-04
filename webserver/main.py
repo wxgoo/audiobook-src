@@ -36,7 +36,7 @@ from webserver.services.resource_service import ResourceService
 from webserver.recommend import CalibreFeatureSource, RecommendConfig, RecommendService, SqlCrowdSource, SqlProfileSource
 from webserver.constants import COLUMN_CATEGORY, COLUMN_FOLDER, COLUMN_PHY_COUNT, COLUMN_BOOK_TYPE, COLUMN_TRANSLATORS
 from webserver.constants import COLUMN_EXT_LINK, CUSTOM_COVER_IMAGE, COLUMN_DYNAMIC_COVER
-from webserver.constants import COLUMN_LOCATION, COLUMN_CATALOG, COLUMN_AUTHOR_LOCKED
+from webserver.constants import COLUMN_LOCATION, COLUMN_CATALOG, COLUMN_AUTHOR_LOCKED, COLUMN_NARRATOR
 from webserver.version import VERSION
 
 CONF = loader.get_settings()
@@ -371,6 +371,10 @@ def make_app():
         _ = add_meta_in_calibre(cache, COLUMN_EXT_LINK, "External Link", "text")
         _ = add_meta_in_calibre(cache, COLUMN_DYNAMIC_COVER, "Dynamic Cover", "int")
         added_translator = add_meta_in_calibre(cache, COLUMN_TRANSLATORS, "Translator", "text")
+        # 演播者：有声书的朗读者。中文有声资源 ID3 的 artist 填的是播音员，
+        # 不能当作者（见 audios_import.py 的 _extract_audio_metadata），
+        # 单独存这一列，作者位留给真作者或佚名。
+        add_meta_in_calibre(cache, COLUMN_NARRATOR, "Narrator", "text")
         added_catalog = add_meta_in_calibre(cache, COLUMN_CATALOG, "Catalog", "comments")
         # 作者锁定：用户在界面上手动改过作者的书，自动刮削不再覆盖作者字段。
         # 放在最后，避免影响上面几个列的历史返回值判断。

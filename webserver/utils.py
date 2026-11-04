@@ -77,6 +77,103 @@ def meta_writable_formats():
     return [f for f in constants.META_WRITABLE_FORMATS if can_set_metadata(f)]
 
 
+# 文件名里作者信号的三类形态。这里只做「找」不做「拆」，找到就用，找不到就放弃。
+# 1) 显式中文标注：作者：张三 / 作者 张三。
+#    候选在空白或分隔符处截断——`作者：张三 三体.pdf` 里的"三体"是书名不是人名，
+#    贪婪吃到 20 字会把作者+书名粘成一串写进书库。
+_FN_AUTHOR_LABEL = re.compile(r'(?:作者|著者)\s*[:：]?\s*([^\s\(\)\[\]【】《》,，;；:：/\\\-–—_]{2,20})')
+# 2) 独立括号包裹：`[燕晓] 书名` / `书名 (燕晓)` / `【燕晓】书名`
+_FN_AUTHOR_BRACKET = re.compile(r'[\[\(【（]\s*([^\[\]\(\)【】（）]{2,20})\s*[\]\)】）]')
+# 3) 分隔符分段：`书名 - 张三` / `书名_张三` / `书名 — 张三`。
+#    用 finditer 逐个取段而不用「锚定结尾」，因为书源常见
+#    `三体 - 刘慈欣 - 重庆出版社.pdf` 这种「书名-作者-出版社」三段式：
+#    只认最后一段会取到出版社再被噪声词否掉，白白丢掉中间的真作者。
+#    段内不允许空格/中点之外的停顿，`上半部 下半部` 这种描述性片段要整段拒掉。
+_FN_AUTHOR_TAIL = re.compile(r'[-–—_]\s*([^\s\-–—_][^-–—_]{0,19})(?=[-–—_]|$)')
+# 4) 英文 by：只认「by + 多词人名」（by Randal E. Bryant）。
+#    "Stand by Me"、"Live by Night" 这类标题里 by 后面也是大写词，靠词数区分不开，
+#    所以要求至少两段——西文作者署名几乎都带姓+名，单词署名交给分隔符形态处理。
+_FN_AUTHOR_BY = re.compile(r'(?<![A-Za-z])by\s+([A-Z][A-Za-z.\'-]*(?:\s+[A-Z][A-Za-z.\'-]*)+)')
+
+# 这些词出现在候选里说明抓到的不是人名（出版社/系列/文件属性之类）
+_FN_AUTHOR_NOISE = ("出版", "书局", "书店", "公司", "集团", "press", "publisher",
+                    "edition", "版", "卷", "册", "全集", "套装", "扫描", "整理", "编",
+                    "译", "著", "pdf", "epub", "txt", "mobi", "azw3", "djvu")
+
+# 候选必须是「像人名」的短串：不含书名号/括号/分隔符/扩展名，也不含数字
+_FN_AUTHOR_BAD_CHARS = re.compile(r'[0-9,，。、;；:：!！?？"\'“”‘’（）\(\)\[\]【】《》<>/\\|@#$%^&*+=~`]')
+
+# 全西文 + 空格分隔的人名形态（John Smith / Randal E. Bryant / J.K. Rowling）
+_FN_LATIN_NAME = re.compile(r"[A-Z][A-Za-z.'\-]*(?:\s+[A-Z][A-Za-z.'\-]*)+")
+
+
+def guess_author_from_filename(name):
+    """从文件名里找作者，找不到返回 None。
+
+    4.6.0-18 新增。此前扫描导入在 PDF_TILE_WITH_FILE_NAME=True 时把作者**无条件**
+    改写成"佚名"，而文件名往往就写着作者（如「秒懂速解小学数字画图 - 燕晓.pdf」），
+    结果书详情页显示「作者：佚名」——明明有信息却没用。
+
+    策略是**保守**：只认三类明确信号（显式「作者：」标注、独立括号包裹、
+    分隔符结尾），并且候选必须通过人名形态校验。宁可返回 None 让上层填"佚名"，
+    也绝不把出版社、系列名、版本号误当作者写进书库。
+
+    注意：本函数只负责「找作者」，标题一律不拆——标题该用内嵌元数据，
+    文件名的整串在 calibre 眼里只是兜底，拆错标题比作者为空更难让用户发现。
+    """
+    if not name:
+        return None
+    text = str(name).strip()
+    if not text:
+        return None
+    # 调用方一般已经剥掉扩展名，但函数自己再兜一层：否则 `书名 - 燕晓.pdf` 的
+    # 分隔符形态会连扩展名一起吞进候选（"燕晓.pdf"），再被 _looks_like_author
+    # 的 pdf 噪声词否掉，白白漏掉一个真作者。
+    if "." in text:
+        head, _dot, tail = text.rpartition(".")
+        if head and 2 <= len(tail) <= 5 and tail.isalnum() and not tail.isdigit():
+            text = head.strip()
+    if not text:
+        return None
+
+    # 三类信号里取「最靠右」的那个候选：书源命名习惯是「书名在前、作者在后」，
+    # 靠右的片段比靠左的更可能是作者。同位置时按 标签 > 括号 > 分隔符 的确定性排序。
+    best = None  # (position, -priority, candidate)
+    for priority, pattern in enumerate((_FN_AUTHOR_LABEL, _FN_AUTHOR_BRACKET, _FN_AUTHOR_TAIL, _FN_AUTHOR_BY)):
+        for m in pattern.finditer(text):
+            raw = next((g for g in m.groups() if g), None)
+            if not raw:
+                continue
+            candidate = raw.strip()
+            if not _looks_like_author(candidate):
+                continue
+            key = (m.start(), -priority)
+            if best is None or key > best[0]:
+                best = (key, candidate)
+    return best[1] if best else None
+
+
+def _looks_like_author(candidate):
+    """候选片段是否像人名。宽松到能收「列夫·托尔斯泰」，严格到能挡住「延边大学出版社」。"""
+    if not candidate:
+        return False
+    if not (2 <= len(candidate) <= 20):
+        return False
+    if _FN_AUTHOR_BAD_CHARS.search(candidate):
+        return False
+    lowered = candidate.lower()
+    if any(noise in lowered for noise in _FN_AUTHOR_NOISE):
+        return False
+    # 含空格的候选要看形态：中文 + 空格基本是「上半部 下半部」这类描述性片段，
+    # 直接拒；全西文的多词串（John Smith / Randal E. Bryant）是正常人名，放行。
+    if re.search(r'[\s\u3000]', candidate) and not _FN_LATIN_NAME.fullmatch(candidate):
+        return False
+    # 纯数字、年份、页码之类直接否掉
+    if re.fullmatch(r'\d+', candidate):
+        return False
+    return True
+
+
 def remove_zlibrary_suffix(text):
     """移除文件名中包含z-library的括号内容"""
     if not text:

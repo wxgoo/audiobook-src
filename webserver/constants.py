@@ -60,6 +60,11 @@ CALIBRE_COLUMN_DYNAMIC_COVER = "#dynamic_cover"
 COLUMN_TRANSLATORS = "translators"
 CALIBRE_COLUMN_TRANSLATORS = "#translators"
 
+# 演播者（有声书朗读者）。ID3 的 artist 字段填的往往是播音员而非作者，
+# 见 webserver/services/audios_import.py 的 narrator 提取逻辑。
+COLUMN_NARRATOR = "narrator"
+CALIBRE_COLUMN_NARRATOR = "#narrator"
+
 # 书籍目录结构（markdown格式，保留层次），见 webserver/services/catalog.py
 COLUMN_CATALOG = "catalog"
 CALIBRE_COLUMN_CATALOG = "#catalog"

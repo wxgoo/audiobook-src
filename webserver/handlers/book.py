@@ -87,14 +87,22 @@ _AUTHOR_PLACEHOLDERS = frozenset(("unknown", "未知", "佚名", "anonymous", "n
 
 
 def normalize_pdf_meta(mi, filename_stem, prefer_filename=None):
-    """统一 PDF 的标题/作者取值口径，消除三处上传路径各写一套的分裂。
+    """统一 PDF 的标题/作者取值口径，消除各处上传路径各写一套的分裂。
 
     取值优先级（prefer_filename 为 None 时读 CONF["PDF_TILE_WITH_FILE_NAME"]）：
-      1. prefer_filename=True  -> 一律用文件名（用户明确要求"以文件名为准"）
+      1. prefer_filename=True  -> 标题用文件名
       2. 内嵌标题可信（非空、非占位）-> 用内嵌标题
       3. 否则回退文件名
 
-    作者：内嵌作者非空且不是占位值时保留，否则置为"佚名"。
+    **标题一律整串使用，不做任何拆分**。文件名前后可能带 [作者]、[出版]、（版本）
+    等各种信息，想靠规则剥干净是不现实的，剥错还比不剥更难发现。书名该显示什么
+    由内嵌元数据决定；内嵌不可信时才退到文件名整串，让用户在书详情页一眼看出
+    「这本书的元数据没读出来」，而不是被一个看似干净、实则残缺的标题骗过去。
+    入库后的目录名与文件名由 calibre 按自己的规则生成（title + author + id），
+    与源文件名无关，不需要这里提前处理。
+
+    作者：内嵌作者非空且不是占位值时保留，否则用 utils.guess_author_from_filename
+    从文件名里**保守地**捞一个，捞不到才是"佚名"。
     ⚠️ 4.6.0-16 之前分片上传把作者**无条件**改成"佚名"，导致刚同步进 PDF 的
        作者元数据在重新导入时被丢弃——用户反馈"改了等于没改"的直接原因。
     """
@@ -115,7 +123,8 @@ def normalize_pdf_meta(mi, filename_stem, prefer_filename=None):
 
     authors = mi.authors or []
     if not authors or str(authors[0]).strip().lower() in _AUTHOR_PLACEHOLDERS:
-        mi.authors = [_("佚名")]
+        guessed = utils.guess_author_from_filename(stem)
+        mi.authors = [guessed] if guessed else [_("佚名")]
     return mi
 
 

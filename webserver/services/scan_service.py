@@ -1433,21 +1433,30 @@ class ScanService(AsyncService):
                         staged_ops.append(("save_row", row))
                     return None, ScanFile.INVALID
 
-            # Normalize title/author for pdf (PDF_TILE_WITH_FILE_NAME=False)
+            # Normalize title/author for pdf
+            # §PDF 归一化必须与网页上传同口径§ 4.6.0-18：这里原先自己写了一套
+            # 「标题/作者」取值逻辑，且 PDF_TILE_WITH_FILE_NAME=True 那条分支
+            # **无条件** mi.authors = [_("佚名")]，把内嵌元数据里的真实作者直接丢掉。
+            # 用户实测「秒懂速解小学数字画图 - 燕晓.pdf」导入后显示「作者：佚名」，
+            # 而同一文件用 read_book_metadata 读出来是 ['燕晓'] —— 作者是被这里覆盖的。
+            # book.py 的 normalize_pdf_meta 在 4.6.0-16 已经修过同一个坑（作者不再被
+            # 无条件改佚名），但那条修法只覆盖了网页上传三条路径，扫描导入漏了。
+            # 现在统一走 normalize_pdf_meta：开关只决定「标题取文件名还是内嵌」，
+            # 作者永远是「内嵌非占位值就保留」，两边不再各写一套。
             if fmt == "pdf":
                 if mi is None:
                     mi = Metadata(utils.remove_zlibrary_suffix(fname.replace("." + fmt, "")), [_("佚名")])
-                elif CONF.get("PDF_TILE_WITH_FILE_NAME", False):
-                    mi.title = utils.remove_zlibrary_suffix(fname.replace("." + fmt, ""))
-                    mi.authors = [_("佚名")]
                 else:
-                    title_ = mi.title.strip() if mi.title else ""
-                    if not title_ or title_.find("下载工具") >= 0 or title_ == "SSReader Print.":
-                        mi.title = utils.remove_zlibrary_suffix(fname.replace("." + fmt, ""))
-                    else:
-                        mi.title = utils.remove_zlibrary_suffix(title_)
-                    if mi.authors is None or len(mi.authors) == 0 or mi.authors[0].lower() == "unknown":
-                        mi.authors = [_("佚名")]
+                    try:
+                        from webserver.handlers.book import normalize_pdf_meta
+                        stem = fname[: -len(fmt) - 1] if fname.lower().endswith("." + fmt) else fname
+                        mi = normalize_pdf_meta(mi, stem)
+                    except Exception as err:
+                        # 归一化失败不能阻断导入：退回最小兜底（标题用文件名，作者保留）
+                        logging.warning("[IMPORT] normalize_pdf_meta failed for %s: %s", fpath, err)
+                        mi.title = mi.title or utils.remove_zlibrary_suffix(fname.replace("." + fmt, ""))
+                        if not mi.authors:
+                            mi.authors = [_("佚名")]
 
         mi.tags = guess_tags(mi.tags)
         row.title = mi.title
@@ -1636,6 +1645,20 @@ class ScanService(AsyncService):
                 _copy_or_convert_file(os.path.join(d, fname), dest)
             logging.info("[IMPORT] sidecar audio: %d 个音频已随书挂到 book %s 的 %s",
                          len(audios), book_id, dest)
+
+        # §顺带补演播者§ 4.6.0-18
+        # 音频是随电子书一起进来的，走的是本方法而不是 AudioBookImporter.do_import，
+        # 所以 attach_narrator 从来没被调用过——用户库里 15 本哈利波特全是
+        # J·K·罗琳，但 #narrator 一律为空，演播者信息白白丢了。
+        # 这里读首曲标签补一次：作者仍是电子书的作者（不动），只填演播者。
+        try:
+            from webserver.services.audios_import import _extract_audio_metadata, attach_narrator
+            _title, narrator = _extract_audio_metadata(os.path.join(d, audios[0]), "")
+            if narrator:
+                attach_narrator(self.db, book_id, narrator)
+                logging.info("[IMPORT] sidecar audio: book %s 演播者 %s", book_id, narrator)
+        except Exception as err:
+            logging.warning("[IMPORT] sidecar audio: 补演播者失败 book %s: %s", book_id, err)
         # 目录标记为已处理，防止 AudioBookImporter 按 ID3 再建一本重复书
         dir_hash = "audiodir:" + hashlib.md5(os.path.normpath(d).encode("utf-8")).hexdigest()
         try:
@@ -1647,13 +1670,20 @@ class ScanService(AsyncService):
                 # 标 IMPORTED：AudioBookImporter 跳过本目录，且后续往同目录
                 # 丢新音频时还能走它的增量同步（IMPORTED 才触发 _synch_audio_files）
                 marker.status = ScanFile.IMPORTED
-                marker.title = None
+                # §标记记录也要能看懂§ 4.6.0-18
+                # 这条不是真实书籍导入，而是「本目录音频已随书带走」的防重标记，
+                # 目的是让 AudioBookImporter 跳过该目录，不再按 ID3 标签建重复书。
+                # 原来 title/author 留空，在「已导入」列表里就是几行书名空白的
+                # 有声书图标，看着像导入失败。填上目录名并标注用途，一眼能懂。
+                marker.title = (os.path.basename(os.path.normpath(d)) or d)[:100]
                 marker.author = None
+                marker.data = {**(marker.data or {}), "sidecar_of_book": book_id}
                 self.save_or_rollback(marker)
                 logging.info("[IMPORT] sidecar audio: 目录 %s 已标记为已处理", d)
             elif marker.status not in (ScanFile.IMPORTED, ScanFile.EXIST):
                 marker.status = ScanFile.IMPORTED
                 marker.book_id = marker.book_id or book_id
+                marker.title = marker.title or (os.path.basename(os.path.normpath(d)) or d)[:100]
                 self.save_or_rollback(marker)
         except Exception as err:
             logging.warning("[IMPORT] sidecar audio: 写目录标记失败 %s: %s", d, err)
