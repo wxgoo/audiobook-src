@@ -2767,6 +2767,12 @@ export default {
             });
         },
         stopCurrentAudio() {
+            // §幂等§ 没有试听在播时直接返回，不改 playing_sample。
+            // 音列表弹窗每次开始播放都会 emit stop-sample-audio，若这里无条件
+            // `this.playing_sample = null`，Vue 会因数据「看似变化」重新渲染
+            // 整个详情页，进而触发子组件 props 更新 → 子组件 watch → 再 emit，
+            // 播放中表现为 timeupdate/canplay 互抢、currentTime 卡死不动。
+            if (!this.currentAudio && this.playing_sample === null) return;
             if (this.currentAudio) {
                 this.currentAudio.pause();
                 this.currentAudio = null;

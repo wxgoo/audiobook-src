@@ -122,6 +122,8 @@ export default {
             resumeMap: {},
             seekDragging: false,
             sliderPct: 0,
+            // 上一次重建 resumeMap 时的列表签名，深比较的廉价替代
+            _lastAudiosSig: null,
         };
     },
     mounted() {
@@ -149,14 +151,28 @@ export default {
                 this.loadResumeMap();
             }
         },
+        // §只在列表内容真变了才重建§ 父组件 audios 是整体替换的对象，而且
+        // 转换进度轮询每 10 秒会 this.audios = response.audios 重赋一次。若这里
+        // 无条件 loadResumeMap()，会给 resumeMap 赋一个新对象引用 → 触发本组件
+        // 重渲染 → v-dialog / v-slider 跟着重新计算 → 在播放中表现为 timeupdate
+        // 与 canplay 互相打断（Console 里 playing/canplay 每秒钟几百次交替、
+        // currentTime 卡在同一个值），即「点播放一动不动」。用签名比对规避。
         'audios.audios': {
-            handler() { this.loadResumeMap(); },
+            handler() {
+                const sig = this._audiosSig();
+                if (sig === this._lastAudiosSig) return;
+                this._lastAudiosSig = sig;
+                this.loadResumeMap();
+            },
             deep: false,
         },
         // bookId 也是异步来的（父组件 book && book.id）。它是进度 key 的一部分，
         // 晚到时 loadResumeMap 生成的 key 会与之后 saveProgress 的不一致，
         // 表现同样是「读过也像没读过」。
-        bookId() { this.loadResumeMap(); },
+        bookId(val, old) {
+            if (val === old) return;
+            this.loadResumeMap();
+        },
     },
     beforeDestroy() {
         // 关闭时也要存一次，否则最后几秒的进度会丢
@@ -175,6 +191,11 @@ export default {
             } catch (e) {
                 return 'guest';
             }
+        },
+        // 列表签名：url 列表拼串。只有章节集合变了才需要重建 resumeMap。
+        _audiosSig() {
+            const list = (this.audios && this.audios.audios) || [];
+            return list.map((it) => (it && it.url) || '').join('|');
         },
         _keyOf(index) {
             const item = (this.audios.audios || [])[index];
@@ -199,7 +220,16 @@ export default {
                     if (typeof v.t === 'number' && v.t > 1) map[idx] = v.t;
                 } catch (e) { /* 坏数据忽略 */ }
             });
-            this.resumeMap = map;
+            this._lastAudiosSig = this._audiosSig();
+            // §内容相同就别换引用§ 直接 this.resumeMap = map 每次都是一个新对象，
+            // Vue 会认为依赖变了 → 模板重渲染 → 播放中的 v-slider/v-dialog 被
+            // 重新求值，进而与 timeupdate 抢着改 currentTime。内容一致时保持原
+            // 引用，彻底断掉这条自触发链。
+            const old = this.resumeMap || {};
+            const oldKeys = Object.keys(old);
+            const same = oldKeys.length === Object.keys(map).length
+                && Object.keys(map).every((k) => old[k] === map[k]);
+            if (!same) this.resumeMap = map;
         },
         saveProgress() {
             const idx = this.playing_audio_index;
@@ -249,6 +279,9 @@ export default {
             }
             this.saveProgress();
             this.stopAudioFilePlayback();
+            // §通知父组件停掉语音试听§ 父页面 stopCurrentAudio() 已改为幂等
+            // （没有在播就什么都不做，见 _bookid.vue），所以这里保持无条件 emit
+            // 也不会引发「emit → 父组件重渲染 → props 变 → 再 emit」的回环。
             this.$emit('stop-sample-audio');
             this.audio_loading = true;
             this.playing_audio_index = index;
@@ -259,7 +292,10 @@ export default {
             // 的教材配套音频）边播边下时，metadata 模式会让浏览器频繁重新估算
             // 缓冲，Chrome 上表现为声音「发抖」。整段预取掉就没这问题（文件都很小）。
             el.preload = 'auto';
-            el.src = audioItem.url;
+            // §先绑事件再赋 src§ src 赋值会同步推进 readyState，若先赋 src 再
+            // addEventListener 会漏掉 loadstart；更关键的是后面 "readyState>=1
+            // 就手动 onReady" 的兜底，必须在事件全部就位后才判断，否则会出现
+            // 「onReady 跑两遍 / play() 被自己打断」。
             this.currentAudioFile = el;
 
             el.addEventListener('loadstart', () => { this.audio_loading = true; });
@@ -299,11 +335,16 @@ export default {
                 this.audio_loading = false;
             });
             el.addEventListener('timeupdate', () => {
-                this.currentTime = el.currentTime || 0;
-                this.duration = el.duration || 0;
+                // §节流§ timeupdate 每秒约 4 次；每次改 3 个响应式字段都会让
+                // v-slider 重新求值。整秒未变时不动 sliderPct，减少无谓渲染
+                // （之前「发抖」既有滑块回环的原因，也有这里过频的原因）。
+                const t = el.currentTime || 0;
+                const d = el.duration || 0;
+                this.currentTime = t;
+                if (d && d !== this.duration) this.duration = d;
                 // 播放推进时同步滑块；用户正在拖动时不要覆盖他的位置
                 if (!this.seekDragging && this.duration) {
-                    this.sliderPct = (this.currentTime / this.duration) * 100;
+                    this.sliderPct = (t / this.duration) * 100;
                 }
             });
             el.addEventListener('ended', () => {
@@ -319,7 +360,10 @@ export default {
                 this.stopAudioFilePlayback();
                 this.$alert("error", this.$t('message.audioLoadFailed'));
             });
-            // 元数据可能已经就绪（如命中缓存），此时不会再有 loadedmetadata 事件
+            // 现在才真正开始加载。事件回调全部就位，不会漏掉首帧事件。
+            el.src = audioItem.url;
+            // 元数据可能已经就绪（命中缓存时同步可达），此时不会再有
+            // loadedmetadata 事件，兜底跑一次。onReady 内有 played 标志位保证幂等。
             if (el.readyState >= 1) {
                 onReady();
             }
