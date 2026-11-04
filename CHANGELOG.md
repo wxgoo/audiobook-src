@@ -26,7 +26,7 @@
 | EPUB | 1910 → 2400 ✅ | ✅ | ✅ | ✅ |
 | PDF | 1821 → 2060 ✅ | ✅ | ✅ | ✅ |
 
-**写入链路本身是通的**。问题全在「重新导入」这一步，共三处缺陷，另有顺带两修。
+**写入链路本身是通的**。问题全在「重新导入」这一步，共三处缺陷，另有顺带三修（脚本整理）。
 
 ### 缺陷 1：重新导入并回原书，而 `add_format` 不动元数据（主因）
 
@@ -99,6 +99,30 @@ if fmt in ["txt", "pdf"]:
 `book.py` 的 `html_page("book/epubjs.html")` 要读它——缺了则在线读 EPUB 失败。
 本版补回。
 
+### 顺带修三：`tools/` 与 `scripts/` 脚本同名，看不出来该用哪个
+
+两处各有一套同名脚本，名字一样、用途完全不同：
+
+| 原名 | 两侧的差别 |
+|---|---|
+| `hotfix.sh` | `scripts/` 从**部署包**里挑 `.py`；`tools/` 从**源码目录**挑 `.py` |
+| `upgrade_from_upstream.sh` | `scripts/upgrade-upstream.sh` 全自动跟上游；`tools/` 那个是手工 git 补丁合并 |
+
+**只改 `tools/` 侧**（`scripts/` 是部署包的正式入口，改名会让已发手册失效）：
+
+```
+tools/hotfix.sh                →  tools/hotfix-from-src.sh
+tools/upgrade_from_upstream.sh →  tools/upgrade-from-upstream-manual.sh
+```
+
+两个脚本头部加「与 `scripts/` 下哪个的区别」对照，`INSTALL_GUIDE.md` 两处章节各加
+区分说明 + 12 处命令示例同步改名，`scripts/README.md` 新增对照表。
+
+同时把 16 个脚本（`tools/` 6 + `scripts/` 10）统一 `chmod +x`——此前
+`tools/hotfix.sh`、`tools/upgrade_from_upstream.sh`、`tools/category_backfill.py`、
+`tools/migrate_from_upstream.sh`、`tools/recommend_benchmark.py`、`scripts/watch-upstream.py`
+是 `644` 却带 shebang，`./xxx` 直接跑会 `Permission denied`。
+
 ### 影响面
 
 | 文件 | 改动 |
@@ -111,6 +135,10 @@ if fmt in ["txt", "pdf"]:
 | `webserver/resources/book/epubjs.html` | 补回缺失模板 |
 | `myreader-dist` | 删除 8 个悬空符号链接，`pack.sh` 收紧为断链必须为 0 |
 | `tests/test_meta_merge.py` | 新增 24 项用例 |
+| `tools/hotfix.sh` → `tools/hotfix-from-src.sh` | 改名去重 + `chmod +x` |
+| `tools/upgrade_from_upstream.sh` → `tools/upgrade-from-upstream-manual.sh` | 改名去重 + `chmod +x` |
+| 其余 14 个脚本 | 统一 `chmod +x` |
+| `INSTALL_GUIDE.md`、`scripts/README.md` | 同步改名 + 新增两套脚本的分工对照表 |
 
 ### 验证
 
