@@ -13,7 +13,7 @@
 | [`protect-custom.sh`](protect-custom.sh) | 跟随上游合并前后，保护 BOOK_NAV 与三语文案 | 不改运行环境，只读写源码文件 |
 | [`upgrade-upstream.sh`](upgrade-upstream.sh) | 上游 mybooks 发了新版，要跟 | 会。全链路，最后调 `upgrade.sh` 上线 |
 | [`watch-upstream.py`](watch-upstream.py) | 日常盯上游改动，**不等发版**。`--tags` 看有没有新版，`--between` 看两版之间改了什么 | 只读，只拉取上游仓库 |
-| [`hotfix.sh`](hotfix.sh) | **只改 Python 时用它，省掉十几分钟的镜像重建**。覆盖容器内 `webserver/` 并自动语法预检、可回滚 | 不动数据，只换代码文件 |
+| [`hotfix.sh`](hotfix.sh) | **只改 Python 时用它，省掉十几分钟的镜像重建**。覆盖容器内 `webserver/` 并自动语法预检、可回滚。文件来源是**部署包**，不是源码目录（见下表） | 不动数据，只换代码文件 |
 | [`migrate-audio-dirs.py`](migrate-audio-dirs.py) | 有声书音频从 `audios/<id>/` 搬进书目录 `.audio/`。默认预演，`--apply` 才动 | **会**。搬文件不可逆，先看清单再决定 |
 | [`test-audio-dirs.py`](test-audio-dirs.py) | 音频路径逻辑自测（假 cache + 临时目录，47 项） | 不改数据，只在 /tmp 里折腾 |
 
@@ -47,6 +47,20 @@ check-reader.sh      任何"阅读器不正常"的情况，先跑它再动手
 
 `upgrade-upstream.sh` 会在同目录、上一层 `scripts/`、以及 `/volume1/docker` 三处
 找 `protect-custom.sh`，所以两个必须一起拷贝，别只拿一个。
+
+## `tools/` 下有两个名字相近的脚本，别拿错
+
+历史上 `tools/` 和 `scripts/` 里存在同名但**用途完全不同**的脚本，容易搞混。
+4.6.0-16 起把 `tools/` 侧的两个都改了名，名字自身就说明了适用范围：
+
+| 你手里有什么 | 用哪个 | 它从哪取文件 | 用法 |
+|---|---|---|---|
+| 部署包 `.tar.gz`，没有源码 | `scripts/hotfix.sh` | 指定的**部署包**里解出来的 `.py` | `sh audiobook/scripts/hotfix.sh <包> [--restart]` |
+| 源码仓库（在改代码） | `tools/hotfix-from-src.sh` | **当前源码目录**里 mtime 变过的 `.py` | `sh tools/hotfix-from-src.sh [--frontend] [--dry-run]` |
+| 想全自动跟上游最新版 | `scripts/upgrade-upstream.sh` | 上游 GitHub release，全链路自动跑完 | `sh scripts/upgrade-upstream.sh <版本>` |
+| 想手工跟上游、逐文件看冲突 | `tools/upgrade-from-upstream-manual.sh` | 上游指定 ref，拉进独立 git 目录由你合并 | `sh tools/upgrade-from-upstream-manual.sh [ref]` |
+
+一句话记：**`scripts/` 面向拿到部署包的运维，`tools/` 面向改源码的开发者。**
 
 ## 出包：为什么必须用 pack.sh，不能自己 tar 一下
 

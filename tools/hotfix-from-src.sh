@@ -1,14 +1,23 @@
 #!/bin/sh
 # ============================================================
-# 热更新脚本：不重建镜像，把源码里的 .py / .vue 改动直接推进正在运行的容器
+# 热更新脚本（源码目录版）：不重建镜像，把**当前源码目录**里的 .py 改动
+# 直接推进正在运行的容器。
+#
+# ⚠ 与 scripts/hotfix.sh 的区别（两者同名历史遗留，已改名区分）：
+#   tools/hotfix-from-src.sh    ← 你在源码仓库里改代码时用。
+#                                  文件来源：当前工作目录（git 仓库）。
+#                                  用法：sh tools/hotfix-from-src.sh [--frontend] [--dry-run]
+#   scripts/hotfix.sh           ← 用户拿到部署包后打补丁时用。
+#                                  文件来源：指定的部署包 .tar.gz 解出后挑 .py。
+#                                  用法：sh audiobook/scripts/hotfix.sh <包> [--restart]
 #
 # 适用场景：改的是 Python 后端（settings.py、i18n.py、handlers、services）
 # 或想快速验证一处改动，不想等 docker compose build（那要跑 npm run build-spa）。
 #
 # 用法（在 audiobook 目录下）：
-#   sh tools/hotfix.sh             # 只推 Python 文件（快，1 分钟）
-#   sh tools/hotfix.sh --frontend  # 顺带提示前端改动无法热更
-#   sh tools/hotfix.sh --dry-run   # 只列出会推哪些文件，不动容器
+#   sh tools/hotfix-from-src.sh             # 只推 Python 文件（快，1 分钟）
+#   sh tools/hotfix-from-src.sh --frontend  # 顺带提示前端改动无法热更
+#   sh tools/hotfix-from-src.sh --dry-run   # 只列出会推哪些文件，不动容器
 #
 # 注意：
 #   * 前端（app/ 下的 .vue、locales/*.json）已编译进静态 dist，无法热替换，

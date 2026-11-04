@@ -1,6 +1,15 @@
 #!/bin/bash
 # =====================================================================
-# 上游 mybooks 更新后的升级脚本（git 补丁法）
+# 上游 mybooks 更新后的升级脚本（git 补丁法 · 手工合并）
+#
+# ⚠ 与 scripts/upgrade-upstream.sh 的区别（两者用途不同，别混）：
+#   scripts/upgrade-upstream.sh          ← **自动**：查上游最新 release，
+#                                          走拉取→合并→重建→迁移全链路，无人值守。
+#                                          适合"我就想跟到上游最新版"。
+#   tools/upgrade-from-upstream-manual.sh ← **手工**：把上游某个 ref 拉进
+#                                          独立 git 目录，让**你自己**解决冲突、
+#                                          逐文件确认我们的补丁层没被抹掉。
+#                                          适合"跟版本，但我要看清改了哪些"。
 #
 # 思路：本改版不是上游的"配置"，而是一份有十几个文件改动的 fork，
 # 直接用上游新代码覆盖会把我们的修改全部抹掉（封面修复、nginx 屏蔽、
@@ -22,7 +31,7 @@ UPSTREAM_REPO="https://github.com/PoxenStudio/mybooks.git"   # 上游仓库
 GIT_DIR_PATH="/volume1/docker/audiobook-git"
 
 # 不带参数时自动选上游最新的 v*.*.* 版本分支（正式版），而非 develop。
-# 显式传参则用传入的分支/tag：sh tools/upgrade_from_upstream.sh v4.5.1
+# 显式传参则用传入的分支/tag：sh tools/upgrade-from-upstream-manual.sh v4.5.1
 UPSTREAM_REF="${1:-}"
 
 export GIT_DIR="$GIT_DIR_PATH"

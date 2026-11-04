@@ -706,7 +706,11 @@ cd /volume1/docker && mv mybooks mybooks-retired-$(date +%Y%m%d)
 > 退役顺序有讲究：先 `docker compose down`（容器不用了）→ 再 `docker rmi`
 > （镜像占空间最多，几 GB）→ 目录最后删（数据无价，多留一阵没坏处）。
 
-### 上游版本更新后怎么升级（tools/upgrade_from_upstream.sh）
+### 上游版本更新后怎么升级（tools/upgrade-from-upstream-manual.sh）
+
+> **和 `scripts/upgrade-upstream.sh` 别搞混**
+> - `scripts/upgrade-upstream.sh` —— **自动**：查上游最新 release，拉取 → 合并 → 重建 → 迁移全链路跑完，无人值守。适合「我就想跟到上游最新版」。
+> - `tools/upgrade-from-upstream-manual.sh` —— **手工**（本节讲这个）：把上游某个 ref 拉进独立 git 目录，冲突由你自己解决、逐文件确认补丁层没被抹掉。适合「跟版本，但我要看清改了哪些」。
 
 **不要直接用上游新代码覆盖本站**——本站是带十几个文件改动的 fork（封面修复、
 nginx 扫描屏蔽、读者组模板、分类重整、MyReader 接入……），直接覆盖等于把移植
@@ -720,9 +724,9 @@ nginx 扫描屏蔽、读者组模板、分类重整、MyReader 接入……）�
 `v4.6.0`、`v4.5.1`、`v3.27.0`……截至本手册编写时最新正式分支是 **`v4.6.0`**。
 
 ```bash
-sh tools/upgrade_from_upstream.sh              # 不带参数 = 自动探测上游最新 v*.*.* 正式版分支（推荐）
-sh tools/upgrade_from_upstream.sh v4.6.0       # 指定跟上游 v4.6.0（推荐：正式版）
-sh tools/upgrade_from_upstream.sh v4.5.1       # 也可以跟任意历史版本
+sh tools/upgrade-from-upstream-manual.sh              # 不带参数 = 自动探测上游最新 v*.*.* 正式版分支（推荐）
+sh tools/upgrade-from-upstream-manual.sh v4.6.0       # 指定跟上游 v4.6.0（推荐：正式版）
+sh tools/upgrade-from-upstream-manual.sh v4.5.1       # 也可以跟任意历史版本
 ```
 
 三种常见写错：
@@ -762,12 +766,12 @@ cd /volume1/docker/audiobook
 
 # 1. （首次）脚本会自动初始化 git 仓库并提交基线
 #    ★ 仓库不在站点目录里，而在 /volume1/docker/audiobook-git/（站点外）★
-sh tools/upgrade_from_upstream.sh
+sh tools/upgrade-from-upstream-manual.sh
 
 # 2. 日常升级：不带参数即自动跟上游最新正式版分支；也可显式指定（写法见上文「参数怎么填」）
-sh tools/upgrade_from_upstream.sh              # 自动探测最新 v*.*.* 分支
-sh tools/upgrade_from_upstream.sh v4.6.0       # 显式指定版本分支
-sh tools/upgrade_from_upstream.sh develop      # 明确要跟开发进度时才用（不稳定）
+sh tools/upgrade-from-upstream-manual.sh              # 自动探测最新 v*.*.* 分支
+sh tools/upgrade-from-upstream-manual.sh v4.6.0       # 显式指定版本分支
+sh tools/upgrade-from-upstream-manual.sh develop      # 明确要跟开发进度时才用（不稳定）
 
 # 3. 有冲突时（脚本会停下并列出文件），逐个处理：
 git status                          # 看冲突清单（需要在 audiobook-git 目录，或带 GIT_DIR，见下）
@@ -967,15 +971,19 @@ calibre-webserver.db + audios 音频）。
 2. 源码目录随便换：`rm -rf audiobook` 后解压新包即可（数据在 `audiobook-data`，不受影响）。
 3. `sh scripts/deploy.sh` 重建。
 
-### 改一行代码不想等构建：热更新（`tools/hotfix.sh`）
+### 改一行代码不想等构建：热更新（`tools/hotfix-from-src.sh`）
+
+> **和 `scripts/hotfix.sh` 别搞混**——两个脚本功能相似但**文件来源不同**：
+> - `tools/hotfix-from-src.sh`（本节讲这个）：从**当前源码目录**（git 仓库）挑改过的 `.py` 推容器。你手里有源码、在改代码时用它。
+> - `scripts/hotfix.sh`：从**指定部署包** `.tar.gz` 解出后挑 `.py` 推容器。只有部署包、没有源码时用它，用法 `sh audiobook/scripts/hotfix.sh <包> [--restart]`。
 
 完整 `docker compose build` 最慢的一步是 `npm run build-spa`（前端编译，CPU 密集）。
 如果只改了 **Python 后端**，没必要为它等构建，用热更新把改动直接推进运行中的容器：
 
 ```bash
 cd /volume1/docker/audiobook
-sh tools/hotfix.sh --dry-run    # 先看会推哪些文件（对比容器内 mtime）
-sh tools/hotfix.sh              # 推送 + 只重启 tornado，1 分钟内生效
+sh tools/hotfix-from-src.sh --dry-run    # 先看会推哪些文件（对比容器内 mtime）
+sh tools/hotfix-from-src.sh              # 推送 + 只重启 tornado，1 分钟内生效
 ```
 
 脚本做的事：扫描 `webserver/`、`server.py`、`tools/` 下所有 `.py`，比对源码与容器内的
@@ -994,7 +1002,7 @@ mtime，只把**改过的**用 `docker cp` 推进去 → `chown mybooks` → 清
 镜像里的旧代码。所以它的定位是「先验证，再固化」：
 
 ```bash
-sh tools/hotfix.sh --frontend   # 验证后端（同时提醒前端未生效）
+sh tools/hotfix-from-src.sh --frontend   # 验证后端（同时提醒前端未生效）
 docker compose build && docker compose up -d   # 验证通过后固化进镜像
 ```
 
