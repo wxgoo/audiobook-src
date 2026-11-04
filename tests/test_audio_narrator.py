@@ -198,16 +198,29 @@ class TestScanSidecarAudioWritesNarrator(unittest.TestCase):
         self.assertIn("_extract_audio_metadata", src)
 
     def test_narrator_reading_is_best_effort(self):
-        """读标签失败不能让整个书目导入失败。"""
+        """读标签失败不能让整个书目导入失败。
+
+        判定方式：定位 `_extract_audio_metadata(` 这行**调用**（不是注释里的
+        提及），从包含它的上一个 `try:` 起算，到方法末尾之间必须出现
+        `except`。这样不依赖源码里的注释措辞。
+        """
         import inspect
+        import re
 
         from webserver.services import scan_service as ss
 
         src = inspect.getsource(ss.ScanService._sync_sidecar_audio)
-        # 补演播者那段必须包在 try/except 里
-        idx = src.find("attach_narrator")
-        segment = src[:idx]
-        self.assertIn("try:", segment)
+        # 只认真正的调用形式，带左括号，避开注释/字符串里的裸词
+        idx = src.find("_extract_audio_metadata(")
+        self.assertGreater(idx, -1, "方法里没有 _extract_audio_metadata( 调用")
+
+        head = src[:idx]
+        try_pos = head.rfind("try:")
+        self.assertGreater(try_pos, -1, "补演播者的调用没被 try 包住")
+
+        # try 块必须闭合，且 except 要在方法体内（不能在 try 之前）
+        tail = src[try_pos:]
+        self.assertIn("except", tail, "有 try 但没 except")
 
 
 if __name__ == "__main__":
