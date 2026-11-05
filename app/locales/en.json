@@ -1693,7 +1693,8 @@
     "deleteSuccess": "Delete successful!",
     "deleteFailed": "Delete failed, please try again later",
     "showLyrics": "Subtitles",
-    "showCover": "Cover"
+    "showCover": "Cover",
+    "playError": "Failed to play track {n}: the file may still be generating or be corrupted."
   },
   "syslog": {
     "title": "System Log",

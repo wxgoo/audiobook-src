@@ -1686,7 +1686,8 @@
     "deleteSuccess": "刪除成功！",
     "deleteFailed": "刪除失敗，請稍後重試",
     "showLyrics": "看字幕",
-    "showCover": "看封面"
+    "showCover": "看封面",
+    "playError": "第 {n} 集播放失敗：檔案可能還在產生或已損毀。"
   },
   "syslog": {
     "title": "系統日誌",

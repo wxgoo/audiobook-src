@@ -506,6 +506,7 @@ export default {
       }
     };
     window.addEventListener('keyup', this.escKeyListener);
+    this._startWatchdog();
   },
 
   beforeDestroy() {
@@ -513,8 +514,17 @@ export default {
     this.pushServerProgress(true);  // 离开页面前把进度推到服务端（fire-and-forget）
     this.clearSleepTimer();
     this.stopProgressSaving();
+    this._stopWatchdog();
+    this._wantPlay = false;
     if (this.$refs.audioPlayer) {
-      this.$refs.audioPlayer.pause();
+      // §顺序：先清 src 再 load()§ 只调 pause() 的话，进行中的媒体拉取不会
+      // 中止，元素在页面销毁后还持有连接和解码器（网络盘上是很贵的资源）。
+      const player = this.$refs.audioPlayer;
+      player.pause();
+      try {
+        player.removeAttribute('src');
+        player.load();   // 必须 load()，否则已发出的请求不会被中止
+      } catch (e) { /* 忽略 */ }
     }
     window.removeEventListener('keyup', this.escKeyListener);
   },
@@ -554,9 +564,28 @@ export default {
       // 任何数据）就 seek——那时 seek 会立刻发一个中段 Range 请求，网络盘
       // 环境下可能迟迟不回，元素永远 rs=1。等 canplay（rs>=3，真有数据了）
       // 再跳。play() 由调用方/用户手势触发，不在这里抢。
+      //
+      // §不能"试一次就扔"§ 这一版曾经只绑一次 canplay：只要那一下 readyState
+      // 还没到 3（canplay 抢在数据到位前触发、或者中途被 seek/换源打断成 1），
+      // applyPosition 就直接 return，监听器已经 auto-remove，续播位置永久丢失。
+      // 用户看到的是「进度条 0:00，点播放从头开始」——而且这次失败没有任何日志。
+      // 现在改成带重试的版本：失败不吞掉，退避重试，并给一个硬上限。
+      let tries = 0;
       const applyPosition = () => {
         if (this.currentTrackIndex !== index) return;
-        if (player.readyState < 3) return; // 数据未到位，由 canplay 再次触发
+        // 目标位置已经被别处设好了（用户已拖动过进度条），别再抢方向盘
+        if (this._positionAppliedFor === index
+            && Math.abs((player.currentTime || 0) - targetTime) > 2) {
+          return;
+        }
+        if (player.readyState < 3) {
+          // 数据还没到。别放弃：canplay 之后紧跟的 canplaythrough 会再来一次，
+          // 这里再兜一层定时重试，覆盖「canplay 根本没再触发」的情况。
+          if (tries++ < 20) {
+            setTimeout(applyPosition, 250);
+          }
+          return;
+        }
         try {
           if (targetTime > 0 && isFinite(player.duration)
               && targetTime < player.duration - 1) {
@@ -568,6 +597,7 @@ export default {
               this.progress = (this.currentTime / this.duration) * 100;
             }
           }
+          this._positionAppliedFor = index;
         } catch (e) { /* 忽略 */ }
         this.syncDurationFromAudio(audio, player);
       };
@@ -583,11 +613,17 @@ export default {
           applyPosition();
         } else {
           player.addEventListener('canplay', applyPosition, { once: true });
+          player.addEventListener('canplaythrough', applyPosition, { once: true });
+          setTimeout(applyPosition, 400);
         }
         return;
       }
 
+      this._positionAppliedFor = -1;
       player.addEventListener('canplay', applyPosition, { once: true });
+      player.addEventListener('canplaythrough', applyPosition, { once: true });
+      // 网络盘上 canplay 常常来得比数据早，先排一次兜底，别把定位赌在事件上
+      setTimeout(applyPosition, 800);
       player.src = audio.url;
     },
 
@@ -612,25 +648,51 @@ export default {
         this.savePlaybackPosition();
 
         this.loadTrack(index);
-        // 自动开始播放新选择的音频
-        this.$nextTick(() => {
-          this.safePlay();
-        });
+        // §等元素真的能动再 play§ 换集后 src 刚赋值，$nextTick 时 readyState
+        // 还是 0，此刻 play() 要么被浏览器判成 NotAllowedError/AbortError 直接
+        // 丢弃，要么 pending 到数据来了才开始——但用户中途点一下暂停就把它打断，
+        // 于是既没播也没暂停，点多少下都没反应。这里等到 canplay 再播，并且
+        // 认「播放意图」：只要用户是想播的，数据到了就一定要播起来。
+        this._wantPlay = true;
+        this._playWhenReady(index);
       } else {
         // 如果点击的是当前正在播放的音频，则切换播放/暂停状态
         this.togglePlay();
       }
     },
 
+    // 数据就绪后执行播放意图。index 用于识别「这期间用户又换集了」的情况。
+    _playWhenReady(index, tries = 0) {
+      const player = this.$refs.audioPlayer;
+      if (!player || !this._wantPlay) return;
+      if (index !== undefined && index !== this.currentTrackIndex) return;
+      if (player.readyState >= 3) {
+        this.safePlay();
+        return;
+      }
+      if (tries >= 40) return; // 10 秒还起不来就别一直重试
+      setTimeout(() => this._playWhenReady(index, tries + 1), 250);
+    },
+
     togglePlay() {
       const player = this.$refs.audioPlayer;
       if (!player) return;
 
-      if (this.isPlaying) {
-        player.pause();
+      // §以元素为准，不以 isPlaying 为准§ isPlaying 靠 play/pause 事件异步
+      // 回写。点得快一点（或换集后事件还没到）时，isPlaying 和元素真实状态
+      // 是反的，于是「想播放」变成「再 pause 一次」——按钮闪一下就没声音，
+      // 表现就是"点不动"。直接读 player.paused 是唯一可靠的判断依据。
+      if (!player.paused) {
+        this.pauseAndClearIntent();
       } else {
         this.safePlay();
       }
+    },
+
+    pauseAndClearIntent() {
+      this._wantPlay = false;
+      const player = this.$refs.audioPlayer;
+      if (player) player.pause();
     },
 
     // §统一的安全播放§ 裸调 play() 不接 Promise 的后果是：被中断时抛
@@ -639,13 +701,21 @@ export default {
     safePlay() {
       const player = this.$refs.audioPlayer;
       if (!player || !player.src) return;
+      this._wantPlay = true;
       const p = player.play();
       if (!p || !p.then) return;
       p.catch((err) => {
         const name = err && err.name;
-        if (name === 'AbortError' || name === 'NotAllowedError') {
-          // AbortError：被新的加载/定位打断，属正常
-          // NotAllowedError：浏览器自动播放策略，等用户手势
+        if (name === 'NotAllowedError') {
+          // 浏览器自动播放策略拦下，需要用户手势；清掉意图，别在后面偷偷重试
+          this._wantPlay = false;
+          return;
+        }
+        if (name === 'AbortError') {
+          // 被新的加载/定位打断：只要还想播，就让 _playWhenReady 接着把它拉起来
+          if (this._wantPlay) {
+            this._playWhenReady(this.currentTrackIndex);
+          }
           return;
         }
         console.error('[AUDIO] play() 失败', name, err && err.message);
@@ -794,6 +864,14 @@ export default {
         console.error('[AUDIO] 媒体错误', err.code, err.message,
           '第' + (this.currentTrackIndex + 1) + '集', this.currentAudio && this.currentAudio.url);
         this.isPlaying = false;
+        this._wantPlay = false;
+        // 报给用户，而不是留一个"点了没反应"的播放器。code 3/4 是解码/格式
+        // 不支持：网络盘上常见于文件还在生成、或者 .m4a 只写了一半。
+        if (this.$toast && typeof this.$toast.error === 'function') {
+          this.$toast.error(
+            this.$t('audio.playError', { n: this.currentTrackIndex + 1 })
+          );
+        }
       }
     },
 
@@ -803,6 +881,47 @@ export default {
       if (this._stalledLogged) return;
       this._stalledLogged = true;
       console.warn('[AUDIO] 网络停滞 stalled，第' + (this.currentTrackIndex + 1) + '集');
+    },
+
+    // §卡死看门狗§ 点播放后如果 8 秒还没进到 rs>=3，或者停在「已请求播放但
+    // 时间不走」，就重来一次：清掉当前加载（load() 会中止进行中的拉取），
+    // 再从头 loadTrack。网络盘上 Range 请求有时会挂在那里不回，元素永远
+    // rs=1，表现为「进度条 0:00、按播放没反应、也不报错」。
+    _startWatchdog() {
+      this._stopWatchdog();
+      this._watchdog = setInterval(() => {
+        const player = this.$refs.audioPlayer;
+        if (!player || !this._wantPlay) return;
+        // 正在正常播放：时间在走，不用管
+        if (!player.paused && player.currentTime > (this._wdLastTime || 0) + 0.05) {
+          this._wdLastTime = player.currentTime;
+          this._wdStuckTicks = 0;
+          return;
+        }
+        this._wdLastTime = player.currentTime;
+        if (player.readyState >= 3) {
+          this._wdStuckTicks = 0;
+          return;
+        }
+        this._wdStuckTicks = (this._wdStuckTicks || 0) + 1;
+        if (this._wdStuckTicks >= 4) { // 4 × 2000ms
+          this._wdStuckTicks = 0;
+          console.warn('[AUDIO] 卡死看门狗触发，重新加载第' + (this.currentTrackIndex + 1) + '集');
+          const keepReload = this.currentTrackIndex;
+          try { player.load(); } catch (e) { /* 忽略 */ }
+          this.loadTrack(keepReload);
+          this._playWhenReady(keepReload);
+        }
+      }, 2000);
+    },
+
+    _stopWatchdog() {
+      if (this._watchdog) {
+        clearInterval(this._watchdog);
+        this._watchdog = null;
+      }
+      this._wdLastTime = 0;
+      this._wdStuckTicks = 0;
     },
 
     onPlay() {

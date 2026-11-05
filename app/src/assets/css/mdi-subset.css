@@ -478,10 +478,6 @@
   content: "\F0190";
 }
 
-.mdi-content-duplicate::before {
-  content: "\F0191";
-}
-
 .mdi-content-save::before {
   content: "\F0193";
 }
@@ -624,10 +620,6 @@
 
 .mdi-file-lock-outline::before {
   content: "\F1030";
-}
-
-.mdi-file-music-outline::before {
-  content: "\F0E2A";
 }
 
 .mdi-file-pdf-box::before {
