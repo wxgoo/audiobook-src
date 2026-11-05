@@ -23,14 +23,22 @@
             class="elevation-1"
         >
             <template v-slot:item.age="{ item }">
-                <!-- r11：库里存出生年份，年龄实时算出——否则跨年不会长大 -->
+                <!-- r11：库里存出生年份，年龄实时算出——否则跨年不会长大。
+                     未填（birth_year=0）不再显示「未填」chip：一列黄标太吵，
+                     且「显示了却不给改」没有意义。改成灰色「—」，点一下
+                     直接弹出补填对话框——不显示任何占位文案，但可改。 -->
                 <span v-if="item.birth_year">
                     {{ item.age }}
                     <span class="grey--text text-caption">({{ item.birth_year }})</span>
                 </span>
-                <v-chip v-else x-small color="warning" text-color="white">
-                    {{ $t('admin.users.age_unset') }}
-                </v-chip>
+                <a
+                    v-else-if="!item.is_admin"
+                    class="grey--text"
+                    style="cursor: pointer; text-decoration: none"
+                    :title="$t('admin.users.change_age')"
+                    @click="openChangeAgeDialog(item)"
+                >—</a>
+                <span v-else class="grey--text">—</span>
             </template>
             <template v-slot:item.total_reading_seconds="{ item }">
                 {{ (item.total_reading_seconds / 3600).toFixed(1) }}
@@ -694,6 +702,9 @@ export default {
             .finally(() => { this.changingPassword = false; });
         },
         openChangeAgeDialog(item) {
+            // 管理员行不可补填出生年份（菜单入口已有 v-if 拦着，这里是给
+            // 列表「—」点击入口兜底；后端白名单同样会拦）。
+            if (item.is_admin) return;
             this.changeAgeUserId = item.id;
             this.changeAge = { value: item.birth_year ? String(item.birth_year) : "" };
             this.changeAgeError = "";
