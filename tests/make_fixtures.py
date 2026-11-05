@@ -583,6 +583,22 @@ def build_users_db(target):
     log("写出 %s (%.0f KB)" % (target, os.path.getsize(target) / 1024))
 
 
+def build_upload_samples():
+    """造 test_upload.py 用的两个 epub 样例。
+
+    这两个文件以前也不在版本库里，所以 test_upload 一跑就
+    FileNotFoundError: tests/cases/old.epub。
+    """
+    for name in ("old.epub", "new.epub"):
+        path = os.path.join(CASES, name)
+        if os.path.exists(path):
+            continue
+        data = _minimal_epub("Upload Sample %s" % name.split(".")[0], "Fixtures")
+        with open(path, "wb") as f:
+            f.write(data)
+        log("写出 %s (%d 字节)" % (path, len(data)))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="覆盖已存在的夹具")
@@ -605,6 +621,7 @@ def main():
     try:
         build_metadata_db(meta)
         build_users_db(users)
+        build_upload_samples()
     except Exception as e:
         print("✗ 失败: %s" % e)
         import traceback
