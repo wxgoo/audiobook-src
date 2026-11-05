@@ -408,32 +408,45 @@ export default {
                 this.audio_loading = false;
                 this.duration = el.duration || 0;
 
-                // 续播位置先记下，但【不在这里 seek】：从 0 直接播是整段 200
-                // 请求、一定能出声；而「还没缓冲任何数据就 seek」会让浏览器
-                // 立刻发一个中段 Range 请求，某些环境（nginx+网络盘）下这个
-                // 请求会迟迟不回，元素永远停在 rs=1（有元数据没数据），表现
-                // 就是「进度不动、也没声音」。改成先 play，等缓冲真正到了
-                // （canplay / rs>=3）再跳到续播位置——那时浏览器对文件结构
-                // 已经有概念，seek 又快又稳。
+                // §续播位置在这里落地，不等 canplay§（4.6.0-19 r7）
+                // 旧实现把 seek 拖到 canplay：先从头开播，播出声之后再跳到
+                // 续播位置。用户看到的就是「点一下就转个圈，然后才从中间开始」——
+                // 因为播放中的 seek 会重新发起 Range 请求、重新填缓冲。
+                // 现在 loadedmetadata 已经拿到 duration（rs=1），此刻直接定位：
+                // 播放还没开始，浏览器会带着目标位置去取数据，一次到位，没有
+                // 「先播 0:00 再跳」的中间态。
+                // 之前担心的「太早 seek 会挂死」是旧实现的另一个 bug 造成的：
+                // 它 seek 完又用 timer/事件把 currentTime 改回去，两边互相打断。
+                // 当前实现每次播放都新建独立元素，不存在这种干扰。
                 const saved = this.resumeMap[index];
                 if (saved && el.duration && saved >= 5 && saved < el.duration - 3) {
-                    pendingSeek = Math.floor(saved);
-                    this.currentTime = pendingSeek;
-                    this.sliderPct = (pendingSeek / el.duration) * 100;
+                    const pos = Math.floor(saved);   // 对齐整秒，避免 AAC 从帧中间解码爆音
+                    try {
+                        el.currentTime = pos;
+                    } catch (e) { /* 忽略 */ }
+                    // 同时登记兜底目标：某些浏览器此时 seekable 还是 0~0，
+                    // 赋值会被静默丢掉（currentTime 仍是 0）。等数据到位后
+                    // applyPendingSeek 会检查并补上。没有续播位置时保持 0，
+                    // 兜底函数第一行就 return，不会干扰从头播放。
+                    pendingSeek = pos;
+                    this.currentTime = pos;
+                    this.sliderPct = (pos / el.duration) * 100;
                 }
 
                 this._safePlay(index);
             });
 
-            // 数据真正到了（可以往后播了）再落地续播 seek。对齐整秒，避免
-            // AAC/m4a 从帧中间解码出爆音。
+            // 兜底：个别浏览器在 loadedmetadata 时 seek 会被丢掉（seekable 还是
+            // 0~0），此时 currentTime 读回仍是 0。等数据真正到位（rs>=3）检查
+            // 一次，没落到位才补——已生效的情况不动，避免二次 seek 触发重新
+            // 缓冲（那正是「转个圈才开始」的来源）。
             const applyPendingSeek = () => {
                 if (!alive() || !pendingSeek) return;
-                if (el.readyState < 3) return; // 数据还没到位，再等等
+                if (el.readyState < 3) return;   // 数据没到位，等 canplay/playing 再判
                 const pos = pendingSeek;
                 pendingSeek = 0;
                 try {
-                    if (pos < el.duration - 3) {
+                    if (Math.abs(el.currentTime - pos) > 2 && pos < el.duration - 3) {
                         el.currentTime = pos;
                         this.currentTime = pos;
                         this.sliderPct = (pos / el.duration) * 100;
