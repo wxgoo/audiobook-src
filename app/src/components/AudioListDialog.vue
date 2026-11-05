@@ -146,6 +146,7 @@ export default {
         // 与 _el 一样挂在实例上即可。
         this._lastAudiosSig = null;
         this._diagTaps = 0;
+        this._retrying = false;
     },
     mounted() {
         this.loadResumeMap();
@@ -385,6 +386,7 @@ export default {
             this.duration = 0;
             this.sliderPct = 0;
             this.audio_paused = false;
+            this._retrying = false;  // 手动发起的是全新尝试
 
             const el = new Audio();
             this._el = el;
@@ -441,18 +443,26 @@ export default {
             el.addEventListener('canplay', applyPendingSeek);
             el.addEventListener('playing', applyPendingSeek);
 
-            // §停滞看门狗§ play() 之后 6 秒还没拿到可播数据（rs<3），打日志。
-            // 只打一次，用来区分「网络/代理卡」还是「逻辑卡」。
+            // §停滞看门狗§ play() 之后 6 秒还没拿到可播数据（rs<3）：
+            // 4.6.0-19 起不再只打日志——自动重试一次：彻底拆除当前实例
+            // （_teardown 现在会 load() 中止旧拉取）再新起一个元素重播。
+            // 「新元素撞上没被中止的旧拉取」这类环境性卡死在这里自愈；
+            // 重试仍卡就放弃（_retrying 守卫，不无限循环），只打日志。
             const watchdog = setTimeout(() => {
                 if (alive() && !el.paused && el.readyState < 3) {
                     // eslint-disable-next-line no-console
-                    console.warn('[AUDIO] 数据停滞：rs=' + el.readyState
+                    console.warn('[AUDIO] 数据停滞，自动重试一次：rs=' + el.readyState
                         + ' ns=' + el.networkState + ' buffered='
                         + (el.buffered.length ? el.buffered.end(0).toFixed(1) : '0')
                         + ' url=' + audioItem.url);
+                    this._retryPlay(audioItem, index);
                 }
             }, 6000);
             el.addEventListener('ended', () => clearTimeout(watchdog), { once: true });
+            el.addEventListener('playing', () => {
+                clearTimeout(watchdog);
+                this._retrying = false;  // 真正出声了，恢复重试资格
+            }, { once: true });
 
             // canplay 只负责收 loading 态，绝不在这里 seek
             el.addEventListener('canplay', () => {
@@ -510,6 +520,16 @@ export default {
                 }
             }
         },
+        // §停滞自愈§（4.6.0-19）数据停滞 6 秒时由看门狗调用：拆掉当前实例
+        // （含 load() 中止旧拉取）后完整重走一遍新建流程。_retrying 保证每次
+        // 用户手势只自动重试一次，重试仍失败就停手（避免无限重建循环）。
+        _retryPlay(audioItem, index) {
+            if (this._retrying) return;
+            this._retrying = true;
+            this._teardown();
+            this.playAudioFile(audioItem, index);
+        },
+
         _safePlay(index) {
             const el = this._el;
             if (!el) return;
@@ -543,9 +563,19 @@ export default {
                 this._el = null;
                 try {
                     el.pause();
-                    // 只清 src 不调 load()：load() 会立刻重新初始化一遍解码器，
-                    // 与紧接着新建的 Audio 叠加，AAC 上就是爆音/电流声。
+                    // §摘 src 属性不等于中止拉取§（4.6.0-19）按 HTML 规范，
+                    // 只有调用 load() 才会跑「媒体元素加载算法」去中止进行中的
+                    // 资源拉取。旧实现只 removeAttribute('src')：preload=auto 的
+                    // 元素暂停后仍在后台缓冲，连接和解码器一直被占；SPA 内离开
+                    // 详情页再进来，新元素请求同一 URL 时撞上这个没被中止的旧
+                    // 拉取（部分媒体缓存被旧元素持有），表现就是「播放按钮能点、
+                    // 声音卡住不动，必须 Ctrl+F5 整页重载」。摘属性后调 load()
+                    // 才是规范的中止姿势。延后 250ms 执行，避免旧解码器重置与
+                    // 紧跟着新建的 Audio 初始化叠在一起（AAC 上曾观察到爆音）。
                     el.removeAttribute('src');
+                    setTimeout(() => {
+                        try { el.load(); } catch (e) { /* 元素可能已被回收 */ }
+                    }, 250);
                 } catch (e) { /* 忽略 */ }
             }
             this.playing_audio_index = null;
