@@ -39,6 +39,31 @@ from webserver.constants import COLUMN_EXT_LINK, CUSTOM_COVER_IMAGE, COLUMN_DYNA
 from webserver.constants import COLUMN_LOCATION, COLUMN_CATALOG, COLUMN_AUTHOR_LOCKED, COLUMN_NARRATOR
 from webserver.version import VERSION
 
+
+def should_check_db_structure(conf, version):
+    """启动时是否需要检查/升级表结构。
+
+    **永远是 True。** 这不是偷懒，是因为「用版本号判断表结构新旧」这个
+    思路本身就是错的：
+
+    - 我们出包时 `VERSION` 经常不动（r9 → r11 一直是 `v4.8.0`），
+      但模型里加了列。版本号相同 → 判定「不是升级」→ 整块迁移被跳过
+      → 任何 `SELECT readers.*` 直接 `no such column`。
+      **r11 在 NAS 上就是这么挂的（2026-11-05）。**
+    - 反向也会错：只改版本号、没改模型，白跑一遍迁移（无害但没必要）。
+
+    所以判定依据应该是「表结构实际是什么样」，而不是「版本号字符串」。
+    而 `adjust_*_table()` 里每一步都是 `if "列名" not in columns` 的
+    **幂等检查**，跑一遍的代价只是几次 `PRAGMA table_info`（毫秒级），
+    跑与不跑之间没有性能上的取舍。
+
+    保留这个函数而不是直接内联 `need_check_db=True`，是为了留一个
+    可测、可注释、可被测试钉住的接缝——免得日后有人「优化」回
+    `!= VERSION`。
+    """
+    return True
+
+
 CONF = loader.get_settings()
 define("host", default="", type=str, help=_("The host address on which to listen"))
 define("port", default=8080, type=int, help=_("The port on which to listen."))
@@ -439,7 +464,10 @@ def make_app():
         ),
     })
 
-    is_upgrade = CONF.get("installed_version", "") != VERSION
+    # 是否检查表结构的判定。**注意不要退回 `installed_version != VERSION`**：
+    # 那个写法在「版本号没变、但模型加了列」时会跳过整块迁移，r11 就是这样
+    # 在 NAS 上报 `no such column: readers.birth_year` 的。详见 helper。
+    is_upgrade = should_check_db_structure(CONF, VERSION)
     # 注意：这里刻意不用 f-string 内嵌同种引号（PEP 701，仅 Python 3.12+ 支持），
     # 否则 Python 3.11 及更早版本会报 SyntaxError，本地开发和 CI 都跑不起来。
     _installed = CONF.get("installed_version", "NONE")
@@ -656,7 +684,9 @@ def main():
         sockets = startup_status.bind_service_sockets(options.port, options.host)
     if sockets:
         steps = ["database", "calibre", "plugins"]
-        if CONF.get("installed_version", "") != VERSION:
+        # 与上面 is_upgrade 用同一个判定，否则会出现「状态页不显示迁移步骤，
+        # 但迁移其实在跑」——启动页停在 90% 不动，用户以为卡死就重启。
+        if should_check_db_structure(CONF, VERSION):
             steps += list(startup_status.UPGRADE_STEPS)
         steps.append("services")
         if need_sync_migration:

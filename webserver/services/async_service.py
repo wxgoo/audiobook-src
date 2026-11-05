@@ -106,26 +106,30 @@ class AsyncService(metaclass=SingletonType):
         # alter table as needed
         if need_check_db and self.session is not None:
             logging.info("[AsyncService] Need to check db table.")
-            # Alter the item table to add a new bool column sole if it doesn't exist
-            try:
-                with upgrade_step("db_items"):
-                    need_sync_item_time, changed = self.adjust_item_table()
-                with upgrade_step("db_readers"):
-                    reader_changed = self.adjust_reader_table()
-                with upgrade_step("db_scanfiles"):
-                    scanfile_changed = self.adjust_scanfile_table()
-                with upgrade_step("db_readings"):
-                    self.adjust_readings_table()
-                with upgrade_step("db_booklists"):
-                    self.adjust_booklist_table()
-                with upgrade_step("db_audio_playback"):
-                    self.adjust_audio_playback_table()
-                changed = changed or reader_changed or scanfile_changed or True  # readings index creation is idempotent but must always be committed
-                if changed:
+            # 每一步独立提交。以前是整块包在一个 try 里、最后一次 commit，
+            # 于是任意一步抛异常就 rollback **全部**已做的改动：
+            # r11 的复现里 `adjust_item_table` 因为 items 表缺失抛错，
+            # 连带把已经补好的 readers.birth_year 一起回滚了，启动后仍然
+            # `no such column`。ALTER TABLE 本身是幂等的，逐步提交没有副作用。
+            steps_ok = []
+            for step_name, fn in (
+                ("db_items", self._step_item_table),
+                ("db_readers", self._step_reader_table),
+                ("db_scanfiles", self._step_scanfile_table),
+                ("db_readings", self._step_readings_table),
+                ("db_booklists", self._step_booklist_table),
+                ("db_audio_playback", self._step_audio_playback_table),
+            ):
+                try:
+                    with upgrade_step(step_name):
+                        fn()
                     self.session.commit()
-            except Exception as err:
-                logging.warning("Failed to alter tables: %s", err)
-                self.session.rollback()
+                    steps_ok.append(step_name)
+                except Exception as err:
+                    logging.warning("[AsyncService] step %s failed: %s", step_name, err)
+                    self.session.rollback()
+            need_sync_item_time = getattr(self, "_need_sync_item_time", False)
+            logging.info("[AsyncService] table steps done: %s", ",".join(steps_ok))
         if self.session is not None:
             try:
                 self.ensure_readings_indexes()
@@ -142,6 +146,24 @@ class AsyncService(metaclass=SingletonType):
         # logging.info("<%s> setup: db=%s, session=%s", self, self.db, self.session)
         logging.info("AsyncService setup completed")
         return need_sync_item_time
+
+    def _step_item_table(self):
+        self._need_sync_item_time, _changed = self.adjust_item_table()
+
+    def _step_reader_table(self):
+        self.adjust_reader_table()
+
+    def _step_scanfile_table(self):
+        self.adjust_scanfile_table()
+
+    def _step_readings_table(self):
+        self.adjust_readings_table()
+
+    def _step_booklist_table(self):
+        self.adjust_booklist_table()
+
+    def _step_audio_playback_table(self):
+        self.adjust_audio_playback_table()
 
     def adjust_item_table(self):
         result = self.session.execute(text("""
