@@ -2244,15 +2244,21 @@ export default {
                 return;
             }
 
-            // §详情页的入口一律进播放页§
-            // 以前这里有两条分支：顶部按钮有音频时跳 /audio/<id>，详情页下方的
-            // 「有声书」卡片却去开内嵌弹窗，于是同一个页面里两个入口行为不一致，
-            // 用户点下方那个会进入老的弹窗播放器（seek 卡死、状态互相打断）。
-            // 现在统一：只要有音频就去播放页；没有音频才走 EPUB 转换。
-            // 「已经有音频」时不要再退回去弹 dialog_audiolist——那条路径只在
-            // audios 状态为 PROCESSING 时才有意义，见下面的分支。
+            // §两个入口的分工（按用户要求定死）§
+            // 顶部按钮（switchToAudioPlayer）：跳 /audio/<id> 全功能播放页。
+            // 详情页下方「有声书」卡片（这里）：打开内嵌弹窗，就地试听/看列表，
+            // 不离开详情页。之前一度把两条入口统一跳播放页，用户明确反馈：
+            // 「下方这个应该弹窗，不是跟顶部一样打开一个页面」。
+            // 弹窗的播放卡死问题已在 AudioListDialog 内部修（teardown 中止
+            // 拉取 + _retryPlay 守卫 + 看门狗同款进展制恢复），见 cb64c08/
+            // c7c0811/8ca8ba5。
             if (this.hasAudio) {
-                this.$router.push("/audio/" + this.book.id);
+                this.dialog_audiolist = !this.dialog_audiolist;
+                if (this.dialog_audiolist && this.audios.status === this.AUDIO_STATUS.PROCESSING) {
+                    this.startAudioProgressPolling();
+                } else {
+                    this.stopAudioProgressPolling();
+                }
                 return;
             }
 

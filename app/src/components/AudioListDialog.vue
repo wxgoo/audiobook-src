@@ -443,17 +443,19 @@ export default {
             el.addEventListener('canplay', applyPendingSeek);
             el.addEventListener('playing', applyPendingSeek);
 
-            // §停滞看门狗§ play() 之后 6 秒还没拿到可播数据（rs<3）：
-            // 4.6.0-19 起不再只打日志——自动重试一次：彻底拆除当前实例
-            // （_teardown 现在会 load() 中止旧拉取）再新起一个元素重播。
-            // 「新元素撞上没被中止的旧拉取」这类环境性卡死在这里自愈；
+            // §停滞看门狗（进展制）§ play() 之后 6 秒还没拿到可播数据（rs<3）
+            // 时不要急着重试——网络盘上正常加载也可能超过 6 秒。只有这 6 秒里
+            // 「字节一点都没到」（buffered 没长）才判定真停滞：自动重试一次，
+            // 彻底拆除当前实例（_teardown 会 load() 中止旧拉取）再新起元素重播。
             // 重试仍卡就放弃（_retrying 守卫，不无限循环），只打日志。
+            const bufAtStart = el.buffered.length ? el.buffered.end(el.buffered.length - 1) : 0;
             const watchdog = setTimeout(() => {
-                if (alive() && !el.paused && el.readyState < 3) {
+                const bufNow = el.buffered.length ? el.buffered.end(el.buffered.length - 1) : 0;
+                if (alive() && !el.paused && el.readyState < 3 && bufNow <= bufAtStart) {
                     // eslint-disable-next-line no-console
-                    console.warn('[AUDIO] 数据停滞，自动重试一次：rs=' + el.readyState
+                    console.warn('[AUDIO] 数据停滞（buffered 零增长），自动重试一次：rs=' + el.readyState
                         + ' ns=' + el.networkState + ' buffered='
-                        + (el.buffered.length ? el.buffered.end(0).toFixed(1) : '0')
+                        + (bufNow ? bufNow.toFixed(1) : '0')
                         + ' url=' + audioItem.url);
                     this._retryPlay(audioItem, index);
                 }
