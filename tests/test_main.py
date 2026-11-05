@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 
+import asyncio
 import base64
 import json
 import logging
@@ -48,9 +49,25 @@ BIDS = list(range(1,6))
 
 def setup_server():
     global _app
-    # copy new db
-    shutil.copyfile(testdir+"/cases/users.db", testdir+"/library/users.db")
-    shutil.copyfile(testdir+"/cases/metadata.db", testdir+"/library/metadata.db")
+    # 夹具是**整个库目录**，不只是 metadata.db：calibre 把每本书的格式文件
+    # 和封面存在 <库根>/<作者>/<书名 (id)>/ 下，只复制 db 的话 /api/book/1.epub
+    # 会 404（库里记着有书，磁盘上没文件）。
+    # users.db 连同 -wal/-shm 一起清掉：残留的 WAL 会把旧事务回放到新库上，
+    # 表现成「刚复制的库里表不见了」。
+    libdir = testdir + "/library"
+    if os.path.isdir(testdir + "/cases/library"):
+        if os.path.exists(libdir):
+            shutil.rmtree(libdir)
+        shutil.copytree(testdir + "/cases/library", libdir)
+    else:
+        # 老夹具（只有两个 db 文件、没有书文件）时退回到逐文件复制
+        os.makedirs(libdir, exist_ok=True)
+        shutil.copyfile(testdir + "/cases/metadata.db", libdir + "/metadata.db")
+    shutil.copyfile(testdir + "/cases/users.db", libdir + "/users.db")
+    for suffix in ("-wal", "-shm"):
+        p = libdir + "/users.db" + suffix
+        if os.path.exists(p):
+            os.remove(p)
 
     # set env
     main.options.with_library = testdir + "/library/"
@@ -65,6 +82,9 @@ def setup_server():
     main.CONF["nuxt_env_path"] = "/tmp/.env.text"
     main.CONF["installed"] = True
     main.CONF["INVITE_MODE"] = False
+    # 注册开关：ALLOW_REGISTER 默认 False（生产默认关闭注册），
+    # 而 TestUser.test_login / TestUserSignUp.test_signup 都要走注册流程。
+    main.CONF["ALLOW_REGISTER"] = True
     main.CONF["user_database"] = "sqlite:///%s/library/users.db" % testdir
     # main.CONF["db_engine_args"] = {"echo": True}
     if _app is None:
@@ -255,7 +275,9 @@ class TestAppWithoutLogin(TestApp):
             main.CONF["ALLOW_GUEST_DOWNLOAD"] = False
 
     def test_push(self):
-        d = self.json("/api/book/1/push", method="POST", body="mail_to=unittest@gmail.com")
+        # 接口已从 /push（mail_to）改为 /mailto（email+format），见 BookSendToMail。
+        d = self.json("/api/book/1/mailto", method="POST",
+                      body=json.dumps({"email": "unittest@gmail.com", "format": "epub"}))
         self.assertEqual(d["err"], "user.need_login")
 
     def test_user_info(self):
@@ -270,9 +292,24 @@ class TestAppWithoutLogin(TestApp):
         self.assertEqual(d["sys"], {})
 
     def test_whoami_not_logged_in(self):
-        d = self.json("/api/user/whoami")
+        """未登录 + 未开放访客阅读 → need_login。
+
+        whoami 还有个「分享访客」分支：开了 ALLOW_GUEST_READ 时，
+        未登录会返回 {"err": "ok", "userId": 999999, "is_guest": True}，
+        供内嵌阅读器认身份。这里显式关掉，才测得到真正未登录的情况。
+        """
+        with mock.patch.dict(main.CONF, {"ALLOW_GUEST_READ": False, "REQUIRE_LOGIN": False}):
+            d = self.json("/api/user/whoami")
         self.assertEqual(d["err"], "user.need_login")
         self.assertNotIn("userId", d)
+
+    def test_whoami_guest_reader(self):
+        """开放访客阅读时，未登录也能拿到一个临时访客身份（userId=999999）。"""
+        with mock.patch.dict(main.CONF, {"ALLOW_GUEST_READ": True, "REQUIRE_LOGIN": False}):
+            d = self.json("/api/user/whoami")
+        self.assertEqual(d["err"], "ok")
+        self.assertEqual(d["userId"], 999999)
+        self.assertTrue(d["is_guest"])
 
     def test_book(self):
         d = self.json("/api/book/1")
@@ -345,10 +382,25 @@ class TestWithUserLogin(TestApp):
     def tearDownClass(self):
         _mock_user.stop()
         _mock_mail.stop()
-        _mock_service_async_mode.start()
+        # 这里原本写的是 .start()（明明是 tearDown 却启动了一个 mock），
+        # 于是「Service 异步模式 = False」这个 patch 泄漏到后面的测试类，
+        # 后面 TestAppWithoutLogin 的未登录用例全被当成已登录。
+        _mock_service_async_mode.stop()
 
 
 class TestUser(TestWithUserLogin):
+    @classmethod
+    def tearDownClass(cls):
+        # add_user() 会注册一个 username=active 的账号。不清理的话，
+        # TestAdmin.test_admin_users 断言的「31 个用户」就会变成 32
+        # ——一个测试类弄脏下一个测试类的夹具计数。
+        super().tearDownClass()
+        db = get_db()
+        extra = db.query(models.Reader).filter(models.Reader.username == "active").first()
+        if extra:
+            db.delete(extra)
+            db.commit()
+
     def test_userinfo(self):
         d = self.json("/api/user/info")
         self.assertEqual(d["err"], "ok")
@@ -378,9 +430,17 @@ class TestUser(TestWithUserLogin):
 
     def add_user(self):
         self.mail.reset_mock()
-        body = "email=active@gmail.com&nickname=active&username=active&password=active66"
+        body = ("email=active@gmail.com&nickname=active&username=active"
+                "&password=active66&birth_year=1990")
         d = self.json("/api/user/sign_up", method="POST", raise_error=True, body=body)
         self.assertTrue(d["err"] in ["ok", "params.username.exist"])
+        # 注册出来的账号是未激活的（active=False），未激活登录会被
+        # permission.inactive 挡住。本用例测的是「登录 + 权限位」，不是激活流程
+        # （激活流程由 TestUserSignUp.test_signup 覆盖），这里直接置为已激活。
+        user = get_db().query(models.Reader).filter(models.Reader.username == "active").first()
+        if user and not user.active:
+            user.active = True
+            get_db().commit()
 
     def test_login(self):
         # rsp = self.fetch("/api/done", follow_redirects=False)
@@ -470,7 +530,8 @@ class TestBook(TestWithUserLogin):
 
     def test_push(self):
         with self.mock_convert() as m:
-            d = self.json("/api/book/1/push", method="POST", body="mail_to=unittest@gmail.com")
+            d = self.json("/api/book/1/mailto", method="POST",
+                          body=json.dumps({"email": "unittest@gmail.com", "format": "epub"}))
             self.assertEqual(d["err"], "ok")
             self.assertTrue(m.call_count + self.mail.call_count <= 2)
 
@@ -479,14 +540,16 @@ class TestBook(TestWithUserLogin):
             with mock_permission() as user:
                 # forbid
                 user.set_permission("P")
-                d = self.json("/api/book/1/push", method="POST", body="mail_to=unittest@gmail.com")
+                d = self.json("/api/book/1/mailto", method="POST",
+                              body=json.dumps({"email": "unittest@gmail.com", "format": "epub"}))
                 self.assertEqual(d["err"], "permission")
 
         with self.mock_convert() as m:
             with mock_permission() as user:
                 # allow
                 user.set_permission("p")
-                d = self.json("/api/book/1/push", method="POST", body="mail_to=unittest@gmail.com")
+                d = self.json("/api/book/1/mailto", method="POST",
+                              body=json.dumps({"email": "unittest@gmail.com", "format": "epub"}))
                 self.assertEqual(d["err"], "ok")
                 self.assertTrue(m.call_count + self.mail.call_count <= 2)
 
@@ -513,10 +576,17 @@ class TestBook(TestWithUserLogin):
                 self.assertEqual(m.call_count, 2)
 
     def test_read(self):
+        """默认 EPUB_VIEWER=MyReader：epub 走 /readerx/open，其余走转换后的内置阅读器。
+
+        以前断言是「PDF/TXT 才 302」，那是 MyReader 还没接手 epub/pdf 时的行为；
+        现在 MyReader 优先接管 epub/pdf/cbz/fb2，PDF 的 302 目标也变成了
+        /readerx/open。TXT 仍然是 302（专用 TXT 阅读器）。
+        """
         with mock.patch("webserver.services.converter.ConverterService.convert_and_save", return_value="Yo"):
             for bid in BIDS:
                 rsp = self.fetch("/read/%s" % bid, follow_redirects=False)
-                self.assertEqual(rsp.code, 302 if bid == BID_PDF or bid == BID_TXT else 200)
+                expect_redirect = bid in (BID_EPUB, BID_PDF, BID_TXT)
+                self.assertEqual(rsp.code, 302 if expect_redirect else 200, "book %s" % bid)
 
     def test_read_txt_redirects_without_conversion(self):
         """TXT-only 书的 /read/<id> 必须直跳专用阅读器，不能先转 EPUB。"""
@@ -564,7 +634,7 @@ class TestBook(TestWithUserLogin):
             self.assertEqual(rsp.code, 302)
             self.assertEqual(
                 rsp.headers["Location"],
-                "/myreader/open?bookId=%s&format=epub" % BID_EPUB,
+                "/readerx/open?bookId=%s&format=epub" % BID_EPUB,
             )
 
     def test_read_myreader_engine_pdf(self):
@@ -574,7 +644,7 @@ class TestBook(TestWithUserLogin):
             self.assertEqual(rsp.code, 302)
             self.assertEqual(
                 rsp.headers["Location"],
-                "/myreader/open?bookId=%s&format=pdf" % BID_PDF,
+                "/readerx/open?bookId=%s&format=pdf" % BID_PDF,
             )
 
     def test_read_myreader_engine_unsupported_format_falls_back(self):
@@ -587,23 +657,37 @@ class TestBook(TestWithUserLogin):
                 rsp = self.fetch("/read/%s" % BID_MOBI, follow_redirects=False)
                 self.assertEqual(rsp.code, 200)
 
-    def test_read_default_engine_ignores_myreader_redirect(self):
-        with mock.patch("webserver.services.converter.ConverterService.convert_and_save", return_value="Yo"):
-            rsp = self.fetch("/read/%s" % BID_EPUB, follow_redirects=False)
-            self.assertEqual(rsp.code, 200)
+    def test_read_default_engine_is_myreader(self):
+        """默认 EPUB_VIEWER 就是 MyReader，所以默认配置下 EPUB 会 302 到 /readerx/open。
+
+        原用例名是 test_read_default_engine_ignores_myreader_redirect，断言 200，
+        前提是「默认引擎 = epubjs、只有用户显式选 myreader 才跳转」。默认值改成
+        MyReader 之后这个前提没了，用例名和断言一起改。
+        """
+        rsp = self.fetch("/read/%s" % BID_EPUB, follow_redirects=False)
+        self.assertEqual(rsp.code, 302)
+        self.assertEqual(
+            rsp.headers["Location"],
+            "/readerx/open?bookId=%s&format=epub" % BID_EPUB,
+        )
 
     def _mock_djvu_only_book(self, fmt="djvu"):
-        # 测试库里没有 djvu/cbz 书籍：把 PDF 样书改造成只含该格式的书
-        orig_get_book = BaseHandler.get_book
+        """测试库里没有 djvu/cbz 书籍：把 PDF 样书改造成只含该格式的书。
 
-        def fake_get_book(handler, book_id, *args, **kwargs):
-            book = orig_get_book(handler, book_id, *args, **kwargs)
+        BookRead.get 走的是 get_book_async（内部经 calibre 线程池取数），
+        不是同步的 get_book，所以这里必须 patch 前者——patch 后者会「什么都没改」，
+        测试看到的是原书的 fmt_pdf，于是 CBZ 用例跳到了 PDF 阅读器。
+        """
+        orig_get_book_async = BaseHandler.get_book_async
+
+        async def fake_get_book_async(handler, book_id, *args, **kwargs):
+            book = await orig_get_book_async(handler, book_id, *args, **kwargs)
             if book and int(book_id) == BID_PDF:
                 book = dict(book)
                 book["fmt_%s" % fmt] = book.pop("fmt_pdf")
             return book
 
-        return mock.patch.object(BaseHandler, "get_book", fake_get_book)
+        return mock.patch.object(BaseHandler, "get_book_async", fake_get_book_async)
 
     def test_read_djvu(self):
         with self._mock_djvu_only_book():
@@ -742,7 +826,7 @@ class TestRefer(TestWithUserLogin):
     @mock.patch("webserver.plugins.meta.douban.DoubanBookApi.get_book_by_isbn")
     @mock.patch("webserver.plugins.meta.douban.DoubanBookApi.get_book_by_id")
     @mock.patch("webserver.plugins.meta.douban.DoubanBookApi.get_cover")
-    @mock.patch("webserver.plugins.meta.baike.BaiduBaikeApi._baike")
+    @mock.patch("webserver.plugins.meta.baike.BaiduBaikeApi._metadata")
     @mock.patch("webserver.plugins.meta.baike.BaiduBaikeApi.get_cover")
     @mock.patch("webserver.plugins.meta.youshu.YoushuApi._youshu")
     def test_refer(self, m7, m6, m5, m4, m3, m2, m1):
@@ -804,7 +888,8 @@ class TestUserSignUp(TestWithUserLogin):
         d = self.json("/api/user/sign_up", method="POST", raise_error=True, body="")
         self.assertEqual(d["err"], "params.invalid")
 
-        body = "email=unittest@gmail.com&nickname=unittest&username=unittest&password=unittest"
+        body = ("email=unittest@gmail.com&nickname=unittest&username=unittest"
+                "&password=Unittest66&birth_year=1990")
         d = self.json("/api/user/sign_up", method="POST", raise_error=True, body=body)
         self.assertEqual(d["err"], "ok")
         self.assertEqual(self.mail.call_count, 1)
@@ -841,7 +926,7 @@ class TestUserSignUp(TestWithUserLogin):
         self.assertEqual(False, BaseHandler.process_auth_header(f))
 
         ts = int(time.time())
-        f.request.headers["Authorization"] = self.auth("unittest:unittest")
+        f.request.headers["Authorization"] = self.auth("unittest:Unittest66")
         self.assertEqual(True, BaseHandler.process_auth_header(f))
         self.assertTrue(int(f.cookie["invited"]) >= ts)
         self.assertTrue(int(f.cookie["lt"]) >= ts)
@@ -967,14 +1052,34 @@ class TestJsonResponse(TestApp):
         raise err
 
     def assertHeaders(self, headers):
-        self.assertEqual(
-            headers,
-            {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Credentials": "true",
-                "Cache-Control": "max-age=0",
-            },
-        )
+        """没有 Origin 请求头时不该发任何 CORS 响应头。
+
+        原断言要求恒发 `Access-Control-Allow-Origin: *` + `Allow-Credentials: true`，
+        那是「任意网页都能带着用户 Cookie 读本站 API」的经典配置。现在的实现只对
+        同源 Origin 回显，跨站一律不发，所以无 Origin 的请求只剩 Cache-Control。
+        """
+        self.assertEqual(headers, {"Cache-Control": "max-age=0"})
+
+    def test_cors_headers_only_for_same_origin(self):
+        """同源发头、跨源不发——这是上面那条断言的另一半，缺了就等于没测。"""
+        from webserver.handlers.base import BaseHandler
+
+        def run(origin, host):
+            f = FakeHandler()
+            f.request.headers = {"origin": origin} if origin else {}
+            f.request.host = host
+            with mock.patch("traceback.format_exc", return_value=""):
+                handler = webserver.handlers.base.js(lambda x: {"ok": True})
+                asyncio.get_event_loop().run_until_complete(handler(f))
+            return f.rsp_headers
+
+        same = run("http://example.com", "example.com")
+        self.assertEqual(same["Access-Control-Allow-Origin"], "http://example.com")
+        self.assertEqual(same["Access-Control-Allow-Credentials"], "true")
+
+        evil = run("http://evil.com", "example.com")
+        self.assertNotIn("Access-Control-Allow-Origin", evil)
+        self.assertNotIn("Access-Control-Allow-Credentials", evil)
 
     @testing.gen_test
     async def test_err(self):

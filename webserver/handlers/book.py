@@ -2484,6 +2484,14 @@ class BookDownload(BaseHandler, web.StaticFileHandler):
     def initialize(self):
         self.root = "/"
         self.default_filename = None
+        # tornado 6.5 起 StaticFileHandler 多了这一项：validate_absolute_path
+        # 会调 _resolve_symlink_target，那里直接读 self.allowed_symlink_directory，
+        # 没有这个属性就 AttributeError → 每次下载 500。
+        # 原生的赋值写在 StaticFileHandler.initialize() 里，而本类整个覆写了
+        # initialize 又没调 super()，所以必须自己补。
+        # 值跟 self.root 保持一致："这里接受任意绝对路径"，限制成 / 才不会
+        # 把合法请求误判成「跑到静态目录外面了」而 403。
+        self.allowed_symlink_directory = "/"
         self.is_opds = self.get_argument("from", "") == "opds"
         BaseHandler.initialize(self)
 
