@@ -5241,6 +5241,164 @@ class BookExchangeType(BaseHandler):
         }
 
 
+class PrintBookImportBase(BaseHandler):
+    """实体书 CSV 批量导入的公共逻辑。
+
+    CSV 列（UTF-8，Excel 可直接打开）：
+        书名,作者,ISBN,数量,存放位置,分类,简介
+    书名必填，其余可选；ISBN 存在时先按 ISBN 查重；每条成功后在
+    calibre（含 #book_type/#book_count/#location 自定义列）与业务库
+    items 表双写，与「单本添加」保持同一套落库口径。
+    """
+
+    CSV_HEADER = ["书名", "作者", "ISBN", "数量", "存放位置", "分类", "简介"]
+
+    def _decode_csv(self, raw):
+        # 兼容 Excel 导出的 UTF-8 BOM / GBK 文件
+        for enc in ("utf-8-sig", "utf-8", "gb18030"):
+            try:
+                return raw.decode(enc)
+            except (UnicodeDecodeError, AttributeError):
+                continue
+        raise ValueError("无法识别文件编码，请另存为 UTF-8 的 CSV 文件")
+
+    def _template_response(self):
+        import csv as _csv
+        import io as _io
+        buf = _io.StringIO()
+        writer = _csv.writer(buf)
+        writer.writerow(self.CSV_HEADER)
+        writer.writerow(["三体", "刘慈欣", "9787536692930", "1", "书架A-01", "科幻小说", "地球往事三部曲之一"])
+        writer.writerow(["活着", "余华", "", "2", "书架B-03", "文学", ""])
+        body = b"\xef\xbb\xbf" + buf.getvalue().encode("utf-8")
+        self.set_header("Content-Type", "text/csv; charset=utf-8")
+        self.set_header("Content-Disposition", "attachment; filename=physical-books-template.csv")
+        self.write(body)
+        self.finish()
+
+    def _parse_rows(self, text):
+        import csv as _csv
+        import io as _io
+        reader = _csv.reader(_io.StringIO(text))
+        rows = []
+        for lineno, row in enumerate(reader, 1):
+            if not row or not any((c or "").strip() for c in row):
+                continue
+            row = [(c or "").strip() for c in row]
+            # 跳过与模板表头相同的行（避免用户没删示例表头导致导入失败）
+            if lineno == 1 and row[0] in ("书名", "title", "Title"):
+                continue
+            while len(row) < len(self.CSV_HEADER):
+                row.append("")
+            rows.append(row[: len(self.CSV_HEADER)])
+        return rows
+
+    def _import_one(self, row):
+        from calibre.ebooks.metadata.book.base import Metadata
+        from calibre.utils.date import now as nowf
+
+        title, author, isbn, count_s, location, category, comments = row
+        title = title.strip()
+        if not title:
+            return None, _("书名为空")
+        if len(title) > 100 or len(author) > 200:
+            return None, _("书名或作者过长")
+        if re.search(r"['\"\x00-\x1f\x7f]", title + author):
+            return None, _("书名或作者包含非法字符")
+
+        isbn = re.sub(r"[-\s]", "", isbn).upper()
+        if isbn and not re.match(r"^([0-9]{9}[0-9X]|[0-9]{13})$", isbn):
+            return None, _("无效的ISBN号：%s") % isbn
+        if isbn and self.find_phy_books_by_isbn(isbn):
+            return None, _("该ISBN对应的图书已存在：%s") % isbn
+
+        try:
+            count = max(1, int(count_s)) if count_s.strip() else 1
+        except ValueError:
+            return None, _("数量不是数字：%s") % count_s
+
+        authors = [a.strip() for a in re.split(r"[,，/]", author) if a.strip()]
+        mi = Metadata(title, authors if authors else [_("佚名")])
+        if isbn:
+            mi.isbn = isbn
+        if comments.strip():
+            mi.comments = comments.strip()
+        if category.strip():
+            mi.tags = [t.strip() for t in re.split(r"[,，]", category) if t.strip()]
+        mi.title_sort = utils.get_title_sort(title)
+        mi.timestamp = nowf()
+
+        book_id = self.calibre_db.create_book_entry(mi)
+        if book_id is None:
+            return None, _("创建图书失败（可能已存在同名同作者书目）：%s" % title)
+
+        try:
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_BOOK_TYPE, {book_id: BOOK_TYPE_PHYSICAL})
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_PHY_COUNT, {book_id: count})
+            if location.strip():
+                try:
+                    self.calibre_db_cache.set_field(CALIBRE_COLUMN_LOCATION, {book_id: location.strip()})
+                except Exception as e:
+                    logging.warning("Set #location failed for book %s: %s", book_id, e)
+            BaseHandler._physical_books_count_cache_time = 0
+        except Exception as e:
+            logging.error("Failed to set custom fields for book ID %s: %s", book_id, e)
+
+        item = Item()
+        item.book_id = book_id
+        item.collector_id = self.user_id()
+        item.book_type = BOOK_TYPE_PHYSICAL
+        item.book_count = count
+        self.sqlite_session.add(item)
+        self.sqlite_session.commit()
+        return book_id, None
+
+
+class PrintBookImportTemplate(PrintBookImportBase):
+    # 不加 @js：模板是文件下载，@js 会把返回值强制转 JSON
+    @auth
+    def get(self):
+        if not self.current_user.can_upload():
+            return {"err": "permission", "msg": _("无权操作")}
+        self._template_response()
+
+
+class PrintBookImport(PrintBookImportBase):
+    @js
+    @auth
+    def post(self):
+        if not self.current_user.can_upload():
+            return {"err": "permission", "msg": _("无权操作")}
+        f = self.request.files.get("csvfile")
+        if not f:
+            return {"err": "params.invalid", "msg": _("请选择CSV文件")}
+        try:
+            text = self._decode_csv(f[0]["body"])
+        except ValueError as e:
+            return {"err": "params.invalid", "msg": str(e)}
+
+        rows = self._parse_rows(text)
+        if not rows:
+            return {"err": "params.invalid", "msg": _("CSV中没有可导入的数据行")}
+
+        ok_count, fail_count, errors = 0, 0, []
+        for lineno, row in enumerate(rows, 1):
+            try:
+                book_id, err = self._import_one(row)
+                if err:
+                    fail_count += 1
+                    errors.append("第%d行：%s" % (lineno, err))
+                else:
+                    ok_count += 1
+            except Exception as e:
+                fail_count += 1
+                errors.append("第%d行：%s" % (lineno, e))
+                logging.error("PrintBookImport row %d failed: %s", lineno, e)
+
+        return {"err": "ok", "msg": _("导入完成：成功 %d 条，失败 %d 条") % (ok_count, fail_count),
+                "ok_count": ok_count, "fail_count": fail_count, "errors": errors[:50]}
+
+
 def routes():
     return [
         (r"/api/index", Index),
@@ -5250,6 +5408,8 @@ def routes():
         (r"/api/all", RecentBook),
         (r"/api/hot", HotBook),
         (r"/api/printbooks", PrintBooks),
+        (r"/api/printbooks/import", PrintBookImport),
+        (r"/api/printbooks/import-template", PrintBookImportTemplate),
         (r"/api/soledbooks", BookSoled),
         (r"/api/book/nav", BookNav),
         (r"/api/book/add", BookAddByISBN),

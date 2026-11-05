@@ -15,11 +15,20 @@
             <v-icon>mdi-delete</v-icon>
           </v-btn>
         </template>
+        <v-btn v-if="isPrintBooksPage && canUpload" outlined small color="green" class="ml-2"
+               :title="$t('listBook.importPrint')" @click="importDialog = true">
+          <v-icon small class="mr-1">mdi-file-upload-outline</v-icon>{{ $t('listBook.importPrint') }}
+        </v-btn>
         <v-btn v-if="isVisitsPage && books.length > 0" icon class="ml-2"
                :title="$t('listBook.clearVisits')" @click="clearDialog = true">
           <v-icon>mdi-delete-sweep-outline</v-icon>
         </v-btn>
         <v-divider class="mt-3 mb-0"></v-divider>
+      </v-col>
+
+      <v-col v-if="isPrintBooksPage && books.length === 0" cols="12" class="text-center grey--text pb-10">
+        <v-icon large class="mb-3 d-block">mdi-bookshelf</v-icon>
+        {{ $t('listBook.importPrintEmptyHint') }}
       </v-col>
 
       <v-col>
@@ -73,6 +82,40 @@
     >
       {{ $t('listBook.clearVisitsContent') }}
     </AppDialog>
+
+    <!-- 实体书 CSV 批量导入对话框 -->
+    <AppDialog
+      v-model="importDialog"
+      type="action"
+      :title="$t('listBook.importPrintTitle')"
+      icon="mdi-file-upload-outline"
+      color="green"
+      max-width="520"
+      :dismiss-label="$t('listBook.cancel')"
+      :confirm-text="$t('listBook.importPrint')"
+      confirm-color="green"
+      confirm-dark
+      :confirm-loading="importing"
+      :confirm-disabled="!importFile"
+      @confirm="doImportPrintBooks"
+    >
+      <p class="body-2">{{ $t('listBook.importPrintDesc') }}</p>
+      <div class="mb-4">
+        <a href="/api/printbooks/import-template" download>
+          <v-icon small>mdi-download</v-icon>{{ $t('listBook.importPrintDownloadTpl') }}
+        </a>
+      </div>
+      <input ref="csvInput" type="file" accept=".csv,text/csv" style="display: none" @change="onCsvSelected" />
+      <v-btn outlined color="green" block @click="$refs.csvInput.click()">
+        <v-icon small class="mr-1">mdi-paperclip</v-icon>
+        {{ importFile ? importFile.name : $t('listBook.importPrintPickCsv') }}
+      </v-btn>
+      <v-alert v-if="importErrors.length" type="warning" dense class="mt-4" style="font-size: 13px;">
+        <div style="max-height: 160px; overflow-y: auto;">
+          <div v-for="(e, i) in importErrors" :key="i">{{ e }}</div>
+        </div>
+      </v-alert>
+    </AppDialog>
   </div>
 </template>
 
@@ -106,6 +149,13 @@ export default {
     isVisitsPage() {
       return this.$route.path === '/visits';
     },
+    isPrintBooksPage() {
+      return this.$route.path === '/printbooks';
+    },
+    canUpload() {
+      const st = this.$store.state;
+      return st.sys.allow && st.sys.allow.upload && st.user && st.user.is_login;
+    },
     isSelectablePage() {
       return Object.prototype.hasOwnProperty.call(SELECTABLE_ACTIONS, this.$route.path);
     },
@@ -134,6 +184,10 @@ export default {
     removing: false,
     clearDialog: false,
     clearing: false,
+    importDialog: false,
+    importing: false,
+    importFile: null,
+    importErrors: [],
   }),
   async asyncData({route, app, res}) {
     if (res !== undefined) {
@@ -283,6 +337,44 @@ export default {
     formatVisitTime(value) {
       const date = new Date(value);
       return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
+    },
+    onCsvSelected(event) {
+      const f = (event.target.files || [])[0];
+      event.target.value = '';
+      if (!f) return;
+      if (!/\.csv$/i.test(f.name)) {
+        this.$alert('error', this.$t('listBook.importPrintNoFile'));
+        return;
+      }
+      this.importFile = f;
+      this.importErrors = [];
+    },
+    async doImportPrintBooks() {
+      if (this.importing || !this.importFile) return;
+      this.importing = true;
+      this.importErrors = [];
+      try {
+        const data = new FormData();
+        data.append('csvfile', this.importFile, this.importFile.name);
+        const rsp = await this.$backend('/printbooks/import', { method: 'POST', body: data });
+        if (rsp.err !== 'ok') {
+          this.$alert('error', rsp.msg || this.$t('listBook.importPrintFailed'));
+          return;
+        }
+        this.importErrors = rsp.errors || [];
+        this.$alert('success', rsp.msg || this.$t('listBook.importPrintSuccess'));
+        if ((rsp.ok_count || 0) > 0) {
+          this.importDialog = false;
+          this.importFile = null;
+          this.init(this.$route);
+        } else if (!this.importErrors.length) {
+          this.importDialog = false;
+        }
+      } catch (e) {
+        this.$alert('error', this.$t('listBook.importPrintFailed'));
+      } finally {
+        this.importing = false;
+      }
     },
     async clearVisits() {
       if (this.clearing) return;

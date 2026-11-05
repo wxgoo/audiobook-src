@@ -159,7 +159,16 @@
     "removeSuccess": "已成功处理 {count} 本书籍",
     "removeFailed": "操作失败",
     "cancel": "取消",
-    "confirm": "确定"
+    "confirm": "确定",
+    "importPrint": "导入实体书",
+    "importPrintTitle": "批量导入实体书",
+    "importPrintDownloadTpl": "下载 CSV 模板",
+    "importPrintPickCsv": "选择 CSV 文件",
+    "importPrintDesc": "按模板填写书名、作者、ISBN（可选）、数量、存放位置、分类、简介后，选择文件导入。ISBN 留空则按书名+作者录入。",
+    "importPrintNoFile": "请先选择CSV文件",
+    "importPrintSuccess": "导入完成",
+    "importPrintFailed": "导入失败",
+    "importPrintEmptyHint": "书架还没有实体书记录：点击右上角「导入实体书」批量录入，或点击右下角绿色按钮逐本添加（支持扫码）。"
   },
   "listMeta": {
     "ratingSuffix": "星",

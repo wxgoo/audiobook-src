@@ -158,7 +158,16 @@
     "removeSuccess": "已成功處理 {count} 本書籍",
     "removeFailed": "操作失敗",
     "cancel": "取消",
-    "confirm": "確定"
+    "confirm": "確定",
+    "importPrint": "匯入實體書",
+    "importPrintTitle": "批次匯入實體書",
+    "importPrintDownloadTpl": "下載 CSV 範本",
+    "importPrintPickCsv": "選擇 CSV 檔案",
+    "importPrintDesc": "按範本填寫書名、作者、ISBN（可選）、數量、存放位置、分類、簡介後，選擇檔案匯入。ISBN 留空則按書名+作者錄入。",
+    "importPrintNoFile": "請先選擇CSV檔案",
+    "importPrintSuccess": "匯入完成",
+    "importPrintFailed": "匯入失敗",
+    "importPrintEmptyHint": "書架還沒有實體書記錄：點擊右上角「匯入實體書」批次錄入，或點擊右下角綠色按鈕逐本新增（支援掃碼）。"
   },
   "listMeta": {
     "ratingSuffix": "星",

@@ -159,7 +159,16 @@
     "removeSuccess": "Successfully processed {count} books",
     "removeFailed": "Operation failed",
     "cancel": "Cancel",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "importPrint": "Import physical books",
+    "importPrintTitle": "Batch import physical books",
+    "importPrintDownloadTpl": "Download CSV template",
+    "importPrintPickCsv": "Select CSV file",
+    "importPrintDesc": "Fill in title, author, ISBN (optional), count, location, category and comments per the template, then import. Leave ISBN empty to record by title+author.",
+    "importPrintNoFile": "Please select a CSV file first",
+    "importPrintSuccess": "Import finished",
+    "importPrintFailed": "Import failed",
+    "importPrintEmptyHint": "No physical books yet: click \"Import physical books\" at the top-right to batch import, or the green button at bottom-right to add one by one (barcode supported)."
   },
   "listMeta": {
     "ratingSuffix": " stars",
