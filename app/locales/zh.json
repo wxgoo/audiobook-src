@@ -234,7 +234,19 @@
     "nickname": "昵称",
     "email": "Email",
     "registerButton": "注册",
-    "pageTitle": "注册"
+    "pageTitle": "注册",
+    "passwordHint": "至少 6 位，需包含大写字母、小写字母、数字、符号中的两种或两种以上",
+    "pwdTooShort": "密码不能少于 6 位",
+    "pwdTooLong": "密码不能超过 20 位",
+    "pwdBadChar": "密码只能包含字母、数字和常见符号",
+    "pwdTooWeak": "密码太简单：需包含大写字母、小写字母、数字、符号中的至少两种",
+    "age": "年龄",
+    "ageHint": "用于图书分级：管理员会按年龄分组设置可阅读范围",
+    "ageRequired": "请填写年龄",
+    "ageInvalid": "年龄需为整数",
+    "ageRange": "年龄需在 1~120 之间",
+    "ageHonest": "我确认所填年龄真实有效，如有虚报由本人承担相应后果（包括但不限于因年龄不实接触到不适宜内容）",
+    "ageHonestRequired": "请勾选确认真实年龄"
   },
   "starting": {
     "title": "系统启动中，请稍候",
@@ -454,7 +466,13 @@
       "confirm_new_password": "确认新密码",
       "change_password_save": "确认修改",
       "change_password_ok": "密码修改成功",
-      "password_mismatch": "两次输入的密码不一致"
+      "password_mismatch": "两次输入的密码不一致",
+      "age": "年龄",
+      "age_unset": "未填",
+      "change_age": "修改年龄",
+      "change_age_dialog_title": "修改年龄",
+      "change_age_save": "保存",
+      "change_age_ok": "年龄已更新"
     }
   },
   "imports": {

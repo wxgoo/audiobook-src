@@ -234,7 +234,19 @@
     "nickname": "Nickname",
     "email": "Email",
     "registerButton": "Register",
-    "pageTitle": "Sign Up"
+    "pageTitle": "Sign Up",
+    "passwordHint": "At least 6 characters, using 2 or more of: uppercase, lowercase, digits, symbols",
+    "pwdTooShort": "Password must be at least 6 characters",
+    "pwdTooLong": "Password must be at most 20 characters",
+    "pwdBadChar": "Password may only contain letters, digits and common symbols",
+    "pwdTooWeak": "Password is too weak: use at least 2 of uppercase, lowercase, digits, symbols",
+    "age": "Age",
+    "ageHint": "Used for content rating: admins set reading limits by age group",
+    "ageRequired": "Please enter your age",
+    "ageInvalid": "Age must be an integer",
+    "ageRange": "Age must be between 1 and 120",
+    "ageHonest": "I confirm the age I entered is accurate. I accept responsibility for any consequences of a false declaration (including access to content unsuitable for my actual age).",
+    "ageHonestRequired": "Please confirm your real age"
   },
   "starting": {
     "title": "Starting up, please wait",
@@ -456,7 +468,13 @@
       "confirm_new_password": "Confirmation",
       "change_password_save": "Confirm",
       "change_password_ok": "Password changed successfully",
-      "password_mismatch": "Mismatched password and confirm password"
+      "password_mismatch": "Mismatched password and confirm password",
+      "age": "Age",
+      "age_unset": "Not set",
+      "change_age": "Change age",
+      "change_age_dialog_title": "Change age",
+      "change_age_save": "Save",
+      "change_age_ok": "Age updated"
     }
   },
   "imports": {

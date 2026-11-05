@@ -262,6 +262,10 @@
   content: "\F00E8";
 }
 
+.mdi-cake-variant::before {
+  content: "\F00EB";
+}
+
 .mdi-calendar::before {
   content: "\F00ED";
 }

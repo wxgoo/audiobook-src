@@ -184,6 +184,8 @@ class AdminUsers(BaseHandler):
                 "download_count": user.download_count or 0,
                 "total_reading_seconds": user.total_reading_seconds or 0,
                 "allow_review": user.allow_review,
+                # r10：注册必填年龄，管理员审核时按年龄分组限额
+                "age": user.age or 0,
             }
             if enable_vip_quota:
                 d["vipquota"] = user.vipquota or 0
@@ -268,6 +270,14 @@ class AdminUsers(BaseHandler):
         if "allow_review" in data:
             user.allow_review = bool(data["allow_review"])
 
+        # §年龄（r10）§ 注册时填错的允许管理员纠正；0 表示「未填」，
+        # 老用户补填也走这里。范围校验复用 Reader.parse_age。
+        if "age" in data:
+            age, code, msg = Reader.parse_age(data["age"])
+            if code != "ok":
+                return {"err": code, "msg": msg}
+            user.age = age
+
         if user.admin is False and self.user_id() == user.id:
             return {
                 "err": "params.user.invalid",
@@ -349,15 +359,9 @@ class AdminUsers(BaseHandler):
 
         if "password" in data:
             new_password = (data["password"] or "").strip()
-            if (
-                len(new_password) < 6
-                or len(new_password) > 20
-                or not re.match(Reader.RE_PASSWORD, new_password)
-            ):
-                return {
-                    "err": "params.password.invalid",
-                    "msg": _("密码无效，长度须在6~20位之间"),
-                }
+            ok, code, msg = Reader.check_password_strength(new_password)
+            if not ok:
+                return {"err": code, "msg": msg}
             user.set_secure_password(new_password)
 
         p = data.get("permission", "")
@@ -713,12 +717,9 @@ class AdminInstall(BaseHandler):
             or not re.match(Reader.RE_USERNAME, username)
         ):
             return {"err": "params.username.invalid", "msg": _("用户名无效")}
-        if (
-            len(password) < 6
-            or len(password) > 20
-            or not re.match(Reader.RE_PASSWORD, password)
-        ):
-            return {"err": "params.password.invalid", "msg": _("密码无效")}
+        ok, code, msg = Reader.check_password_strength(password)
+        if not ok:
+            return {"err": code, "msg": msg}
 
         # 避免重复创建
         user = (

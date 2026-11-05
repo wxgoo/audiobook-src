@@ -100,6 +100,72 @@ class Reader(Base, SQLAlchemyMixin):
     RE_USERNAME = r"[a-z][a-z0-9_]*$"
     RE_PASSWORD = r'[a-zA-Z0-9!@#$%^&*()_+\-=[\]{};\':",./<>?\|]*'
 
+    # §密码强度策略（4.6.0-19 r10）§
+    # 用户要求：「不能少于6位，至少大小写、特殊字符、数字中的两种或两种以上」。
+    # 老规则只查长度 6~20 + 字符白名单，`123456` / `aaaaaa` 都能过，等于没有强度。
+    # 这里统一成一处的判定函数，五个调用点（注册×2、用户改密、管理员改密、
+    # 管理员重置）全部走它，避免以后又漂移成各写一份。
+    PASSWORD_MIN_LEN = 6
+    PASSWORD_MAX_LEN = 20
+    PASSWORD_MIN_KINDS = 2
+
+    # 四类字符。注意「特殊字符」只认 RE_PASSWORD 白名单里允许的，
+    # 否则前端表单能填、后端却拒收，或者反过来让 emoji 之类的脏字符混进 hash。
+    _PWD_KINDS = (
+        ("lower", r"[a-z]"),
+        ("upper", r"[A-Z]"),
+        ("digit", r"[0-9]"),
+        ("special", r"[!@#$%^&*()_+\-=\[\]{};':\",./<>?\\|]"),
+    )
+
+    @classmethod
+    def check_password_strength(cls, password):
+        """返回 (ok, 错误码, 中文提示)。
+
+        调用方统一按 `{"err": code, "msg": msg}` 直接返回即可。
+        """
+        pwd = password or ""
+        if len(pwd) < cls.PASSWORD_MIN_LEN:
+            return (False, "params.password.short",
+                    _("密码不能少于%(n)s位") % {"n": cls.PASSWORD_MIN_LEN})
+        if len(pwd) > cls.PASSWORD_MAX_LEN:
+            return (False, "params.password.long",
+                    _("密码不能超过%(n)s位") % {"n": cls.PASSWORD_MAX_LEN})
+        if not re.match(cls.RE_PASSWORD + "$", pwd):
+            return (False, "params.password.invalid",
+                    _("密码只能包含字母、数字和常见符号"))
+        kinds = sum(1 for _name, pat in cls._PWD_KINDS if re.search(pat, pwd))
+        if kinds < cls.PASSWORD_MIN_KINDS:
+            return (False, "params.password.weak",
+                    _("密码太简单：需包含大写字母、小写字母、数字、符号中的至少%(n)s种")
+                    % {"n": cls.PASSWORD_MIN_KINDS})
+        return (True, "ok", "")
+
+    # §年龄（4.6.0-19 r10）§
+    # 注册必填，目的是让管理员审核时能按年龄做读者分组限额（有些书不适合
+    # 某个年龄段）。范围按现实情况收在 1~120：过滤掉 0、负数、999 这种
+    # 明显乱填——填错了分组就分错，比空着更糟。
+    AGE_MIN = 1
+    AGE_MAX = 120
+
+    @classmethod
+    def parse_age(cls, raw):
+        """把注册表单里的年龄转成整数。返回 (age, 错误码, 提示)。
+
+        宽松接受字符串数字（前端 input 传来的是 str），其余一律拒绝，
+        不做「四舍五入」之类的猜测。
+        """
+        text = str(raw if raw is not None else "").strip()
+        if not text:
+            return (0, "params.age.required", _("请填写年龄"))
+        if not text.isdigit():
+            return (0, "params.age.invalid", _("年龄需为整数"))
+        age = int(text)
+        if age < cls.AGE_MIN or age > cls.AGE_MAX:
+            return (0, "params.age.invalid",
+                    _("年龄需在%(a)s~%(b)s之间") % {"a": cls.AGE_MIN, "b": cls.AGE_MAX})
+        return (age, "ok", "")
+
     __tablename__ = "readers"
     id = Column(Integer, primary_key=True)
     username = Column(String(200))
@@ -127,6 +193,10 @@ class Reader(Base, SQLAlchemyMixin):
     allow_statistic = Column(Boolean, default=True, nullable=False)  # 是否采集该用户的阅读/下载统计，默认采集（opt-out）
     show_home_recommendations = Column(Boolean, default=True, nullable=False)  # 首页展示其他用户推荐，见 plan/Social_Reading_Plan.md
     allow_review = Column(Boolean, default=True, nullable=False)  # 是否允许发表评论（管理员可禁止）
+    # §年龄（4.6.0-19 r10）§ 注册时必填，供管理员审核后做读者分组限额
+    # （有些书不适合某个年龄段）。存整数岁，0 表示「历史用户未填」——
+    # 老库补列时就是 0，不强制老用户回填，否则一升级全员被挡在门外。
+    age = Column(Integer, default=0, nullable=False)
 
     def __str__(self):
         return "<id=%d, username=%s, email=%s, admin:%d>" % (

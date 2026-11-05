@@ -261,6 +261,14 @@ class AsyncService(metaclass=SingletonType):
                 ALTER TABLE readers ADD COLUMN allow_review BOOLEAN DEFAULT 1
             """))
             changed = True
+
+        # §age（4.6.0-19 r10）§ 注册必填年龄，供管理员按年龄分组限额。
+        # 老库补列默认 0 = 未填，不强制老用户回填（否则升级后全员被拦）。
+        if "age" not in columns:
+            self.session.execute(text("""
+                ALTER TABLE readers ADD COLUMN age INTEGER NOT NULL DEFAULT 0
+            """))
+            changed = True
         return changed
 
     def adjust_booklist_table(self):

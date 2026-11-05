@@ -22,6 +22,12 @@
             :expanded="expandedItems"
             class="elevation-1"
         >
+            <template v-slot:item.age="{ item }">
+                <span v-if="item.age">{{ item.age }}</span>
+                <v-chip v-else x-small color="warning" text-color="white">
+                    {{ $t('admin.users.age_unset') }}
+                </v-chip>
+            </template>
             <template v-slot:item.total_reading_seconds="{ item }">
                 {{ (item.total_reading_seconds / 3600).toFixed(1) }}
             </template>
@@ -194,6 +200,15 @@
                         >
                             <v-list-item-title> {{ $t('admin.users.ban_review') }} </v-list-item-title>
                         </v-list-item>
+                        <!-- §年龄（r10）§ 注册时填错、或老用户 age=0 未填，
+                             管理员在这里补正，方便按年龄分组限额。
+                             管理员行不出现（age 属设置类，后端白名单同样拦）。 -->
+                        <v-list-item
+                            v-if="!item.is_admin"
+                            @click="openChangeAgeDialog(item)"
+                        >
+                            <v-list-item-title> {{ $t('admin.users.change_age') }} </v-list-item-title>
+                        </v-list-item>
                         <v-list-item
                             @click="openChangeUsernameDialog(item)"
                         >
@@ -222,6 +237,36 @@
             :saving="savingReadingRange"
             @save="saveReadingRange"
         ></reading-range-dialog>
+
+        <!-- Change Age Dialog -->
+        <AppDialog
+            v-model="showChangeAgeDialog"
+            type="action"
+            :title="$t('admin.users.change_age_dialog_title')"
+            max-width="420px"
+            dismiss-icon
+            :confirm-text="$t('admin.users.change_age_save')"
+            :confirm-loading="changingAge"
+            @dismiss="closeChangeAgeDialog"
+            @confirm="submitChangeAge"
+        >
+            <v-form ref="changeAgeForm" @submit.prevent="submitChangeAge">
+                <v-text-field
+                    v-model="changeAge.value"
+                    :label="$t('admin.users.age')"
+                    type="number"
+                    min="1"
+                    max="120"
+                    prepend-icon="mdi-cake-variant"
+                    :rules="rulesAge"
+                    :hint="$t('signup.ageHint')"
+                    persistent-hint
+                    autofocus
+                    required
+                ></v-text-field>
+            </v-form>
+            <v-alert v-if="changeAgeError" type="error" class="mt-2">{{ changeAgeError }}</v-alert>
+        </AppDialog>
 
         <!-- Change Username Dialog -->
         <AppDialog
@@ -270,7 +315,9 @@
                     type="password"
                     prepend-icon="mdi-lock"
                     autocomplete="new-password"
-                    :rules="[rules.pass]"
+                    :rules="rulesPass"
+                    :hint="$t('signup.passwordHint')"
+                    persistent-hint
                     required
                 ></v-text-field>
                 <v-text-field
@@ -315,7 +362,9 @@
                     :label="$t('admin.users.password')"
                     type="password"
                     autocomplete="new-password"
-                    :rules="[rules.pass]"
+                    :rules="rulesPass"
+                    :hint="$t('signup.passwordHint')"
+                    persistent-hint
                 ></v-text-field>
                 <v-text-field
                     required
@@ -344,6 +393,19 @@
                     autocomplete="new-email"
                     :rules="[rules.email]"
                 ></v-text-field>
+                <!-- r10：年龄（与用户自行注册一致，必填） -->
+                <v-text-field
+                    required
+                    prepend-icon="mdi-cake-variant"
+                    v-model="newUser.age"
+                    :label="$t('admin.users.age')"
+                    type="number"
+                    min="1"
+                    max="120"
+                    :rules="rulesAge"
+                    :hint="$t('signup.ageHint')"
+                    persistent-hint
+                ></v-text-field>
             </v-form>
             <v-alert v-if="addUserError" type="error">{{ addUserError }}</v-alert>
         </AppDialog>
@@ -353,6 +415,7 @@
 <script>
 import ReadingStatsBanner from '~/components/ReadingStatsBanner.vue';
 import ReadingRangeDialog from '~/components/ReadingRangeDialog.vue';
+import { passwordRules, ageRules, checkPassword } from '~/utils/accountRules';
 
 export default {
     components: { ReadingStatsBanner, ReadingRangeDialog },
@@ -389,12 +452,19 @@ export default {
         changePasswordUserId: null,
         changePasswordError: "",
         changePassword: { password: "", password2: "" },
+        // r10：年龄修正（管理员可补正注册时填错/历史未填的用户）
+        showChangeAgeDialog: false,
+        changeAgeUserId: null,
+        changeAge: { value: "" },
+        changeAgeError: "",
+        changingAge: false,
         newUser: {
             username: "",
             password: "",
             password2: "",
             nickname: "",
-            email: ""
+            email: "",
+            age: ""
         },
         rules: {
             user: v => ( 20 >= v.length && v.length >= 3) || '3 ~ 20 字符',
@@ -416,6 +486,8 @@ export default {
             { text: this.$t('admin.users.username'), sortable: true, value: "username" },
             { text: this.$t('admin.users.nickname'), sortable: false, value: "name" },
             { text: this.$t('admin.users.email'), sortable: true, value: "email" },
+            // r10：年龄，管理员审核分组限额时看
+            { text: this.$t('admin.users.age'), sortable: true, value: "age" },
             { text: this.$t('admin.users.total_reading_hours'), sortable: true, value: "total_reading_seconds" },
             { text: this.$t('admin.users.download_count'), sortable: true, value: "download_count" },
             { text: this.$t('admin.users.download_quota'), sortable: false, value: "download_quota" },
@@ -446,6 +518,14 @@ export default {
         this.getDataFromApi();
     },
     computed: {
+
+        // r10：密码强度 / 年龄规则需要 i18n，放 computed 才能跟随语言切换
+        rulesPass() {
+            return passwordRules((k) => this.$t(k));
+        },
+        rulesAge() {
+            return ageRules((k) => this.$t(k));
+        },
         // 当前登录管理员自己的 id（用于「不能删/不能取消自己的管理员」判断）
         currentUserId() {
             const u = this.$store && this.$store.state && this.$store.state.user;
@@ -563,11 +643,16 @@ export default {
             if (this.$refs.changePasswordForm) this.$refs.changePasswordForm.resetValidation();
         },
         validateChangePassword(v) {
-            if (v.length < 6) return '最少6个字符';
+            if (v.length < 6) return this.$t('signup.pwdTooShort');
             return v === this.changePassword.password || this.$t('admin.users.password_mismatch');
         },
         submitChangePassword() {
             if (!this.$refs.changePasswordForm.validate()) return;
+            const pwdErr = checkPassword(this.changePassword.password, (k) => this.$t(k));
+            if (pwdErr) {
+                this.changePasswordError = pwdErr;
+                return;
+            }
             this.changingPassword = true;
             this.changePasswordError = "";
             this.$backend("/admin/users", {
@@ -583,6 +668,42 @@ export default {
                 }
             })
             .finally(() => { this.changingPassword = false; });
+        },
+        openChangeAgeDialog(item) {
+            this.changeAgeUserId = item.id;
+            this.changeAge = { value: item.age ? String(item.age) : "" };
+            this.changeAgeError = "";
+            this.showChangeAgeDialog = true;
+            this.$nextTick(() => {
+                if (this.$refs.changeAgeForm) this.$refs.changeAgeForm.resetValidation();
+            });
+        },
+        closeChangeAgeDialog() {
+            this.showChangeAgeDialog = false;
+            this.changeAgeError = "";
+            this.changeAge = { value: "" };
+            if (this.$refs.changeAgeForm) this.$refs.changeAgeForm.resetValidation();
+        },
+        submitChangeAge() {
+            if (!this.$refs.changeAgeForm.validate()) return;
+            this.changingAge = true;
+            this.changeAgeError = "";
+            const id = this.changeAgeUserId;
+            this.$backend("/admin/users", {
+                body: JSON.stringify({ id: id, age: this.changeAge.value }),
+                method: "POST",
+            })
+            .then(rsp => {
+                if (rsp.err !== "ok") {
+                    this.changeAgeError = rsp.msg;
+                } else {
+                    const row = this.items.find(x => x.id === id);
+                    if (row) row.age = Number(this.changeAge.value);
+                    this.$alert("success", this.$t('admin.users.change_age_ok'));
+                    this.closeChangeAgeDialog();
+                }
+            })
+            .finally(() => { this.changingAge = false; });
         },
         openChangeUsernameDialog(item) {
             this.changeUsernameUserId = item.id;
@@ -643,7 +764,8 @@ export default {
                 password: "",
                 password2: "",
                 nickname: "",
-                email: ""
+                email: "",
+                age: ""
             };
             if (this.$refs.addUserForm) {
                 this.$refs.addUserForm.resetValidation();
@@ -651,6 +773,11 @@ export default {
         },
         addUser() {
             if (!this.$refs.addUserForm.validate()) {
+                return false;
+            }
+            const pwdErr = checkPassword(this.newUser.password, (k) => this.$t(k));
+            if (pwdErr) {
+                this.addUserError = pwdErr;
                 return false;
             }
 
@@ -662,6 +789,7 @@ export default {
             data.append('password', this.newUser.password);
             data.append('nickname', this.newUser.nickname);
             data.append('email', this.newUser.email);
+            data.append('age', String(this.newUser.age));
 
             this.$backend('/user/new', {
                 method: 'POST',

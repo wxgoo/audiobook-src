@@ -149,13 +149,16 @@
                   autocomplete="new-password0"
                   :rules="[rules.pass]"
                 ></v-text-field>
+                <!-- r10：新密码要求「至少6位 + 大小写/数字/符号中任两类」 -->
                 <v-text-field
                   solo
                   v-model="user.password1"
                   :label="$t('user.newPassword')"
                   type="password"
                   autocomplete="new-password1"
-                  :rules="[rules.pass]"
+                  :rules="rulesPass"
+                  :hint="$t('signup.passwordHint')"
+                  persistent-hint
                 ></v-text-field>
                 <v-text-field
                   solo
@@ -438,7 +441,15 @@
 </template>
 
 <script>
+import { passwordRules } from '~/utils/accountRules';
+
 export default {
+  computed: {
+    // r10：新密码强度规则要用 i18n，放 computed 才能跟随语言切换
+    rulesPass() {
+      return passwordRules((k) => this.$t(k));
+    },
+  },
   data() {
     return {
       activeTab: 0,

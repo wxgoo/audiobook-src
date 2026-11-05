@@ -107,13 +107,11 @@ class UserUpdate(BaseHandler):
         if len(p0) > 0:
             if user.get_secure_password(p0) != user.password:
                 return {"err": "params.password.error", "msg": _("密码错误")}
-            if (
-                p1 != p2
-                or len(p1) < 6
-                or len(p1) > 20
-                or not re.match(Reader.RE_PASSWORD, p1)
-            ):
-                return {"err": "params.password.invalid", "msg": _("密码无效")}
+            if p1 != p2:
+                return {"err": "params.password.invalid", "msg": _("两次输入的密码不一致")}
+            ok, code, msg = Reader.check_password_strength(p1)
+            if not ok:
+                return {"err": code, "msg": msg}
             user.set_secure_password(p1)
 
         ke = data.get("kindle_email", "").strip()
@@ -276,6 +274,7 @@ class SignUp(BaseHandler):
         nickname = self.get_argument("nickname", "").strip()
         username = self.get_argument("username", "").strip().lower()
         password = self.get_argument("password", "").strip()
+        age_raw = self.get_argument("age", "")
         if not nickname or not username or not password:
             return {"err": "params.invalid", "msg": _("用户名或密码无效")}
 
@@ -287,12 +286,14 @@ class SignUp(BaseHandler):
             or not re.match(Reader.RE_USERNAME, username)
         ):
             return {"err": "params.username.invalid", "msg": _("用户名无效")}
-        if (
-            len(password) < 6
-            or len(password) > 20
-            or not re.match(Reader.RE_PASSWORD, password)
-        ):
-            return {"err": "params.password.invalid", "msg": _("密码无效")}
+        ok, code, msg = Reader.check_password_strength(password)
+        if not ok:
+            return {"err": code, "msg": msg}
+        # §年龄必填（r10）§ 管理员审核时要按年龄分组限额（有些书不适合某个
+        # 年龄段），所以注册即收集。老用户 age=0 表示未填，不强制回填。
+        age, code, msg = Reader.parse_age(age_raw)
+        if code != "ok":
+            return {"err": code, "msg": msg}
 
         user = (
             self.sqlite_session.query(Reader)
@@ -314,6 +315,7 @@ class SignUp(BaseHandler):
         user.username = username
         user.name = nickname
         user.email = email
+        user.age = age
         user.avatar = "reader.svg"
         user.create_time = datetime.datetime.now()
         user.update_time = datetime.datetime.now()
@@ -342,6 +344,7 @@ class UserNew(BaseHandler):
         nickname = self.get_argument("nickname", "").strip()
         username = self.get_argument("username", "").strip().lower()
         password = self.get_argument("password", "").strip()
+        age_raw = self.get_argument("age", "")
         if not nickname or not username or not password:
             return {"err": "params.invalid", "msg": _("用户名或密码无效")}
 
@@ -353,12 +356,14 @@ class UserNew(BaseHandler):
             or not re.match(Reader.RE_USERNAME, username)
         ):
             return {"err": "params.username.invalid", "msg": _("用户名无效")}
-        if (
-            len(password) < 6
-            or len(password) > 20
-            or not re.match(Reader.RE_PASSWORD, password)
-        ):
-            return {"err": "params.password.invalid", "msg": _("密码无效")}
+        ok, code, msg = Reader.check_password_strength(password)
+        if not ok:
+            return {"err": code, "msg": msg}
+        # §年龄必填（r10）§ 管理员审核时要按年龄分组限额（有些书不适合某个
+        # 年龄段），所以注册即收集。老用户 age=0 表示未填，不强制回填。
+        age, code, msg = Reader.parse_age(age_raw)
+        if code != "ok":
+            return {"err": code, "msg": msg}
 
         user = (
             self.sqlite_session.query(Reader)
@@ -380,6 +385,7 @@ class UserNew(BaseHandler):
         user.username = username
         user.name = nickname
         user.email = email
+        user.age = age
         user.avatar = "reader.svg"
         user.create_time = datetime.datetime.now()
         user.update_time = datetime.datetime.now()
