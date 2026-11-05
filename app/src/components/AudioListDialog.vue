@@ -528,6 +528,13 @@ export default {
             this._retrying = true;
             this._teardown();
             this.playAudioFile(audioItem, index);
+            // §守卫必须活过重试会话§ playAudioFile 内部会无条件把 _retrying
+            // 重置为 false（那行是给「用户新手势」用的），若不补回，重试会话
+            // 一开始守卫就是空的——重试仍停滞时看门狗 6 秒后再进 _retryPlay，
+            // 守卫放行，又是 teardown+重建+拉流，每 6 秒无限循环。
+            // 这里在同步调用返回后把标记补回：重试会话视为「资格已用掉」，
+            // 只有真正出声（playing 事件）或用户再次手动点击才恢复资格。
+            this._retrying = true;
         },
 
         _safePlay(index) {
