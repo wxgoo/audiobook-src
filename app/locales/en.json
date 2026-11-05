@@ -472,6 +472,7 @@
       "password_mismatch": "Mismatched password and confirm password",
       "age": "Age (birth year)",
       "age_unset": "Not set",
+      "age_fill": "Set",
       "change_age": "Change age (birth year)",
       "change_age_dialog_title": "Change age (birth year)",
       "change_age_save": "Save",

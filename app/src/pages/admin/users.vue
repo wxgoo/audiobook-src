@@ -24,20 +24,20 @@
         >
             <template v-slot:item.age="{ item }">
                 <!-- r11：库里存出生年份，年龄实时算出——否则跨年不会长大。
-                     未填（birth_year=0）不再显示「未填」chip：一列黄标太吵，
-                     且「显示了却不给改」没有意义。改成灰色「—」，点一下
-                     直接弹出补填对话框——不显示任何占位文案，但可改。 -->
+                     未填（birth_year=0）不显示「未填」文案，但必须能就地补填。
+                     r12 修正：之前只渲染一个「—」字符，命中区只有 12×20px，
+                     鼠标根本瞄不准（用户反馈「点不动」）。改成整格都是命中区，
+                     并给一个明确的「补填」提示，点哪都能开对话框。 -->
                 <span v-if="item.birth_year">
                     {{ item.age }}
                     <span class="grey--text text-caption">({{ item.birth_year }})</span>
                 </span>
                 <a
                     v-else-if="!item.is_admin"
-                    class="grey--text"
-                    style="cursor: pointer; text-decoration: none"
+                    class="age-unset"
                     :title="$t('admin.users.change_age')"
-                    @click="openChangeAgeDialog(item)"
-                >—</a>
+                    @click.stop.prevent="openChangeAgeDialog(item)"
+                >{{ $t('admin.users.age_fill') }}</a>
                 <span v-else class="grey--text">—</span>
             </template>
             <template v-slot:item.total_reading_seconds="{ item }">
@@ -924,5 +924,37 @@ export default {
 }
 .quota-input >>> .v-input__control {
     margin-top: 12px;
+}
+
+/* 未填出生年份的「补填」入口。
+   关键是把命中区撑满整个单元格：<a> 默认是 inline，只有文字那么宽
+   （实测 12×20px），鼠标瞄不准 = 用户说的「点不动」。
+   改成 inline-flex + min-height/min-width 铺满格子，点格子任意处都行。
+   颜色用 currentColor / 继承 + opacity，亮色和暗色主题下都可见
+   （第一版写死 rgba(0,0,0,…) 的边框和文字，暗色主题下隐形）。 */
+.age-unset {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 32px;
+    min-width: 64px;
+    padding: 4px 10px;
+    margin: -4px -10px;
+    border: 1px dashed;
+    border-radius: 4px;
+    color: inherit !important;
+    opacity: 0.6;
+    font-size: 13px;
+    text-decoration: none;
+    cursor: pointer;
+    user-select: none;
+    transition: opacity 0.15s, background-color 0.15s;
+}
+.age-unset:hover {
+    opacity: 1;
+    background-color: rgba(128, 128, 128, 0.18);
+}
+.age-unset:active {
+    background-color: rgba(128, 128, 128, 0.3);
 }
 </style>

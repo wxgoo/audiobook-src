@@ -470,6 +470,7 @@
       "password_mismatch": "两次输入的密码不一致",
       "age": "年龄（出生年份）",
       "age_unset": "未填",
+      "age_fill": "补填",
       "change_age": "修改年龄（出生年份）",
       "change_age_dialog_title": "修改年龄（出生年份）",
       "change_age_save": "保存",
