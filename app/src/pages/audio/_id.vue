@@ -284,6 +284,7 @@
       @pause="onPause"
       @error="onAudioError"
       @stalled="onAudioStalled"
+      @progress="onAudioProgress"
       preload="auto"
     ></audio>
 
@@ -864,14 +865,9 @@ export default {
         console.error('[AUDIO] 媒体错误', err.code, err.message,
           '第' + (this.currentTrackIndex + 1) + '集', this.currentAudio && this.currentAudio.url);
         this.isPlaying = false;
-        this._wantPlay = false;
-        // 报给用户，而不是留一个"点了没反应"的播放器。code 3/4 是解码/格式
-        // 不支持：网络盘上常见于文件还在生成、或者 .m4a 只写了一半。
-        if (this.$toast && typeof this.$toast.error === 'function') {
-          this.$toast.error(
-            this.$t('audio.playError', { n: this.currentTrackIndex + 1 })
-          );
-        }
+        // §不要在这里清 _wantPlay§ 看门狗靠这个意图做重拉自愈；错误后立刻清
+        // 意图会让看门狗永久停摆（重拉后再次失败 → 意图没了 → 不再重试）。
+        // 放弃的时机由看门狗的重拉上限（3 次）统一决定，那里会清意图并提示。
       }
     },
 
@@ -883,36 +879,66 @@ export default {
       console.warn('[AUDIO] 网络停滞 stalled，第' + (this.currentTrackIndex + 1) + '集');
     },
 
-    // §卡死看门狗§ 点播放后如果 8 秒还没进到 rs>=3，或者停在「已请求播放但
-    // 时间不走」，就重来一次：清掉当前加载（load() 会中止进行中的拉取），
-    // 再从头 loadTrack。网络盘上 Range 请求有时会挂在那里不回，元素永远
-    // rs=1，表现为「进度条 0:00、按播放没反应、也不报错」。
+    // §卡死看门狗（进展制，不是倒计时制）§
+    // 第一版按固定 8 秒计时：网络盘上正常加载一集可能就要 20s+，固定阈值
+    // 会把「慢」误判成「死」，反复 load() 打断正常加载，反而永远播不了。
+    // 现在只看「有没有进展」，有任意一种进展就不动手：
+    //   1. 时间在走（正在播）
+    //   2. readyState 在爬升（元数据/数据陆续到位）
+    //   3. buffered 在增长（字节还在到）——progress 事件时登记
+    // 连续 STALL_TICKS 个周期（2s×6=12s）完全零进展才算真卡死，才重拉；
+    // 且最多重拉 2 次，仍不行就明确报错提示，不再无限循环。
     _startWatchdog() {
       this._stopWatchdog();
       this._watchdog = setInterval(() => {
         const player = this.$refs.audioPlayer;
         if (!player || !this._wantPlay) return;
-        // 正在正常播放：时间在走，不用管
-        if (!player.paused && player.currentTime > (this._wdLastTime || 0) + 0.05) {
-          this._wdLastTime = player.currentTime;
+        const t = player.currentTime || 0;
+        let progressing = false;
+        if (!player.paused && t > (this._wdLastTime || 0) + 0.05) progressing = true;
+        if (player.readyState > (this._wdLastReadyState || 0)) progressing = true;
+        const bufEnd = player.buffered && player.buffered.length
+          ? player.buffered.end(player.buffered.length - 1) : 0;
+        if (bufEnd > (this._wdLastBufEnd || 0) + 0.01) progressing = true;
+        this._wdLastTime = t;
+        this._wdLastReadyState = player.readyState;
+        this._wdLastBufEnd = bufEnd;
+        if (progressing || player.readyState >= 3) {
           this._wdStuckTicks = 0;
-          return;
-        }
-        this._wdLastTime = player.currentTime;
-        if (player.readyState >= 3) {
-          this._wdStuckTicks = 0;
+          // 有进展就清空重拉计数：上一次卡死已被这次成功加载洗白，
+          // 不然几集之后累积到 3 次，好端端的一集也被拒绝重拉。
+          if (!player.paused && t > 0) this._wdReloads = 0;
           return;
         }
         this._wdStuckTicks = (this._wdStuckTicks || 0) + 1;
-        if (this._wdStuckTicks >= 4) { // 4 × 2000ms
-          this._wdStuckTicks = 0;
-          console.warn('[AUDIO] 卡死看门狗触发，重新加载第' + (this.currentTrackIndex + 1) + '集');
-          const keepReload = this.currentTrackIndex;
-          try { player.load(); } catch (e) { /* 忽略 */ }
-          this.loadTrack(keepReload);
-          this._playWhenReady(keepReload);
+        if (this._wdStuckTicks < 6) return; // 6 × 2000ms 完全零进展
+        this._wdStuckTicks = 0;
+        this._wdReloads = (this._wdReloads || 0) + 1;
+        if (this._wdReloads > 2) {
+          this._stopWatchdog();
+          this._wantPlay = false;
+          console.error('[AUDIO] 连续 3 次重拉仍无进展，放弃并提示用户',
+            this.currentAudio && this.currentAudio.url);
+          if (this.$toast && typeof this.$toast.error === 'function') {
+            this.$toast.error(this.$t('audio.playError', { n: this.currentTrackIndex + 1 }));
+          }
+          return;
         }
+        console.warn('[AUDIO] 看门狗：12s 零进展，第 ' + this._wdReloads + ' 次重拉第'
+          + (this.currentTrackIndex + 1) + '集');
+        const keepReload = this.currentTrackIndex;
+        try { player.load(); } catch (e) { /* 忽略 */ }
+        this.loadTrack(keepReload);
+        this._playWhenReady(keepReload);
       }, 2000);
+    },
+
+    // progress 事件：字节还在到，登记一下，看门狗据此不算卡死
+    onAudioProgress() {
+      const player = this.$refs.audioPlayer;
+      if (player && player.buffered && player.buffered.length) {
+        this._wdLastBufEnd = player.buffered.end(player.buffered.length - 1);
+      }
     },
 
     _stopWatchdog() {
@@ -921,6 +947,8 @@ export default {
         this._watchdog = null;
       }
       this._wdLastTime = 0;
+      this._wdLastReadyState = 0;
+      this._wdLastBufEnd = 0;
       this._wdStuckTicks = 0;
     },
 
