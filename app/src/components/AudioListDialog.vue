@@ -147,6 +147,9 @@ export default {
         this._lastAudiosSig = null;
         this._diagTaps = 0;
         this._retrying = false;
+        // §周期保存计时§（r9）见 timeupdate 里的说明：进度只靠「退出时保存」
+        // 会漏场景，改成播放中每 5 秒落一次。
+        this._lastSaveAt = 0;
     },
     mounted() {
         this.loadResumeMap();
@@ -164,6 +167,8 @@ export default {
             // 「点了没动静，必须 Ctrl+F5」。
             if (!val) {
                 this.saveProgress();
+                // 关弹窗是最后一次保存机会：force 推服务端 + 写共享键
+                this._syncSharedProgress(true);
                 this._teardown();
             } else {
                 // §打开时重载进度§ mounted 时 audios 往往还没到（父组件异步取），
@@ -171,6 +176,8 @@ export default {
                 // 是空，于是「有没有听过都从头」，而且后面 saveProgress 写入
                 // 的 key 又和读取时不一致。打开弹窗时按最新列表重建一次。
                 this.loadResumeMap();
+                // r9：顺手看一眼服务端有没有别的设备留下的进度
+                this._pullServerProgress();
             }
         },
         // §只在列表内容真变了才重建§ 父组件 audios 是整体替换的对象，而且
@@ -199,6 +206,8 @@ export default {
     beforeDestroy() {
         // 关闭时也要存一次，否则最后几秒的进度会丢
         this.saveProgress();
+        // 离开详情页：force + keepalive，别被文档卸载取消
+        this._syncSharedProgress(true);
         if (typeof window !== 'undefined' && this._onHide) {
             window.removeEventListener('pagehide', this._onHide);
         }
@@ -323,27 +332,104 @@ export default {
             const idx = this.playing_audio_index;
             if (idx === null || !this._el) return;
             const key = this._keyOf(idx);
-            if (!key) return;
-            const t = this._el.currentTime || 0;
-            const d = this._el.duration;
-            // duration 可能是 NaN（元数据未就绪），此时无法判断"是否听完"，
-            // 直接不记，避免把 NaN 写进 localStorage 污染下次续播。
+            if (key) {
+                const t = this._el.currentTime || 0;
+                const d = this._el.duration;
+                // duration 可能是 NaN（元数据未就绪），此时无法判断"是否听完"，
+                // 直接不记，避免把 NaN 写进 localStorage 污染下次续播。
+                if (!d || !isFinite(d)) return;
+                try {
+                    // 听完（相差 3 秒内）就清掉，下次从头听；否则记位置。
+                    // 5 秒内也视为「没真听」——从这种位置续播既无意义，又容易让
+                    // 浏览器在文件开头附近 seek，AAC 上偶发解码杂音。
+                    if (d && t >= d - 3) {
+                        localStorage.removeItem(key);
+                        delete this.resumeMap[idx];
+                    } else if (t > 5) {
+                        localStorage.setItem(key, JSON.stringify({ t: t }));
+                        // §同步内存§ 只写 localStorage 不够：同一次打开会话里切走再
+                        // 切回来，canplay 读的是内存 resumeMap（mounted 时加载的旧
+                        // 值），不同步就会「重开页面才有记忆」。用展开重建保证响应式。
+                        this.resumeMap = { ...this.resumeMap, [idx]: t };
+                    }
+                } catch (e) { /* 隐私模式写不进去，忽略 */ }
+            }
+            // §与播放页/服务端同步§（r9）弹窗的试听进度以前只存在自己的
+            // 每章 key 里，播放页完全看不到，服务端也不知道 —— 换设备或
+            // 从弹窗切到播放页都接不上。这里把同一份进度写进播放页用的
+            // 共享键与服务端（见 _syncSharedProgress）。
+            // 注意：放在 key 判断之外 —— bookId 晚到或列表为空时也不能
+            // 连带着把服务端同步一起跳过。
+            this._syncSharedProgress(false);
+        },
+
+        // 播放页的进度键：audio_progress_<用户>_<书>，整本一条
+        // { trackIndex, currentTime, timestamp }。弹窗按章节播放，
+        // 章节序号恰好就是播放页的 trackIndex（两处列表同源同序），
+        // 所以可以直接共用这一份进度。
+        _sharedKey() {
+            if (!this.bookId) return null;
+            return `audio_progress_${this._userId()}_${this.bookId}`;
+        },
+        _syncSharedProgress(force) {
+            const idx = this.playing_audio_index;
+            const el = this._el;
+            if (idx === null || !el || !this.bookId) return;
+            const t = el.currentTime || 0;
+            const d = el.duration;
+            // duration 是 NaN（元数据没就绪）时不动，避免污染进度
             if (!d || !isFinite(d)) return;
             try {
-                // 听完（相差 3 秒内）就清掉，下次从头听；否则记位置。
-                // 5 秒内也视为「没真听」——从这种位置续播既无意义，又容易让
-                // 浏览器在文件开头附近 seek，AAC 上偶发解码杂音。
-                if (d && t >= d - 3) {
+                const key = this._sharedKey();
+                if (key && t > 5 && t < d - 3) {
+                    localStorage.setItem(key, JSON.stringify({
+                        trackIndex: idx,
+                        currentTime: t,
+                        timestamp: Date.now(),
+                    }));
+                } else if (key && t >= d - 3) {
+                    // 听完了：清共享键，播放页下次从头开始
                     localStorage.removeItem(key);
-                    delete this.resumeMap[idx];
-                } else if (t > 5) {
-                    localStorage.setItem(key, JSON.stringify({ t: t }));
-                    // §同步内存§ 只写 localStorage 不够：同一次打开会话里切走再
-                    // 切回来，canplay 读的是内存 resumeMap（mounted 时加载的旧
-                    // 值），不同步就会「重开页面才有记忆」。用展开重建保证响应式。
-                    this.resumeMap = { ...this.resumeMap, [idx]: t };
                 }
             } catch (e) { /* 隐私模式写不进去，忽略 */ }
+            // 服务端：换设备也能续。非强制时 15s 节流；关弹窗/听完用
+            // force + keepalive（弹窗关闭不卸载文档，keepalive 主要是
+            // 离开详情页那一瞬的兜底）。
+            const now = Date.now();
+            if (!force && now - (this._lastServerPush || 0) < 15000) return;
+            this._lastServerPush = now;
+            try {
+                this.$backend(`/audio/${this.bookId}/progress`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        track_index: idx,
+                        position: t,
+                        duration: d,
+                        client_ts: Date.now(),
+                    }),
+                    keepalive: !!force,
+                });
+            } catch (e) { /* 静默：同步失败不影响本地记忆 */ }
+        },
+        // 打开弹窗时拉一次服务端进度：本地没听过的章节，如果服务端有
+        // （比如在别的设备用播放页听到一半），也显示「上次听到哪」。
+        _pullServerProgress() {
+            if (!this.bookId || !this.$backend) return;
+            try {
+                this.$backend(`/audio/${this.bookId}/progress`).then((rsp) => {
+                    if (!rsp || rsp.err !== 'ok' || !rsp.data) return;
+                    // 服务端字段是 snake_case（与播放页共用接口），这里改名
+                    const trackIndex = rsp.data.track_index;
+                    const position = rsp.data.position;
+                    const len = (this.audios && this.audios.audios || []).length;
+                    if (!(trackIndex >= 0 && trackIndex < len && position > 5)) return;
+                    // 本地已有记录的章节以本地为准（更细：按章），只补空缺
+                    if (!this.resumeMap[trackIndex]) {
+                        this.resumeMap = { ...this.resumeMap, [trackIndex]: position };
+                    }
+                }).catch(() => { /* 静默 */ });
+            } catch (e) { /* 静默 */ }
         },
         resumeHint(idx) {
             return this.resumeMap[idx] || 0;
@@ -387,6 +473,8 @@ export default {
             this.sliderPct = 0;
             this.audio_paused = false;
             this._retrying = false;  // 手动发起的是全新尝试
+            // 新一集从 0 开始算周期保存，第一拍不必等满 5 秒
+            this._lastSaveAt = 0;
 
             const el = new Audio();
             this._el = el;
@@ -494,6 +582,18 @@ export default {
                 if (!this.seekDragging && d) {
                     this.sliderPct = (t / d) * 100;
                 }
+                // §周期落盘§（r9）以前进度只在「关弹窗 / 暂停 / 切章 / 离开页面」
+                // 时才保存，正在播的时候什么都不写。于是用户在弹窗里听了几分钟，
+                // 还没关弹窗就直接点顶部「有声书」跳到播放页 —— 那边一条进度都
+                // 没有，只能从头开始（正是「两个单独的进度」的直接来源）。
+                // 播放中每 5 秒落一次，代价可以忽略（timeupdate 本来就每秒触发）。
+                // 基准取「本次开播时刻」，否则第一拍要等到开播后 5 秒才写，
+                // 用户在第 3 秒切走就什么都没留下。
+                const now = Date.now();
+                if (now - (this._lastSaveAt || 0) >= 5000) {
+                    this._lastSaveAt = now;
+                    this.saveProgress();
+                }
             });
 
             el.addEventListener('ended', () => {
@@ -501,6 +601,9 @@ export default {
                 const key = this._keyOf(index);
                 try { if (key) localStorage.removeItem(key); } catch (e) { /* 忽略 */ }
                 this.resumeMap = { ...this.resumeMap, [index]: 0 };
+                // 听完一集：同步清掉播放页的共享进度（_syncSharedProgress 内部
+                // 会因 t >= duration-3 走 removeItem 分支），服务端推「本集已完」
+                this._syncSharedProgress(true);
                 this._teardown();
             });
 

@@ -1,7 +1,7 @@
 <template>
     <div>
     <div class="home-sections-container">
-        <div v-if="isSectionEnabled('libraryStats')" class="home-section-slot" :style="{ order: sectionOrder.indexOf('libraryStats') }">
+        <div v-if="isSectionEnabled('libraryStats') && !statsRestricted" class="home-section-slot" :style="{ order: sectionOrder.indexOf('libraryStats') }">
             <v-row class="library-stats-bar">
                 <v-col cols="12">
                     <div class="stats-container">
@@ -441,7 +441,14 @@ export default {
             try {
                 const rsp = await this.$backend('/library/stats');
                 if (rsp.err === 'ok') {
-                    this.libraryStats = rsp.stats;
+                    // §受限用户§（r9）读者范围被限制的用户，后端不下发全库
+                    // 统计（总数/月度/分类都是全库口径，等于泄露白名单外的
+                    // 藏书规模），只回 restricted 标记，这里整个板块隐藏。
+                    if (rsp.restricted) {
+                        this.statsRestricted = true;
+                    } else {
+                        this.libraryStats = rsp.stats;
+                    }
                 }
             } catch (error) {
                 console.warn('Failed to load library stats:', error);
@@ -643,6 +650,8 @@ export default {
         booklistsLoaded: false,
         deferTimers: [],
         libraryStats: null,
+        // 受限用户隐藏整个书库统计板块（后端不下发数据，见 loadLibraryStats）
+        statsRestricted: false,
         showDetail: false,
         releaseNotesDialog: false,
         releaseNotesContent: '',

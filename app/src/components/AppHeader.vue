@@ -689,7 +689,10 @@ export default {
                     color: "deep-orange",
                     groups: [
                         { icon: "mdi-cog", href: "/admin/settings", text: "appHeader.systemSettings", color: "blue darken-1"},
-                        { icon: "mdi-account", href: "/admin/users", text: "appHeader.userManagement", color: "deep-orange"},
+                        // r9：入口改叫「账号管理」。这一页对管理员只剩「改用户名/改密码」，
+                        // 对普通用户仍是各设置项；叫「用户管理」会让管理员觉得自己
+                        // 也能被这里限制，实际并不会。
+                        { icon: "mdi-account", href: "/admin/users", text: "appHeader.accountManagement", color: "deep-orange"},
                         { icon: "mdi-import", href: "/admin/imports", text: "appHeader.importBooks", color: "green"},
                         { icon: "mdi-library-shelves", href: "/admin/books", text: "appHeader.bookManagement", color: "blue darken-2"},
                         { icon: "mdi-account-convert-outline", href: "/toolbox/author_norm", text: "appHeader.authorNorm", color: "blue darken-1"},

@@ -1433,6 +1433,22 @@ class BaseHandler(web.RequestHandler):
             return self.is_book_in_reading_range(book, user)
         return True
 
+    def is_library_restricted(self) -> bool:
+        """当前登录用户是否被读者范围限制（v4.7 读者组）。
+
+        书库统计（/api/library/stats*）是全库口径的数字：受限用户点开
+        首页看到的「图书总数/作者数」与 unlimited 用户完全一样，等于把
+        白名单外的藏书规模也泄露了。统计页对这类用户直接关闭（返回
+        restricted 标记，前端隐藏面板），而不是给一份「过滤后的假数字」
+        ——按人重算每月入库/空间占用代价太大，且数字本身就是全库事实。
+        游客保持旧行为（本来就能看，与受限无关）。
+        """
+        user = self.get_current_user()
+        if not user or self.is_admin():
+            return False
+        from webserver.services.reader_group import ReaderGroupService
+        return ReaderGroupService.effective_limits(user)["read_limit"] > 0
+
     def is_book_in_reading_range(self, book, user) -> bool:
         """Check whether a book is accessible for the given user based on their reading range.
 

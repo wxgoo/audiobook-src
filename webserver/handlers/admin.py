@@ -233,6 +233,32 @@ class AdminUsers(BaseHandler):
         user = self.sqlite_session.query(Reader).filter(Reader.id == uid).first()
         if not user:
             return {"err": "params.user.not_exist", "msg": _("用户ID错误")}
+
+        # §管理员不接受「限制类」设置§（r9）管理员是能管理别人的人，不该反过来
+        # 被禁言、限阅读范围、限下载配额、停用账号。前端菜单对这些行已经不显示，
+        # 这里再拦一道：直接构造请求也改不动。
+        # 只放行「账号凭据」两项：username / password。
+        # 注意 admin / delete 这两个键不在白名单里，会被下面这条拦下并单独
+        # 给出更明确的提示——否则「取消管理员」和「删除管理员」只会得到一句
+        # 含糊的「不能做限制类设置」，排查起来像权限系统坏了。
+        ADMIN_ALLOWED_FIELDS = {"username", "password"}
+        if user.is_admin() and self.user_id() != user.id:
+            if "admin" in data and not data["admin"]:
+                return {
+                    "err": "params.user.invalid",
+                    "msg": _("不允许取消其他管理员的管理员权限"),
+                }
+            if "delete" in data:
+                return {
+                    "err": "params.user.invalid",
+                    "msg": _("不允许删除管理员账号，请先取消其管理员权限"),
+                }
+            bad = [k for k in data if k not in ADMIN_ALLOWED_FIELDS]
+            if bad:
+                return {
+                    "err": "params.user.invalid",
+                    "msg": _("管理员账号只允许修改用户名和密码，不能对其做限制类设置"),
+                }
         if "active" in data:
             user.active = data["active"]
 
@@ -247,6 +273,41 @@ class AdminUsers(BaseHandler):
                 "err": "params.user.invalid",
                 "msg": _("不允许取消自己的管理员权限"),
             }
+
+        # §改名§（r9）与密码同属「账号凭据」，只认证不认设置项。
+        if "username" in data:
+            old_username = user.username
+            new_username = (data["username"] or "").strip().lower()
+            if not new_username:
+                return {"err": "params.username.invalid", "msg": _("用户名不能为空")}
+            if (
+                len(new_username) < 3
+                or len(new_username) > 20
+                or not re.match(Reader.RE_USERNAME, new_username)
+            ):
+                return {
+                    "err": "params.username.invalid",
+                    "msg": _("用户名无效：3~20 位，以小写字母开头，只能包含小写字母、数字和下划线"),
+                }
+            if new_username != user.username:
+                exists = (
+                    self.sqlite_session.query(Reader.id)
+                    .filter(Reader.username == new_username)
+                    .first()
+                )
+                if exists:
+                    return {"err": "params.username.exist", "msg": _("用户名已被使用")}
+                # §同步 nickname§ 新建用户时 name 默认等于 username；若用户从未
+                # 单独改过昵称（两者仍相同），改名时一起改，否则「用户名变了、
+                # 显示的昵称还是旧名」。改过昵称的尊重用户自己的设置，不动。
+                if not user.name or user.name == user.username:
+                    user.name = new_username
+                user.username = new_username
+                logging.info(
+                    "[ADMIN] username renamed: id=%s %s -> %s by %s",
+                    user.id, old_username, new_username,
+                    self._cached_username,
+                )
 
         if data.get("delete", "") == user.username:
             if self.user_id() == user.id:
@@ -1681,6 +1742,10 @@ class LibraryStatsDetail(BaseHandler):
     async def get(self, kind):
         if kind not in self._ttl:
             return {"err": "params.invalid", "msg": "unknown kind"}
+        # 受限用户不发给全库统计（前端据 restricted 隐藏面板），见
+        # BaseHandler.is_library_restricted 的说明。
+        if self.is_library_restricted():
+            return {"err": "ok", "restricted": True}
         cached = LibraryStatsDetail._cache.get(kind)
         if cached:
             # 过期时先返回旧数据，后台刷新（stale-while-revalidate）
@@ -1737,6 +1802,9 @@ class LibraryStats(BaseHandler):
     @js
     def get(self):
         """获取书库统计信息"""
+        # 受限用户：不给全库数字，前端隐藏整个统计条
+        if self.is_library_restricted():
+            return {"err": "ok", "restricted": True}
         now = datetime.datetime.now()
         current_year = now.year
         current_month = now.month

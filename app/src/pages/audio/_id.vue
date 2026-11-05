@@ -1249,6 +1249,14 @@ export default {
 
         const progressData = JSON.parse(saved);
 
+        // §同一设备上的「刚才」优先§（r9）详情页的试听弹窗与播放页共用这个
+        // 键。若用户是刚从弹窗点过来的，弹窗关闭时已经把「正在听的第几章、
+        // 听到第几秒」写进来了，时间戳就是刚刚；而这里的页面实例可能是
+        // keep-alive 缓存下来的旧实例（还带着上一次的 currentTime），
+        // 直接恢复自己的旧值就等于把弹窗的进度抹掉——用户体验上仍是
+        // 「两个单独的进度」。此时以 localStorage 里的最新一份为准。
+        const age = Date.now() - (progressData.timestamp || 0);
+        this._freshFromDialog = age >= 0 && age < 30000;
         // 验证数据的有效性
         if (
           progressData.trackIndex >= 0 &&

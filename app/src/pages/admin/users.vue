@@ -7,6 +7,9 @@
                 {{ $t('admin.users.add_user') }}
             </v-btn>
         </v-card-title>
+        <v-card-subtitle class="pb-0">
+            {{ $t('appHeader.accountManagementDesc') }}
+        </v-card-subtitle>
         <v-data-table
             :headers="headers"
             :items="items"
@@ -57,7 +60,11 @@
                 </td>
             </template>
             <template v-slot:item.actions="{ item }">
-                <v-menu offset-y right>
+                <!-- §管理员行不收设置项§（r9）管理员不该被别人的设置项约束：
+                     阅读范围、下载配额、禁止评论这些「限制」类操作对管理员一律
+                     不显示；能显示出来就说明后端也拦不住（后端已加同样的保护）。
+                     管理员只剩「账号凭据」两项：修改用户名、修改密码。 -->
+                <v-menu offset-y right v-if="!item.is_admin">
                     <template v-slot:activator="{ on }">
                         <v-btn color="#1B813E" class="white--text rounded-btn" small v-on="on">{{ $t('admin.users.modify_permissions') }} <v-icon small>mdi-dots-vertical</v-icon></v-btn>
                     </template>
@@ -102,8 +109,8 @@
                         </template>
                     </v-list>
                 </v-menu>
-                <v-btn small color="primary" class="white--text rounded-btn" @click="openReadingRangeDialog(item)" v-if="allowReadRangeSetting">{{ $t('admin.users.set_reading_range') }}</v-btn>
-                <v-btn small color="#1B813E" class="white--text rounded-btn" v-if="enableDownloadQuota" @click="openDownloadQuotaMenu(item, $event)">{{ $t('admin.users.set_download_quota') }}</v-btn>
+                <v-btn small color="primary" class="white--text rounded-btn" @click="openReadingRangeDialog(item)" v-if="allowReadRangeSetting && !item.is_admin">{{ $t('admin.users.set_reading_range') }}</v-btn>
+                <v-btn small color="#1B813E" class="white--text rounded-btn" v-if="enableDownloadQuota && !item.is_admin" @click="openDownloadQuotaMenu(item, $event)">{{ $t('admin.users.set_download_quota') }}</v-btn>
                 <v-menu
                     v-if="enableDownloadQuota"
                     v-model="item._quotaMenuOpen"
@@ -139,8 +146,11 @@
                         <v-btn color="primary" class="rounded-btn" small v-on="on">{{ $t('admin.users.account_management') }} <v-icon small>mdi-dots-vertical</v-icon></v-btn>
                     </template>
                     <v-list dense>
+                        <!-- §管理员行只剩账号凭据§（r9）管理员不该被别人「限制」，
+                             激活/取消管理员/禁止评论/删除用户这些都不该出现在管理员
+                             行上；管理员之间只有「改用户名、改密码」两件事可做。 -->
                         <v-list-item
-                            v-if="!item.is_active"
+                            v-if="!item.is_active && !item.is_admin"
                             @click="
                                 setuser(item.id, { active: true });
                                 item.is_active = true;
@@ -149,7 +159,7 @@
                             <v-list-item-title> {{ $t('admin.users.activate_account') }} </v-list-item-title>
                         </v-list-item>
                         <v-list-item
-                            v-if="item.is_admin"
+                            v-if="item.is_admin && item.id !== currentUserId"
                             @click="
                                 setuser(item.id, { admin: false });
                                 item.is_admin = !item.is_admin;
@@ -167,7 +177,7 @@
                             <v-list-item-title> {{ $t('admin.users.set_admin') }} </v-list-item-title>
                         </v-list-item>
                         <v-list-item
-                            v-if="item.allow_review === false"
+                            v-if="item.allow_review === false && !item.is_admin"
                             @click="
                                 setuser(item.id, { allow_review: true });
                                 item.allow_review = true;
@@ -176,7 +186,7 @@
                             <v-list-item-title> {{ $t('admin.users.unban_review') }} </v-list-item-title>
                         </v-list-item>
                         <v-list-item
-                            v-else
+                            v-else-if="!item.is_admin"
                             @click="
                                 setuser(item.id, { allow_review: false });
                                 item.allow_review = false;
@@ -185,15 +195,19 @@
                             <v-list-item-title> {{ $t('admin.users.ban_review') }} </v-list-item-title>
                         </v-list-item>
                         <v-list-item
+                            @click="openChangeUsernameDialog(item)"
+                        >
+                            <v-list-item-title> {{ $t('admin.users.change_username') }} </v-list-item-title>
+                        </v-list-item>
+                        <v-list-item
                             @click="openChangePasswordDialog(item)"
                         >
                             <v-list-item-title> {{ $t('admin.users.change_password') }} </v-list-item-title>
                         </v-list-item>
+                        <!-- 自己不能删自己：留着也只能点出一句报错 -->
                         <v-list-item
-                            @click="
-                                setuser(item.id, { delete: item.username });
-                                getDataFromApi()
-                            "
+                            v-if="item.id !== currentUserId"
+                            @click="confirmDeleteUser(item)"
                         >
                             <v-list-item-title> {{ $t('admin.users.delete_user') }} </v-list-item-title>
                         </v-list-item>
@@ -208,6 +222,34 @@
             :saving="savingReadingRange"
             @save="saveReadingRange"
         ></reading-range-dialog>
+
+        <!-- Change Username Dialog -->
+        <AppDialog
+            v-model="showChangeUsernameDialog"
+            type="action"
+            :title="$t('admin.users.change_username_dialog_title')"
+            max-width="420px"
+            dismiss-icon
+            :confirm-text="$t('admin.users.change_username_save')"
+            :confirm-loading="changingUsername"
+            @dismiss="closeChangeUsernameDialog"
+            @confirm="submitChangeUsername"
+        >
+            <v-form ref="changeUsernameForm" @submit.prevent="submitChangeUsername">
+                <v-text-field
+                    v-model="changeUsername.username"
+                    :label="$t('admin.users.username')"
+                    type="text"
+                    prepend-icon="mdi-account"
+                    autocomplete="off"
+                    :rules="[rules.username]"
+                    :hint="$t('admin.users.change_username_hint')"
+                    persistent-hint
+                    required
+                ></v-text-field>
+            </v-form>
+            <v-alert v-if="changeUsernameError" type="error" class="mt-4">{{ changeUsernameError }}</v-alert>
+        </AppDialog>
 
         <!-- Change Password Dialog -->
         <AppDialog
@@ -335,6 +377,12 @@ export default {
         savingDownloadQuota: false,
         quotaMenuX: 0,
         quotaMenuY: 0,
+        // Change username dialog
+        showChangeUsernameDialog: false,
+        changingUsername: false,
+        changeUsernameUserId: null,
+        changeUsernameError: "",
+        changeUsername: { username: "", original: "" },
         // Change password dialog
         showChangePasswordDialog: false,
         changingPassword: false,
@@ -350,6 +398,9 @@ export default {
         },
         rules: {
             user: v => ( 20 >= v.length && v.length >= 3) || '3 ~ 20 字符',
+            // 与后端 Reader.RE_USERNAME 一致：小写字母开头，只含小写字母/数字/下划线
+            username: v => /^[a-z][a-z0-9_]{2,19}$/.test((v || '').trim().toLowerCase())
+                || '3 ~ 20 位，小写字母开头，只能含小写字母、数字、下划线',
             pass: v => ( 20 >= v.length && v.length >= 6) || '6 ~ 20 字符',
             nick: v => v.length >= 2 || '最少2个字符',
             email: function (email) {
@@ -395,6 +446,11 @@ export default {
         this.getDataFromApi();
     },
     computed: {
+        // 当前登录管理员自己的 id（用于「不能删/不能取消自己的管理员」判断）
+        currentUserId() {
+            const u = this.$store && this.$store.state && this.$store.state.user;
+            return u ? u.id : null;
+        },
         pageCount: function () {
             return parseInt(this.total / 20);
         },
@@ -527,6 +583,57 @@ export default {
                 }
             })
             .finally(() => { this.changingPassword = false; });
+        },
+        openChangeUsernameDialog(item) {
+            this.changeUsernameUserId = item.id;
+            this.changeUsername = { username: item.username || "", original: item.username || "" };
+            this.changeUsernameError = "";
+            this.showChangeUsernameDialog = true;
+            this.$nextTick(() => {
+                if (this.$refs.changeUsernameForm) this.$refs.changeUsernameForm.resetValidation();
+            });
+        },
+        closeChangeUsernameDialog() {
+            this.showChangeUsernameDialog = false;
+            this.changeUsernameError = "";
+            this.changeUsername = { username: "", original: "" };
+            if (this.$refs.changeUsernameForm) this.$refs.changeUsernameForm.resetValidation();
+        },
+        submitChangeUsername() {
+            if (!this.$refs.changeUsernameForm.validate()) return;
+            const name = (this.changeUsername.username || "").trim().toLowerCase();
+            if (name === this.changeUsername.original) {
+                this.closeChangeUsernameDialog();
+                return;
+            }
+            this.changingUsername = true;
+            this.changeUsernameError = "";
+            this.$backend("/admin/users", {
+                body: JSON.stringify({ id: this.changeUsernameUserId, username: name }),
+                method: "POST",
+            })
+                .then((rsp) => {
+                    if (rsp.err !== "ok") {
+                        this.changeUsernameError = rsp.msg || this.$t("message.operationFailed");
+                    } else {
+                        this.$alert("success", this.$t("admin.users.change_username_ok"));
+                        this.closeChangeUsernameDialog();
+                        this.getDataFromApi();
+                    }
+                })
+                .catch(() => {
+                    this.changeUsernameError = this.$t("message.operationFailed");
+                })
+                .finally(() => {
+                    this.changingUsername = false;
+                });
+        },
+        // §删除要二次确认§ 删除是物理删除（后端直接 delete 行），误点无法撤销。
+        confirmDeleteUser(item) {
+            const msg = this.$t("admin.users.delete_user_confirm", { name: item.username });
+            if (!window.confirm(msg)) return;
+            this.setuser(item.id, { delete: item.username });
+            this.getDataFromApi();
         },
         closeAddUserDialog() {
             this.showAddUserDialog = false;

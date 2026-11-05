@@ -94,7 +94,10 @@ class Reader(Base, SQLAlchemyMixin):
     SQLITE_MAX_LENGTH = 32 * 1024.0
 
     RE_EMAIL = r"[^@]+@[^@]+\.[^@]+"
-    RE_USERNAME = r"[a-z][a-z0-9_]*"
+    # §必须锚定结尾§ 原为 r"[a-z][a-z0-9_]*"，配合 re.match 只校验前缀：
+    # "a-b"、"a bc"、"a;drop" 都能通过校验写入 username。用户名会拼进
+    # 各种 URL/日志/WebDAV 认证，脏字符是隐患，这里补 $ 收紧。
+    RE_USERNAME = r"[a-z][a-z0-9_]*$"
     RE_PASSWORD = r'[a-zA-Z0-9!@#$%^&*()_+\-=[\]{};\':",./<>?\|]*'
 
     __tablename__ = "readers"
