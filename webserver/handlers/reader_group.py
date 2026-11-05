@@ -59,14 +59,30 @@ class ReaderGroupOptions(BaseHandler):
             logging.warning("[reader-group] load usernames failed: %s", e)
         # 分类：calibre 自定义列 #category，值在 custom_column_<colnum> 表里。
         # 复用 base.py 里已有的非阻塞查询封装，避免自己拼 SQL 踩连接池的坑。
+        #
+        # §只列「真的有书在用」的值§
+        # custom_column_<colnum> 是 calibre 的**值字典**，不是「当前分类集合」。
+        # 一本书从某分类下移走之后，字典里的那条记录仍然留着（calibre 不清理），
+        # 于是 SELECT DISTINCT value 会把孤儿值一起吐出来——用户实测看到
+        # 「哈利波特中文版」「台版」这种明显不是分类的条目混在分类下拉里。
+        #
+        # 危害不只是碍眼：书籍侧的判定是 `book_category in limit_categories`，
+        # 而 book_category 来自 books_custom_column_<n>_link 关联的实际值。
+        # 管理员若把孤儿值当分类选进白名单，那本书根本不存在 → 该组看不到任何书，
+        # 而且界面上完全看不出原因（选项明明是从「系统里真实存在的分类」来的）。
+        #
+        # 所以必须 JOIN link 表，只保留至少被一本书引用的值，与书籍侧口径一致。
         try:
             from webserver.constants import CALIBRE_COLUMN_CATEGORY
 
             if CALIBRE_COLUMN_CATEGORY in self.calibre_db.field_metadata:
-                colnum = self.calibre_db.field_metadata[CALIBRE_COLUMN_CATEGORY]["colnum"]
-                sql = ("SELECT DISTINCT value FROM custom_column_%d "
-                       "WHERE value IS NOT NULL AND value != '' ORDER BY value"
-                       % int(colnum))
+                colnum = int(self.calibre_db.field_metadata[CALIBRE_COLUMN_CATEGORY]["colnum"])
+                sql = (
+                    "SELECT DISTINCT d.value FROM custom_column_%d d "
+                    "JOIN books_custom_column_%d_link l ON l.value = d.id "
+                    "WHERE d.value IS NOT NULL AND d.value != '' "
+                    "ORDER BY d.value" % (colnum, colnum)
+                )
 
                 def _query():
                     # 注意：run_calibre_async(locked=True) 内部已经持有 db_lock，
