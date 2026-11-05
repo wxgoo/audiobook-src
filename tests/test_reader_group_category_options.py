@@ -146,3 +146,46 @@ def test_handler_source_uses_join():
         r"WHERE\s+value\s+IS\s+NOT\s+NULL", src
     )
     assert not bad, "reader_group.py 仍在使用不带 JOIN 的旧分类 SQL"
+
+
+def test_library_stats_category_count_uses_same_rule():
+    """库统计里的「分类 N 个」必须与下拉、书籍判定同口径。
+
+    原来 `get_custom_category_count` 用的是 `SELECT count(*) FROM
+    custom_column_N`，数的是**字典行数**，孤儿值也算进去。结果是
+    库统计显示「分类 5 个」，进读者组下拉只有 2 个，管理员以为漏了。
+    旁边同一行的 tags / authors 用的是 all_tags()/all_authors()，
+    都是「有书在用」的口径，也不能自相矛盾。
+    """
+    import os
+    import re
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "webserver", "handlers", "base.py"),
+               encoding="utf-8").read()
+
+    i = src.find("def get_custom_category_count")
+    assert i > 0
+    seg = src[i:i + 1600]
+
+    assert "JOIN" in seg, (
+        "get_custom_category_count 没有 JOIN 书籍关联表，统计的是 calibre "
+        "值字典的行数（含孤儿值），与读者组下拉、书籍侧判定口径不一致"
+    )
+    assert "count(DISTINCT" in seg, seg[:400]
+    assert re.search(r"count\(\*\)\s*FROM\s*\{?table", seg) is None, (
+        "仍在使用 count(*) 数字典行数"
+    )
+
+
+def test_library_stats_count_matches_reality(calibre_db):
+    """真库上验证：数字必须等于「有书在用的分类数」，不是字典行数。"""
+    tables = [r[0] for r in calibre_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")]
+    assert "books_custom_column_5_link" in tables
+
+    n_used = calibre_db.execute(_new_sql(calibre_db)).fetchall()
+    n_dict = calibre_db.execute("SELECT count(*) FROM custom_column_5").fetchone()[0]
+
+    # 夹具里字典 5 条、实际 2 条——两者必须不同，否则这个测试测不出东西
+    assert len(n_used) == 2 and n_dict == 5, (len(n_used), n_dict)

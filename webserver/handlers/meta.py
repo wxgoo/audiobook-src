@@ -122,10 +122,18 @@ class MetaList(ListHandler):
         # 管理员不过滤（与 is_book_visible 的豁免保持一致）
         if self.current_user.is_admin():
             return tag_list
-        read_limit = getattr(self.current_user, 'read_limit', 0) or 0
+        # §必须走 effective_limits§
+        # 以前这里直接读 current_user.read_limit / limit_tags，绕过了读者组：
+        # 一个用户靠「读者组」拿到白名单，自身字段是 0，于是标签列表
+        # 完全不过滤——他能从标签云里看到被禁的分类，甚至顺着标签点进去。
+        # base.is_book_in_reading_range 用的是 effective_limits，两处必须一致。
+        from webserver.services.reader_group import ReaderGroupService
+
+        eff = ReaderGroupService.effective_limits(self.current_user)
+        read_limit = int(eff.get("read_limit") or 0)
         if read_limit == 0:
             return tag_list
-        limit_tags = set(filter(None, (self.current_user.limit_tags or "").split(',')))
+        limit_tags = set(filter(None, (eff.get("limit_tags") or "").split(",")))
         if not limit_tags:
             return tag_list
         if read_limit == 1:

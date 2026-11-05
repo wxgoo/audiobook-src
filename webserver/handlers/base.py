@@ -1634,15 +1634,32 @@ class BaseHandler(web.RequestHandler):
             return top_level_count(folder_counts(self.calibre_db_cache))
 
     def get_custom_category_count(self):
-        """Return the number of distinct values in the custom #category column."""
+        """Return the number of distinct #category values **that books actually use**.
+
+        §为什么要 JOIN§
+        `custom_column_<n>` 是 calibre 的**值字典**，一本书从某分类移走后
+        字典记录仍在（calibre 不清理）。原来用 `count(*)` 数的是字典行数，
+        会把孤儿值算进去——用户实测「分类」显示的数字比真实分类多，
+        而且和同一行的 tags / authors（`all_tags()` / `all_authors()` 都是
+        「有书在用」的语义）对不上。
+
+        口径必须与书籍侧判定（`book_category in limit_categories`）一致，
+        否则管理员看到「5 个分类」，进读者组下拉只有 2 个，会以为漏了。
+        """
         from webserver.constants import CALIBRE_COLUMN_CATEGORY
 
         if CALIBRE_COLUMN_CATEGORY not in self.calibre_db.field_metadata:
             return 0
 
         meta = self.calibre_db.field_metadata[CALIBRE_COLUMN_CATEGORY]
-        table = f"custom_column_{meta['colnum']}"
-        sql = f"SELECT count(*) FROM {table}"
+        colnum = meta["colnum"]
+        table = f"custom_column_{colnum}"
+        link_table = f"books_{table}_link"
+        sql = (
+            f"SELECT count(DISTINCT d.id) FROM {table} d "
+            f"JOIN {link_table} l ON l.value = d.id "
+            f"WHERE d.value IS NOT NULL AND d.value != ''"
+        )
         cache_key = f"get_custom_category_count:{table}"
         try:
             with self.db_lock:
