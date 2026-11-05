@@ -23,7 +23,11 @@
             class="elevation-1"
         >
             <template v-slot:item.age="{ item }">
-                <span v-if="item.age">{{ item.age }}</span>
+                <!-- r11：库里存出生年份，年龄实时算出——否则跨年不会长大 -->
+                <span v-if="item.birth_year">
+                    {{ item.age }}
+                    <span class="grey--text text-caption">({{ item.birth_year }})</span>
+                </span>
                 <v-chip v-else x-small color="warning" text-color="white">
                     {{ $t('admin.users.age_unset') }}
                 </v-chip>
@@ -200,9 +204,9 @@
                         >
                             <v-list-item-title> {{ $t('admin.users.ban_review') }} </v-list-item-title>
                         </v-list-item>
-                        <!-- §年龄（r10）§ 注册时填错、或老用户 age=0 未填，
-                             管理员在这里补正，方便按年龄分组限额。
-                             管理员行不出现（age 属设置类，后端白名单同样拦）。 -->
+                        <!-- §出生年份（r11）§ 注册时填错、或老用户 birth_year=0
+                             未填，管理员在这里补正，方便按年龄分组限额。
+                             管理员行不出现（属设置类，后端白名单同样拦）。 -->
                         <v-list-item
                             v-if="!item.is_admin"
                             @click="openChangeAgeDialog(item)"
@@ -253,17 +257,20 @@
             <v-form ref="changeAgeForm" @submit.prevent="submitChangeAge">
                 <v-text-field
                     v-model="changeAge.value"
-                    :label="$t('admin.users.age')"
+                    :label="$t('signup.birthYear')"
                     type="number"
-                    min="1"
-                    max="120"
+                    :min="birthYearMin"
+                    :max="birthYearMax"
                     prepend-icon="mdi-cake-variant"
-                    :rules="rulesAge"
-                    :hint="$t('signup.ageHint')"
+                    :rules="rulesBirthYear"
+                    :hint="$t('signup.birthYearHint')"
                     persistent-hint
                     autofocus
                     required
                 ></v-text-field>
+                <div v-if="changeAgePreview > 0" class="text-caption grey--text">
+                    {{ $t('signup.birthYearPreview', { age: changeAgePreview, year: birthYearMax }) }}
+                </div>
             </v-form>
             <v-alert v-if="changeAgeError" type="error" class="mt-2">{{ changeAgeError }}</v-alert>
         </AppDialog>
@@ -393,17 +400,17 @@
                     autocomplete="new-email"
                     :rules="[rules.email]"
                 ></v-text-field>
-                <!-- r10：年龄（与用户自行注册一致，必填） -->
+                <!-- r11：出生年份（与用户自行注册一致，必填） -->
                 <v-text-field
                     required
                     prepend-icon="mdi-cake-variant"
-                    v-model="newUser.age"
-                    :label="$t('admin.users.age')"
+                    v-model="newUser.birth_year"
+                    :label="$t('signup.birthYear')"
                     type="number"
-                    min="1"
-                    max="120"
-                    :rules="rulesAge"
-                    :hint="$t('signup.ageHint')"
+                    :min="birthYearMin"
+                    :max="birthYearMax"
+                    :rules="rulesBirthYear"
+                    :hint="$t('signup.birthYearHint')"
                     persistent-hint
                 ></v-text-field>
             </v-form>
@@ -415,7 +422,14 @@
 <script>
 import ReadingStatsBanner from '~/components/ReadingStatsBanner.vue';
 import ReadingRangeDialog from '~/components/ReadingRangeDialog.vue';
-import { passwordRules, ageRules, checkPassword } from '~/utils/accountRules';
+import {
+    passwordRules,
+    birthYearRules,
+    checkPassword,
+    ageFromBirthYear,
+    BIRTH_YEAR_MIN,
+    currentYear,
+} from '~/utils/accountRules';
 
 export default {
     components: { ReadingStatsBanner, ReadingRangeDialog },
@@ -464,7 +478,7 @@ export default {
             password2: "",
             nickname: "",
             email: "",
-            age: ""
+            birth_year: ""
         },
         rules: {
             user: v => ( 20 >= v.length && v.length >= 3) || '3 ~ 20 字符',
@@ -519,12 +533,22 @@ export default {
     },
     computed: {
 
-        // r10：密码强度 / 年龄规则需要 i18n，放 computed 才能跟随语言切换
+        // r11：密码强度 / 出生年份规则需要 i18n，放 computed 才能跟随语言切换
         rulesPass() {
             return passwordRules((k) => this.$t(k));
         },
-        rulesAge() {
-            return ageRules((k) => this.$t(k));
+        rulesBirthYear() {
+            return birthYearRules((k) => this.$t(k));
+        },
+        birthYearMin() {
+            return BIRTH_YEAR_MIN;
+        },
+        birthYearMax() {
+            return currentYear();
+        },
+        // 「改年龄」对话框里即时显示换算出的年龄，避免管理员填错年份
+        changeAgePreview() {
+            return ageFromBirthYear(this.changeAge.value);
         },
         // 当前登录管理员自己的 id（用于「不能删/不能取消自己的管理员」判断）
         currentUserId() {
@@ -671,7 +695,7 @@ export default {
         },
         openChangeAgeDialog(item) {
             this.changeAgeUserId = item.id;
-            this.changeAge = { value: item.age ? String(item.age) : "" };
+            this.changeAge = { value: item.birth_year ? String(item.birth_year) : "" };
             this.changeAgeError = "";
             this.showChangeAgeDialog = true;
             this.$nextTick(() => {
@@ -690,7 +714,7 @@ export default {
             this.changeAgeError = "";
             const id = this.changeAgeUserId;
             this.$backend("/admin/users", {
-                body: JSON.stringify({ id: id, age: this.changeAge.value }),
+                body: JSON.stringify({ id: id, birth_year: String(this.changeAge.value) }),
                 method: "POST",
             })
             .then(rsp => {
@@ -698,7 +722,10 @@ export default {
                     this.changeAgeError = rsp.msg;
                 } else {
                     const row = this.items.find(x => x.id === id);
-                    if (row) row.age = Number(this.changeAge.value);
+                    if (row) {
+                        row.birth_year = Number(this.changeAge.value);
+                        row.age = ageFromBirthYear(row.birth_year);
+                    }
                     this.$alert("success", this.$t('admin.users.change_age_ok'));
                     this.closeChangeAgeDialog();
                 }
@@ -765,7 +792,7 @@ export default {
                 password2: "",
                 nickname: "",
                 email: "",
-                age: ""
+                birth_year: ""
             };
             if (this.$refs.addUserForm) {
                 this.$refs.addUserForm.resetValidation();
@@ -789,7 +816,7 @@ export default {
             data.append('password', this.newUser.password);
             data.append('nickname', this.newUser.nickname);
             data.append('email', this.newUser.email);
-            data.append('age', String(this.newUser.age));
+            data.append('birth_year', String(this.newUser.birth_year));
 
             this.$backend('/user/new', {
                 method: 'POST',

@@ -239,13 +239,14 @@
     "pwdTooLong": "密碼不能超過 20 位",
     "pwdBadChar": "密碼只能包含字母、數字和常見符號",
     "pwdTooWeak": "密碼太簡單：需包含大寫字母、小寫字母、數字、符號中的至少兩種",
-    "age": "年齡",
-    "ageHint": "用於圖書分級：管理員會按年齡分組設定可閱讀範圍",
-    "ageRequired": "請填寫年齡",
-    "ageInvalid": "年齡需為整數",
-    "ageRange": "年齡需在 1~120 之間",
-    "ageHonest": "我確認所填年齡真實有效，如有虛報由本人承擔相應後果（包括但不限於因年齡不實接觸到不適宜內容）",
-    "ageHonestRequired": "請勾選確認真實年齡"
+    "birthYear": "出生年份",
+    "birthYearHint": "填四位年份，如 1998。按出生年份自動換算年齡，用於圖書分級（管理員會按年齡段設定可閱讀範圍）",
+    "birthYearPreview": "按 {year} 年計算，你今年 {age} 歲",
+    "birthYearRequired": "請填寫出生年份",
+    "birthYearInvalid": "出生年份需為四位數字，如 1998",
+    "birthYearRange": "出生年份需在 1900~{year} 之間",
+    "ageHonest": "我確認所填出生年份真實有效，如有虛報由本人承擔相應後果（包括但不限於因年齡不實接觸到不適宜內容）",
+    "ageHonestRequired": "請勾選確認真實出生年份"
   },
   "starting": {
     "title": "系統啟動中，請稍候",
@@ -466,10 +467,10 @@
       "change_password_save": "確認修改",
       "change_password_ok": "密碼修改成功",
       "password_mismatch": "兩次輸入的密碼不一致",
-      "age": "年齡",
+      "age": "年齡（出生年份）",
       "age_unset": "未填",
-      "change_age": "修改年齡",
-      "change_age_dialog_title": "修改年齡",
+      "change_age": "修改年齡（出生年份）",
+      "change_age_dialog_title": "修改年齡（出生年份）",
       "change_age_save": "儲存",
       "change_age_ok": "年齡已更新"
     }

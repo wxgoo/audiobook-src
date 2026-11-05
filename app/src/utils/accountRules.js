@@ -1,7 +1,7 @@
-// 密码强度与年龄校验（4.6.0-19 r10）
+// 密码强度与出生年份校验（4.6.0-19 r11）
 //
 // 规则与后端 webserver/models.py 的 Reader.check_password_strength /
-// Reader.parse_age 一一对应。前端做提示只是为了「边输边看到问题」，
+// Reader.parse_birth_year 一一对应。前端做提示只是为了「边输边看到问题」，
 // 后端仍会再校验一次（不信任前端）。
 //
 // 为什么单独抽出来：注册页、账号设置、管理员改密/建号四个地方都要用，
@@ -12,8 +12,21 @@ export const PASSWORD_MAX_LEN = 20;
 // 大写 / 小写 / 数字 / 特殊符号，至少命中其中 N 类
 export const PASSWORD_MIN_KINDS = 2;
 
-export const AGE_MIN = 1;
-export const AGE_MAX = 120;
+// r11 起存出生年份而不是整数岁：年龄随时在变，存死了就会「注册时 12 岁，
+// 三年后还是 12 岁」，分组限额永远不升级。出生年份下限 1900，上限当年年份
+// （与后端 Reader.BIRTH_YEAR_MIN / current_year() 对齐）。
+export const BIRTH_YEAR_MIN = 1900;
+
+export function currentYear() {
+    return new Date().getFullYear();
+}
+
+// 旧字段兼容：整数岁 → 出生年份
+export function ageToBirthYear(age) {
+    const n = Number(age);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return currentYear() - Math.floor(n);
+}
 
 const KIND_TESTS = [
     { key: 'lower', re: /[a-z]/ },
@@ -56,17 +69,32 @@ export function passwordRules(t) {
     ];
 }
 
-export function ageRules(t) {
+// 返回 null 表示通过，否则返回错误文案。注册页、管理员改年龄共用。
+export function checkBirthYear(value, t) {
+    const msg = (key, fallback) => (t ? t(key) : fallback);
+    const text = String(value === undefined || value === null ? '' : value).trim();
+    if (!text) return msg('signup.birthYearRequired', '请填写出生年份');
+    if (!/^\d{4}$/.test(text)) {
+        return msg('signup.birthYearInvalid', '出生年份需为四位数字（如 1998）');
+    }
+    const n = Number(text);
+    const hi = currentYear();
+    if (n < BIRTH_YEAR_MIN || n > hi) {
+        return msg('signup.birthYearRange', `出生年份需在${BIRTH_YEAR_MIN}~${hi}之间`);
+    }
+    return null;
+}
+
+export function birthYearRules(t) {
     return [
-        (v) => {
-            const text = String(v === undefined || v === null ? '' : v).trim();
-            if (!text) return t ? t('signup.ageRequired') : '请填写年龄';
-            if (!/^\d+$/.test(text)) return t ? t('signup.ageInvalid') : '年龄需为整数';
-            const n = Number(text);
-            if (n < AGE_MIN || n > AGE_MAX) {
-                return t ? t('signup.ageRange') : `年龄需在${AGE_MIN}~${AGE_MAX}之间`;
-            }
-            return true;
-        },
+        (v) => checkBirthYear(v, t) || true,
     ];
+}
+
+// 由出生年份算年龄，用于管理员列表展示与「当前年龄」提示
+export function ageFromBirthYear(birthYear) {
+    const n = Number(birthYear);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    const age = currentYear() - Math.floor(n);
+    return age > 0 ? age : 0;
 }

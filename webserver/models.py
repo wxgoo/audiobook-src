@@ -141,30 +141,91 @@ class Reader(Base, SQLAlchemyMixin):
                     % {"n": cls.PASSWORD_MIN_KINDS})
         return (True, "ok", "")
 
-    # §年龄（4.6.0-19 r10）§
+    # §出生年份（4.6.0-19 r11）§
     # 注册必填，目的是让管理员审核时能按年龄做读者分组限额（有些书不适合
-    # 某个年龄段）。范围按现实情况收在 1~120：过滤掉 0、负数、999 这种
-    # 明显乱填——填错了分组就分错，比空着更糟。
-    AGE_MIN = 1
-    AGE_MAX = 120
+    # 某个年龄段）。
+    #
+    # r10 存的是「填表那一刻的整数岁」，问题在于它不会自己长大：一个 12 岁
+    # 的孩子注册三年后仍被判成 12 岁，本该自动解锁的书永远解锁不了，反之
+    # 卡在未成年人组的成年人也要管理员手工改。改存出生年份后，任何时候用
+    # 当前年份一减就是准确年龄，分组判定自然随时间推进。
+    #
+    # 范围：下限 1900（再往前不现实，且几乎必然是乱填），上限当前年份
+    # （不允许填未来）。0 保留为「未填」，专供历史用户——老库补列就是 0，
+    # 不强制回填，否则一升级全员被挡在门外。
+    BIRTH_YEAR_MIN = 1900
 
     @classmethod
-    def parse_age(cls, raw):
-        """把注册表单里的年龄转成整数。返回 (age, 错误码, 提示)。
+    def current_year(cls):
+        """当前年份。抽成方法是为了测试能打桩，不必等到真跨年。"""
+        return datetime.datetime.now().year
+
+    @classmethod
+    def birth_year_range(cls):
+        return (cls.BIRTH_YEAR_MIN, cls.current_year())
+
+    @classmethod
+    def parse_birth_year(cls, raw, required=True):
+        """把注册表单里的出生年份转成整数。返回 (birth_year, 错误码, 提示)。
 
         宽松接受字符串数字（前端 input 传来的是 str），其余一律拒绝，
         不做「四舍五入」之类的猜测。
         """
         text = str(raw if raw is not None else "").strip()
         if not text:
-            return (0, "params.age.required", _("请填写年龄"))
+            if not required:
+                return (0, "ok", "")
+            return (0, "params.birth_year.required", _("请填写出生年份"))
         if not text.isdigit():
-            return (0, "params.age.invalid", _("年龄需为整数"))
+            return (0, "params.birth_year.invalid", _("出生年份需为四位数字"))
+        year = int(text)
+        lo, hi = cls.birth_year_range()
+        if year < lo or year > hi:
+            return (0, "params.birth_year.invalid",
+                    _("出生年份需在%(a)s~%(b)s之间") % {"a": lo, "b": hi})
+        return (year, "ok", "")
+
+    @classmethod
+    def age_from_birth_year(cls, birth_year):
+        """由出生年份算年龄。未填（0/None）返回 0，年龄下限 0。
+
+        注意这是「年份差」而不是「生日是否已过」的精确年龄——同一年里
+        1 月 1 日出生和 12 月 31 日出生算同岁，最多差一岁。分组限额用
+        这个粒度足够，且不必额外存月日。
+        """
+        try:
+            year = int(birth_year or 0)
+        except (TypeError, ValueError):
+            return 0
+        if year <= 0:
+            return 0
+        age = cls.current_year() - year
+        return age if age > 0 else 0
+
+    @property
+    def age(self):
+        """派生年龄（不落库）。管理员列表、分组限额都用它。"""
+        return self.age_from_birth_year(self.birth_year)
+
+    @classmethod
+    def parse_age_to_birth_year(cls, raw):
+        """兼容旧字段：前端若仍按「整数岁」提交 age，换算成出生年份。
+
+        r10 的前端在原安装上升级时可能还有缓存页，直接报「参数无效」会让
+        管理员以为改不动年龄。这里做一次换算，返回 (birth_year, code, msg)。
+        """
+        text = str(raw if raw is not None else "").strip()
+        if not text:
+            return (0, "params.birth_year.required", _("请填写出生年份"))
+        if not text.isdigit():
+            return (0, "params.birth_year.invalid", _("出生年份需为四位数字"))
         age = int(text)
-        if age < cls.AGE_MIN or age > cls.AGE_MAX:
-            return (0, "params.age.invalid",
-                    _("年龄需在%(a)s~%(b)s之间") % {"a": cls.AGE_MIN, "b": cls.AGE_MAX})
-        return (age, "ok", "")
+        birth_year = cls.current_year() - age
+        lo, hi = cls.birth_year_range()
+        if age <= 0 or birth_year < lo or birth_year > hi:
+            return (0, "params.birth_year.invalid",
+                    _("出生年份需在%(a)s~%(b)s之间") % {"a": lo, "b": hi})
+        return (birth_year, "ok", "")
 
     __tablename__ = "readers"
     id = Column(Integer, primary_key=True)
@@ -193,10 +254,11 @@ class Reader(Base, SQLAlchemyMixin):
     allow_statistic = Column(Boolean, default=True, nullable=False)  # 是否采集该用户的阅读/下载统计，默认采集（opt-out）
     show_home_recommendations = Column(Boolean, default=True, nullable=False)  # 首页展示其他用户推荐，见 plan/Social_Reading_Plan.md
     allow_review = Column(Boolean, default=True, nullable=False)  # 是否允许发表评论（管理员可禁止）
-    # §年龄（4.6.0-19 r10）§ 注册时必填，供管理员审核后做读者分组限额
-    # （有些书不适合某个年龄段）。存整数岁，0 表示「历史用户未填」——
-    # 老库补列时就是 0，不强制老用户回填，否则一升级全员被挡在门外。
-    age = Column(Integer, default=0, nullable=False)
+    # §出生年份（4.6.0-19 r11）§ 注册时必填，供管理员审核后做读者分组限额
+    # （有些书不适合某个年龄段）。存出生年份而非整数岁，年龄由 age 属性
+    # 实时算出，随时间自然增长。0 表示「历史用户未填」——老库补列时就是 0，
+    # 不强制老用户回填，否则一升级全员被挡在门外。
+    birth_year = Column(Integer, default=0, nullable=False)
 
     def __str__(self):
         return "<id=%d, username=%s, email=%s, admin:%d>" % (

@@ -184,7 +184,9 @@ class AdminUsers(BaseHandler):
                 "download_count": user.download_count or 0,
                 "total_reading_seconds": user.total_reading_seconds or 0,
                 "allow_review": user.allow_review,
-                # r10：注册必填年龄，管理员审核时按年龄分组限额
+                # r11：注册必填出生年份，年龄由年份实时算出（不再落库整数岁，
+                # 否则跨年不会自然长大）。birth_year=0 表示历史用户未填。
+                "birth_year": user.birth_year or 0,
                 "age": user.age or 0,
             }
             if enable_vip_quota:
@@ -270,13 +272,19 @@ class AdminUsers(BaseHandler):
         if "allow_review" in data:
             user.allow_review = bool(data["allow_review"])
 
-        # §年龄（r10）§ 注册时填错的允许管理员纠正；0 表示「未填」，
-        # 老用户补填也走这里。范围校验复用 Reader.parse_age。
-        if "age" in data:
-            age, code, msg = Reader.parse_age(data["age"])
+        # §出生年份（r11）§ 注册时填错的允许管理员纠正；0 表示「未填」，
+        # 老用户补填也走这里。范围校验复用 Reader.parse_birth_year。
+        # 兼容：若前端/第三方仍按老字段名 age 传整数岁，换算成出生年份再落库，
+        # 避免升级瞬间「改年龄」全部报参数错误。
+        if "birth_year" in data or "age" in data:
+            if "birth_year" in data:
+                birth_year, code, msg = Reader.parse_birth_year(data["birth_year"])
+            else:
+                age, code, msg = Reader.parse_age_to_birth_year(data["age"])
+                birth_year = age
             if code != "ok":
                 return {"err": code, "msg": msg}
-            user.age = age
+            user.birth_year = birth_year
 
         if user.admin is False and self.user_id() == user.id:
             return {

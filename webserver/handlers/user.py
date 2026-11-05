@@ -274,7 +274,7 @@ class SignUp(BaseHandler):
         nickname = self.get_argument("nickname", "").strip()
         username = self.get_argument("username", "").strip().lower()
         password = self.get_argument("password", "").strip()
-        age_raw = self.get_argument("age", "")
+        birth_year_raw = self.get_argument("birth_year", "")
         if not nickname or not username or not password:
             return {"err": "params.invalid", "msg": _("用户名或密码无效")}
 
@@ -289,9 +289,10 @@ class SignUp(BaseHandler):
         ok, code, msg = Reader.check_password_strength(password)
         if not ok:
             return {"err": code, "msg": msg}
-        # §年龄必填（r10）§ 管理员审核时要按年龄分组限额（有些书不适合某个
-        # 年龄段），所以注册即收集。老用户 age=0 表示未填，不强制回填。
-        age, code, msg = Reader.parse_age(age_raw)
+        # §出生年份必填（r11）§ 管理员审核时要按年龄分组限额（有些书不适合
+        # 某个年龄段），所以注册即收集。存出生年份而不是整数岁，年龄随之
+        # 自然增长，不必每年人工修正。老用户 birth_year=0 表示未填。
+        birth_year, code, msg = Reader.parse_birth_year(birth_year_raw)
         if code != "ok":
             return {"err": code, "msg": msg}
 
@@ -315,7 +316,7 @@ class SignUp(BaseHandler):
         user.username = username
         user.name = nickname
         user.email = email
-        user.age = age
+        user.birth_year = birth_year
         user.avatar = "reader.svg"
         user.create_time = datetime.datetime.now()
         user.update_time = datetime.datetime.now()
@@ -344,7 +345,7 @@ class UserNew(BaseHandler):
         nickname = self.get_argument("nickname", "").strip()
         username = self.get_argument("username", "").strip().lower()
         password = self.get_argument("password", "").strip()
-        age_raw = self.get_argument("age", "")
+        birth_year_raw = self.get_argument("birth_year", "")
         if not nickname or not username or not password:
             return {"err": "params.invalid", "msg": _("用户名或密码无效")}
 
@@ -359,9 +360,10 @@ class UserNew(BaseHandler):
         ok, code, msg = Reader.check_password_strength(password)
         if not ok:
             return {"err": code, "msg": msg}
-        # §年龄必填（r10）§ 管理员审核时要按年龄分组限额（有些书不适合某个
-        # 年龄段），所以注册即收集。老用户 age=0 表示未填，不强制回填。
-        age, code, msg = Reader.parse_age(age_raw)
+        # §出生年份必填（r11）§ 管理员审核时要按年龄分组限额（有些书不适合
+        # 某个年龄段），所以注册即收集。存出生年份而不是整数岁，年龄随之
+        # 自然增长，不必每年人工修正。老用户 birth_year=0 表示未填。
+        birth_year, code, msg = Reader.parse_birth_year(birth_year_raw)
         if code != "ok":
             return {"err": code, "msg": msg}
 
@@ -385,7 +387,7 @@ class UserNew(BaseHandler):
         user.username = username
         user.name = nickname
         user.email = email
-        user.age = age
+        user.birth_year = birth_year
         user.avatar = "reader.svg"
         user.create_time = datetime.datetime.now()
         user.update_time = datetime.datetime.now()

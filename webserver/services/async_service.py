@@ -269,6 +269,28 @@ class AsyncService(metaclass=SingletonType):
                 ALTER TABLE readers ADD COLUMN age INTEGER NOT NULL DEFAULT 0
             """))
             changed = True
+
+        # §birth_year（4.6.0-19 r11）§ r10 把年龄存成「整数岁」，跨年不会
+        # 自然长大：12 岁注册的孩子三年后仍被判 12 岁，本该解锁的书永远解
+        # 锁不了。改存出生年份后年龄实时算出，分组自然随时间推进。
+        #
+        # 迁移分两步，顺序不能反：
+        #   1) 补列 birth_year（默认 0 = 未填）
+        #   2) 把老列 age>0 的用户换算成 birth_year = 当前年 - age
+        # 只在「本次新补的列」上回填，避免管理员手工改过的 birth_year 被
+        # 每轮启动用旧的 age 覆盖回去。age 列保留不删——SQLite 删列代价大，
+        # 而且留着还能兜住回滚。
+        if "birth_year" not in columns:
+            self.session.execute(text("""
+                ALTER TABLE readers ADD COLUMN birth_year INTEGER NOT NULL DEFAULT 0
+            """))
+            if "age" in columns:
+                self.session.execute(text("""
+                    UPDATE readers
+                       SET birth_year = CAST(strftime('%Y', 'now') AS INTEGER) - age
+                     WHERE age > 0 AND (birth_year IS NULL OR birth_year = 0)
+                """))
+            changed = True
         return changed
 
     def adjust_booklist_table(self):

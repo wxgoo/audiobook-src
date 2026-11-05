@@ -12,10 +12,16 @@
                     <v-text-field required prepend-icon="mdi-lock"   v-model="password2" :label="$t('signup.confirmPassword')" type="password" autocomplete="new-password2" :rules="[valid]"                  ></v-text-field>
                     <v-text-field required prepend-icon="mdi-account-outline"   v-model="nickname"  :label="$t('signup.nickname')"   type="text"     autocomplete="new-nickname"  :rules="[rules.nick]"         ></v-text-field>
                     <v-text-field required prepend-icon="mdi-email"  v-model="email"     :label="$t('signup.email')"      type="text"     autocomplete="new-email"     :rules="[rules.email]"            ></v-text-field>
-                    <!-- §年龄必填（r10）§ 管理员审核时要按年龄分组限额（有些书
-                         不适合某个年龄段），所以注册即收集，并明确提示不得虚报。 -->
-                    <v-text-field required prepend-icon="mdi-cake-variant" v-model="age" :label="$t('signup.age')"
-                                  type="number" min="1" max="120" :rules="rulesAge" :hint="$t('signup.ageHint')" persistent-hint ></v-text-field>
+                    <!-- §出生年份必填（r11）§ 管理员审核时要按年龄分组限额（有些书
+                         不适合某个年龄段），所以注册即收集，并明确提示不得虚报。
+                         存出生年份而不是「当前几岁」：年龄年年变，存死了就会
+                         「12 岁注册、三年后还是 12 岁」，该解锁的书永远解锁不了。 -->
+                    <v-text-field required prepend-icon="mdi-cake-variant" v-model="birthYear" :label="$t('signup.birthYear')"
+                                  type="number" :min="birthYearMin" :max="birthYearMax" :rules="rulesBirthYear"
+                                  :hint="$t('signup.birthYearHint')" persistent-hint ></v-text-field>
+                    <div v-if="agePreview > 0" class="text-caption grey--text mt-1 mb-2">
+                        {{ $t('signup.birthYearPreview', { age: agePreview, year: birthYearMax }) }}
+                    </div>
                     <v-checkbox v-model="ageHonest" :label="$t('signup.ageHonest')" :rules="[v => !!v || $t('signup.ageHonestRequired')]" class="mt-4" ></v-checkbox>
                 </v-form>
                 <div align="center">
@@ -30,7 +36,15 @@
 </template>
 
 <script>
-import { passwordRules, ageRules, checkPassword } from '~/utils/accountRules';
+import {
+    passwordRules,
+    birthYearRules,
+    checkPassword,
+    checkBirthYear,
+    ageFromBirthYear,
+    BIRTH_YEAR_MIN,
+    currentYear,
+} from '~/utils/accountRules';
 
 export default {
     created() {
@@ -42,7 +56,7 @@ export default {
         password2: "",
         nickname: "",
         email: "",
-        age: "",
+        birthYear: "",
         ageHonest: false,
         failmsg: "",
         validmsg: "",
@@ -66,8 +80,18 @@ export default {
         rulesPass() {
             return passwordRules((k) => this.$t(k));
         },
-        rulesAge() {
-            return ageRules((k) => this.$t(k));
+        rulesBirthYear() {
+            return birthYearRules((k) => this.$t(k));
+        },
+        birthYearMin() {
+            return BIRTH_YEAR_MIN;
+        },
+        birthYearMax() {
+            return currentYear();
+        },
+        // 让用户当场看到「你今年几岁」，填错年份能立刻发现
+        agePreview() {
+            return ageFromBirthYear(this.birthYear);
         },
     },
     methods: {
@@ -87,6 +111,11 @@ export default {
                 this.failmsg = pwdErr;
                 return false;
             }
+            const yearErr = checkBirthYear(this.birthYear, (k) => this.$t(k));
+            if (yearErr) {
+                this.failmsg = yearErr;
+                return false;
+            }
             if (!this.ageHonest) {
                 this.failmsg = this.$t('signup.ageHonestRequired');
                 return false;
@@ -97,7 +126,7 @@ export default {
             data.append('password', this.password);
             data.append('nickname', this.nickname);
             data.append('email', this.email);
-            data.append('age', String(this.age));
+            data.append('birth_year', String(this.birthYear));
             this.$backend('/user/sign_up', {
                 method: 'POST',
                 body: data,

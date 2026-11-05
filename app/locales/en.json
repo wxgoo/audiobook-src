@@ -240,13 +240,14 @@
     "pwdTooLong": "Password must be at most 20 characters",
     "pwdBadChar": "Password may only contain letters, digits and common symbols",
     "pwdTooWeak": "Password is too weak: use at least 2 of uppercase, lowercase, digits, symbols",
-    "age": "Age",
-    "ageHint": "Used for content rating: admins set reading limits by age group",
-    "ageRequired": "Please enter your age",
-    "ageInvalid": "Age must be an integer",
-    "ageRange": "Age must be between 1 and 120",
-    "ageHonest": "I confirm the age I entered is accurate. I accept responsibility for any consequences of a false declaration (including access to content unsuitable for my actual age).",
-    "ageHonestRequired": "Please confirm your real age"
+    "birthYear": "Birth year",
+    "birthYearHint": "Four-digit year, e.g. 1998. Age is derived from your birth year and used for content rating (admins set reading limits by age group).",
+    "birthYearPreview": "As of {year}, you are {age} years old",
+    "birthYearRequired": "Please enter your birth year",
+    "birthYearInvalid": "Birth year must be a four-digit number, e.g. 1998",
+    "birthYearRange": "Birth year must be between 1900 and {year}",
+    "ageHonest": "I confirm the birth year I entered is accurate. I accept responsibility for any consequences of a false declaration (including access to content unsuitable for my actual age).",
+    "ageHonestRequired": "Please confirm your real birth year"
   },
   "starting": {
     "title": "Starting up, please wait",
@@ -469,10 +470,10 @@
       "change_password_save": "Confirm",
       "change_password_ok": "Password changed successfully",
       "password_mismatch": "Mismatched password and confirm password",
-      "age": "Age",
+      "age": "Age (birth year)",
       "age_unset": "Not set",
-      "change_age": "Change age",
-      "change_age_dialog_title": "Change age",
+      "change_age": "Change age (birth year)",
+      "change_age_dialog_title": "Change age (birth year)",
       "change_age_save": "Save",
       "change_age_ok": "Age updated"
     }

@@ -7,7 +7,7 @@
     "build": "eslint --ext .js,.vue src && nuxt build",
     "build-spa": "eslint --ext .js,.vue src && nuxt build --spa",
     "start": "nuxt start",
-    "generate": "eslint --ext .js,.vue src && nuxt generate",
+    "generate": "eslint --ext .js,.vue src && nuxt generate --spa",
     "lint": "eslint --ext .js,.vue src",
     "lint:fix": "eslint --ext .js,.vue src --fix",
     "icons:subset": "node scripts/build-mdi-subset.js"

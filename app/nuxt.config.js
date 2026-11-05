@@ -51,7 +51,9 @@ export default {
     "~/plugins/load-plugins.js",
     "~/plugins/i18n.js",
     // 外观设置（顶栏品牌色 / 侧栏图标配色 / 深浅色…）：把 store 状态落到 CSS 变量与 Vuetify 主题
-    { src: "~/plugins/appearance.js", mode: "client" }
+    { src: "~/plugins/appearance.js", mode: "client" },
+    // 发版后旧页面去取已删除的 chunk 会失败：自动刷新一次，避免用户看到白屏
+    { src: "~/plugins/chunk-reload.js", mode: "client" }
   ],
 
   // Auto import components: https://go.nuxtjs.dev/config-components
