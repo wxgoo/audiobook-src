@@ -22,6 +22,23 @@ TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 TOOLBOX_DIR = os.path.join(TESTS_DIR, "..", "webserver", "toolbox")
 
 
+_STUBBED_MODULE_NAMES = (
+    "webserver",
+    "webserver.toolbox",
+    "webserver.i18n",
+)
+# 记录 stub 之前 sys.modules 里已有的内容，导入完本文件需要的符号后**立刻**恢复。
+# 不这么做的话，这份假 `webserver`（一个没有 `__file__`/`__path__` 的
+# `types.ModuleType`）会一直留在 sys.modules 里：pytest 是按文件名顺序把
+# 所有测试文件先 import 一遍的，后面 test_folder_helper / test_podcast /
+# test_user_appearance …… 一 import 就炸
+#
+#     AttributeError: module 'webserver' has no attribute '__path__'
+#
+# 单跑本文件时看不出来。`tests/test_text_replace_core.py` 用的是同一套办法。
+_ORIGINAL_MODULES = {name: sys.modules.get(name) for name in _STUBBED_MODULE_NAMES}
+
+
 def _stub_webserver():
     """注入最小 webserver 依赖，使 epub_fixer_lib 可独立导入。"""
     webserver = types.ModuleType("webserver")
@@ -43,6 +60,15 @@ def _stub_webserver():
 _stub_webserver()
 
 from webserver.toolbox.utils import epub_fixer_lib as lib  # noqa: E402
+
+# 用完就还回去，别污染同一进程里后面的测试文件
+for _name, _original in _ORIGINAL_MODULES.items():
+    if _original is None:
+        sys.modules.pop(_name, None)
+    else:
+        sys.modules[_name] = _original
+sys.modules.pop("webserver.toolbox.utils", None)
+sys.modules.pop("webserver.toolbox.utils.epub_fixer_lib", None)
 
 # ── 造书工具 ──────────────────────────────────────────────────────────────────
 

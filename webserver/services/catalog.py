@@ -270,6 +270,13 @@ class CatalogExtractService(AsyncService):
 
     @AsyncService.register_service
     def extract_one_async(self, book_id, force=True):
+        # 同 autofill.auto_fill_async：self.db 由 AsyncService.setup() 注入，在
+        # 「同步调用且调用方没接库」的路径上会是 None（上传/导入主流程会走到）。
+        # 直接 self.db.new_api 会把整次导入打成 500，而这里只是目录提取这个
+        # 附加步骤做不了，跳过即可。
+        if self.db is None:
+            logging.info("[Catalog] book %s skipped: no calibre db bound", book_id)
+            return
         ret = self._extract_one(book_id, force)
         if ret.get("err") == "ok":
             self._warm_txt_reader_cache(book_id)

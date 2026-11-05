@@ -26,7 +26,19 @@ HUNDRED_YEARS_EPUB = os.path.join(TESTDIR, "library", "加西亚·马尔克斯",
 
 
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # Python 3.12 起 `asyncio.get_event_loop()` 不再「没有就顺手建一个」：
+    # 主线程一旦没有正在运行的 loop 且之前也没 set 过，直接 RuntimeError。
+    # 单独跑本文件时恰好还没人碰过 loop，所以一直没暴露；跟
+    # test_sync_import.py 一起跑时，那边的 tornado 测试跑完把 loop 关掉并
+    # 置空，于是这里全红。显式兜底比依赖调用顺序稳。
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("event loop is closed")
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
 
 
 class TestCfiBatchGenerator(unittest.TestCase):

@@ -29,6 +29,15 @@ class TestExtract(TestWithUserLogin):
     def test_convert(self):
         bid = 666
         fpath = testdir + "/cases/book.txt"
+        # 这个用例写的索引落在 extract_path/666/content.json，而它一旦存在，
+        # parse_txt_content() 就会认为「已有可用索引」直接 return False。
+        # 结果是同一个用例第二次跑必挂——不是产品问题，是用例不自清。
+        # 解析前先把这本书的旧索引删干净，保证任何次数重跑结果一致。
+        import shutil
+
+        index_dir = os.path.dirname(ExtractService.txt_content_path(bid))
+        shutil.rmtree(index_dir, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, index_dir, ignore_errors=True)
         ok = ExtractService().parse_txt_content(bid, fpath)
         self.assertEqual(ok, True)
 

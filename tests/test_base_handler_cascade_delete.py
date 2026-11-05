@@ -10,12 +10,14 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 from webserver import models
 from webserver.handlers.base import BaseHandler
 from webserver.models import BookList, BookListBook, BookReadingStats, BookReview, Item, ManualReadingLog, Reader, Reading, ReadingRecord, ReadingState
+from tests.session_isolation import restore_models_session
 
 
 class TestCascadeDeleteBookData(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        self._shared_session = models.get_bound_session()
         models.bind_session(self.session)
         models.Base.metadata.create_all(engine)
 
@@ -49,6 +51,7 @@ class TestCascadeDeleteBookData(unittest.TestCase):
         self.session.commit()
 
     def tearDown(self):
+        restore_models_session(self._shared_session)
         self.session.remove()
 
     def test_removes_all_book_scoped_tables(self):

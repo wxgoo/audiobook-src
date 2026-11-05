@@ -23,9 +23,14 @@ def setUpModule():
 
 
 class FakeResponse:
-    def __init__(self, body, headers=None):
+    # code 是 tornado HTTPResponse 的基本属性，真实响应一定有；
+    # 夹具漏了它，handler 打日志 `response.code` 时会 AttributeError，
+    # 被 except Exception 吞成 dict.unreachable——表现成「上游正常返回
+    # 却被判成不可达」，非常难查。
+    def __init__(self, body, headers=None, code=200):
         self.body = body
         self.headers = headers or {}
+        self.code = code
 
 
 class TestHelpers(unittest.TestCase):

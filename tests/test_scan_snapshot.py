@@ -19,10 +19,18 @@ from webserver import models
 from webserver.models import ScanDirSnapshot, ScanFile
 from webserver.services import scan_service
 from webserver.services.scan_service import ScanService
+from tests.session_isolation import _MISSING, restore_models_session as _restore_models_session
 
 
 class SnapshotTestBase(unittest.TestCase):
     def setUp(self):
+        # ScanService / AsyncService 都是单例：本类会把**实例上**的 db / session
+        # 改成自己的内存库，跑完必须还原，否则脏值顺着单例漏给后面的用例。
+        # 事故现场：`test_service` → `test_scan_snapshot` → `test_upload` 连跑，
+        # 上传接口在 AsyncService().setup() 里拿到的是快照用例残留的 session
+        # （另一个内存库，而且已被 remove），报 `'str' object has no attribute
+        # 'execute'` 后整个上传 500；单跑每个文件都是绿的。
+        self._shared_session = models.get_bound_session()
         engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
@@ -34,6 +42,7 @@ class SnapshotTestBase(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp(prefix="scan_snapshot_test_")
         self.root = os.path.realpath(self.tmpdir)
         self.svc = ScanService()
+        self._old_scoped_session = self.svc.__dict__.get("scoped_session", _MISSING)
         self.svc.session = self.session
         self.svc.scoped_session = self.session
         self._conf_backup = dict(scan_service.CONF)
@@ -43,10 +52,13 @@ class SnapshotTestBase(unittest.TestCase):
         scan_service.CONF.clear()
         scan_service.CONF.update(self._conf_backup)
         self.session.remove()
+        if self._old_scoped_session is not _MISSING:
+            self.svc.scoped_session = self._old_scoped_session
         shutil.rmtree(self.tmpdir, ignore_errors=True)
         ScanService.static_abort_flag = False
         ScanService.static_is_importing = False
         ScanService.static_import_user_id = 0
+        _restore_models_session(self._shared_session)
 
     def _touch(self, relpath, content=b"x"):
         path = os.path.join(self.tmpdir, relpath)

@@ -815,6 +815,42 @@ class ToolFrontendAssetHandler(BaseHandler):
             self.write(f.read())
 
 
+def guess_favicon_content_type(path):
+    """按**内容**判断 favicon 的 Content-Type，认不出来再退回扩展名。
+
+    为什么不能只信扩展名：友情链接的 favicon 是抓下来按站点存成 `<hash>.ico`
+    的，而抓回来的内容啥都可能是——最常见的两种事故是
+    ①对方其实给了一个 SVG（很多新站点 `/favicon.ico` 直接 302 到 .svg）；
+    ②给了一个 PNG（Safari/旧 IE 时代的老习惯）。
+    这时按扩展名回 `image/x-icon`，浏览器会当成损坏的图标不渲染，界面上一片
+    空白而日志里什么都没有，很难查。所以先嗅探魔数/开头文本。
+
+    扩展名兜底保留：正常 .ico 就是 `image/x-icon`（旧写法）/
+    `image/vnd.microsoft.icon`（IANA 正式名），两者浏览器都认。
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(512)
+    except OSError:
+        head = b""
+
+    # SVG 是文本，可能带 BOM、XML 声明、注释或 DOCTYPE 前缀，所以不能要求
+    # 前 4 个字节精确等于 b"<svg"——往后扫一段，看有没有 <svg 标签。
+    if b"<svg" in head.lower():
+        return "image/svg+xml"
+
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
+        return "image/gif"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+
+    return mimetypes.guess_type(path)[0] or "image/x-icon"
+
+
 class FaviconHandler(BaseHandler):
     """提供友情链接及资源 favicon 文件的 HTTP 访问"""
 
@@ -833,7 +869,7 @@ class FaviconHandler(BaseHandler):
         if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
             raise web.HTTPError(404)
 
-        content_type = mimetypes.guess_type(filename)[0] or "image/x-icon"
+        content_type = guess_favicon_content_type(filepath)
         self.set_header("Content-Type", content_type)
         self.set_header("Cache-Control", "public, max-age=86400")
         with open(filepath, "rb") as f:

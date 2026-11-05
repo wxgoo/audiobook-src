@@ -26,6 +26,7 @@ from webserver.models import Reader, ScanFile
 from webserver.services import scan_service
 from webserver.services import mail as mail_module
 from webserver.services.scan_service import ScanService, ImportInternalOptions
+from tests.session_isolation import restore_models_session
 
 
 class ScanImportSoleTest(unittest.TestCase):
@@ -36,6 +37,7 @@ class ScanImportSoleTest(unittest.TestCase):
             poolclass=StaticPool,
         )
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        self._shared_session = models.get_bound_session()
         models.bind_session(self.session)
         models.Base.metadata.create_all(engine)
         self.tmpdir = tempfile.mkdtemp(prefix="scan_sole_test_")
@@ -52,6 +54,7 @@ class ScanImportSoleTest(unittest.TestCase):
         self._patch(mock.patch.object(scan_service, "CatalogExtractService", mock.MagicMock()))
 
     def tearDown(self):
+        restore_models_session(self._shared_session)
         scan_service.CONF["SEND_MAIL_FOR_NEW_BOOKS"] = self._old_mail_flag
         self.session.remove()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -97,10 +100,16 @@ class ScanImportSoleTest(unittest.TestCase):
             return 501, None
 
         self.svc._import_one_file = fake_import_one_file
+        # opts 是**第四个**参数 `(filelist, visited, file_dir, opts)`，必须按关键字传。
+        # 原来写的是位置参数，对象落进了 filelist，opts 保持 None → 函数内部
+        # 自己 new 了一个默认 ImportInternalOptions(sole=False)，于是 sole 永远
+        # 传不到 _import_one_file。表现成「sole=True 的用例拿到 [False]」，
+        # 而 sole=False 的用例照样绿 —— 看起来像功能没实现，其实是测试压根没把
+        # 参数送进去。
         if sole is None:
-            self.svc.do_import_internal([fpath], ImportInternalOptions(user_id=9))
+            self.svc.do_import_internal([fpath], opts=ImportInternalOptions(user_id=9))
         else:
-            self.svc.do_import_internal([fpath], ImportInternalOptions(user_id=9, sole=sole))
+            self.svc.do_import_internal([fpath], opts=ImportInternalOptions(user_id=9, sole=sole))
         return captured
 
     def test_sole_true_reaches_import_one_file(self):

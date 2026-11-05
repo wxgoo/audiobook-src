@@ -27,6 +27,12 @@ export const state = () => ({
     site_title: "首页",
     site_title_template: "%s | MyBooks",
     showUserInfo: false,
+    // 下面三个由 AppHeader 从 /user/info 的 sys 摊平而来，必须在这里声明：
+    // 否则它们是"运行时新增字段"——既拿不到 Vue 的响应式，也只能靠 mutation 外
+    // 直接赋值写入，而 dev 模式的 vuex strict 会直接抛错（首页变 error layout）。
+    ai_enabled: false,
+    default_page_size: 0,
+    index_page: "",
     // 设置保存后自增：AppHeader 监听它重新拉 /user/info，让侧边栏等导航立即生效
     sysRefresh: 0
 })
@@ -36,6 +42,20 @@ export const mutations = {
         state.loading = true;
     }, loaded(state) {
         state.loading = false;
+    },
+    // sys 的展示相关字段摊平到根 state。原先在 AppHeader 里直接改 $store.state，
+    // dev 模式 store.strict=true 时会抛 "do not mutate vuex store state outside
+    // mutation handlers"，整页落到 error layout —— 现象就是首页永远显示
+    // 「服务正在启动中，稍后重试」。
+    sync_sys(state, sys) {
+        if (!sys) {
+            return;
+        }
+        state.site_title_template = "%s | " + sys.title;
+        state.ai_enabled = sys.aiEnabled;
+        state.default_page_size = sys.defaultPageSize;
+        state.index_page = sys.indexPage;
+        state.showUserInfo = sys.showUserInfo;
     }, /*
     puremode(state, pure) {
         if (pure) {

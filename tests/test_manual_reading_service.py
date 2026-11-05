@@ -9,12 +9,14 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 from webserver import models
 from webserver.models import BookReadingStats, ManualReadingLog, Reader, Reading
 from webserver.services.reading_stats_service import ManualReadingService
+from tests.session_isolation import restore_models_session
 
 
 class TestManualReadingService(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        self._shared_session = models.get_bound_session()
         models.bind_session(self.session)
         models.Base.metadata.create_all(engine)
         reader = Reader()
@@ -26,6 +28,7 @@ class TestManualReadingService(unittest.TestCase):
         self.date = datetime.date(2026, 1, 1)
 
     def tearDown(self):
+        restore_models_session(self._shared_session)
         self.session.remove()
 
     def test_create_bumps_all_three_aggregates(self):

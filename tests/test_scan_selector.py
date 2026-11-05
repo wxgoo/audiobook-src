@@ -26,18 +26,23 @@ from webserver.handlers.scan import Scanner, normalize_import_filelist, parse_de
 from webserver.models import ScanFile
 from webserver.services.async_service import _ensure_scanfiles_indexes
 from webserver.services.scan_service import ScanService
+from tests.session_isolation import restore_models_session
 
 
 class ScanSelectorTestBase(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        # models 的 session 是进程级全局状态，换成内存库后必须还原，见 tests/session_isolation.py
+        self._shared_session = models.get_bound_session()
         models.bind_session(self.session)
         models.Base.metadata.create_all(engine)
         self.tmpdir = tempfile.mkdtemp(prefix="scan_selector_test_")
         self._hash_seq = 0
 
     def tearDown(self):
+        self.session.remove()
+        restore_models_session(self._shared_session)
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _touch(self, rel):
@@ -505,6 +510,12 @@ class TestParseDeleteFiles(unittest.TestCase):
 
 
 class TestScanfilesIndexes(unittest.TestCase):
+    def setUp(self):
+        self._shared_session = models.get_bound_session()
+
+    def tearDown(self):
+        restore_models_session(self._shared_session)
+
     def _index_columns(self, session):
         result = {}
         for row in session.execute(text('PRAGMA index_list("scanfiles")')).fetchall():

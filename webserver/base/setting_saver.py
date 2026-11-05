@@ -75,6 +75,16 @@ ADMIN_SETTING_KEYS = (
     "site_language",
     "site_timezone",
     "site_icon",
+    # 功能模块开关（webserver/base/modules.py 的 MODULES 表）。
+    # 六个键必须在这里登记：保存设置时 `dumpfile()` 是**整份覆盖**写回
+    # auto.py 的，没登记的键等于不存在 —— 管理员一旦保存设置，模块开关就
+    # 被静默抹回默认值。modules.py 里那条注释说的就是这个。
+    "ENABLE_MODULE_MULTIUSER",
+    "ENABLE_MODULE_COMMUNITY",
+    "ENABLE_MODULE_SHARED_READING",
+    "ENABLE_MODULE_AUDIO",
+    "ENABLE_MODULE_PHYSICAL",
+    "ENABLE_MODULE_AI",
     "ENABLE_BOOKBARN",
     "ENABLE_PHYSICAL_BOOKS",
     "ENABLE_FOLDER_BROWSE",
@@ -147,8 +157,10 @@ ADMIN_SETTING_KEYS = (
     "READER_DICT_MYBOOKS_ENABLED",
     "READER_DICT_BAIKE_ENABLED",
     "READER_MYDICTS",
-    "MYNEXUS_TOKEN",
-    "MYNEXUS_URL",
+    # MYNEXUS_TOKEN / MYNEXUS_URL 在上面 AI/MyNexus 分组里已经列过，
+    # 这里不要再写一遍：ADMIN_SETTING_KEYS 是 list，重复项会让
+    # 「管理页可见键数」比实际多，且保存时同一个键被处理两次。
+    # 见 tests/test_setting_saver.py::test_no_duplicate_admin_keys。
     *perf.setting_keys(),
 )
 
@@ -163,6 +175,15 @@ PERSISTABLE_KEYS = frozenset(ADMIN_SETTING_KEYS) | frozenset({
     "smtp_username", "smtp_encryption", "static_host", "xsrf_cookies", "settings_path",
     "avatar_service", "google_analytics_id", "site_language", "site_timezone", "site_theme", "site_icon",
     "ENABLE_BOOKBARN", "ENABLE_PHYSICAL_BOOKS", "BOOKBARN_COLLECTION_HOUR", "BOOKBARN_TOKEN",
+    # 模块开关也要进持久化白名单：ADMIN_SETTING_KEYS 管「设置页可见」，
+    # PERSISTABLE_KEYS 管「dumpfile 时写回 auto.py」。只进前者的话，保存
+    # 其他设置时这六个键不会被带上，模块开关会在磁盘上被抹掉。
+    "ENABLE_MODULE_MULTIUSER",
+    "ENABLE_MODULE_COMMUNITY",
+    "ENABLE_MODULE_SHARED_READING",
+    "ENABLE_MODULE_AUDIO",
+    "ENABLE_MODULE_PHYSICAL",
+    "ENABLE_MODULE_AI",
     "ENABLE_RECEIVING_BOOKS", "USE_BOOKBARN_PROXY", "BOOK2AUDIO_PROXY", "LAST_REVISION", "DEVICES",
     "AI_ENABLED", "AI_MODEL", "AI_MCP_TOKEN", "AI_DEEPSEEK_API_KEY", "AI_API_URL",
     "AI_ALLOW_SET_CATEGORY",
@@ -283,6 +304,19 @@ TITLE_TEMPLATE="%%s | %(site_title)s"
         return self.save_extra_settings(args)
 
     def save_extra_settings(self, args):
+        # 模块开关的连带效果要在「写入之前、拿得到旧值之时」算好：关掉某个模块
+        # 必须把它的主开关一起写进 args（ORDER: 先算出效果，再做 CONF.update，
+        # 否则 old_settings 和新值就一样了，判断不出「旧开→新关」）。
+        #
+        # 只写 MODULE_OFF_SWITCHES / MODULE_ON_SWITCHES 里登记的主开关，
+        # 不动数据、密钥和子选项 —— 关掉「有声书」不会删掉音频文件。
+        try:
+            from webserver.base import modules as feature_modules
+
+            feature_modules.apply_module_switch_effects(args, old_settings=CONF)
+        except Exception:  # noqa: BLE001 - 开关联动失败不该让整次保存失败
+            logging.error("apply_module_switch_effects failed", exc_info=True)
+
         # Must check before CONF.update() so we can compare old vs. new values.
         restart_needed = self._check_restart_needed(args)
 

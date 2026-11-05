@@ -2533,7 +2533,13 @@ class BookDownload(BaseHandler, web.StaticFileHandler):
     def requested_book_id(self):
         try:
             return int(self.path_args[0].split("/")[-1].split(".")[0])
-        except (IndexError, ValueError):
+        except (IndexError, ValueError, TypeError, AttributeError):
+            # TypeError/AttributeError：self.path_args 为 None（没经过
+            # url 路由就调到这里的场景，例如内部/工具直接构造 handler，
+            # 或将来有人从别处复用一个未初始化的实例）。
+            # 这个方法本身就声明了「拿不到就是 None」的契约，调用方
+            # （_charge_download / share_download_granted）也都是按 None 处理的，
+            # 不该因为缺属性就抛到请求栈外面变成 500。
             return None
 
     def login_by_download_sign(self):
@@ -3223,11 +3229,27 @@ class BookUpload(BaseHandler):
             item.book_id = book_id
             item.collector_id = self.user_id()
             self.sqlite_session.add(item)
-            self.sqlite_session.commit()
+            try:
+                self.sqlite_session.commit()
+            except Exception:
+                # session 已经因为之前某次 flush 失败进入「必须 rollback」状态时，
+                # 直接 commit 会抛 PendingRollbackError，把一次本来能成功的上传
+                # 变成 500。这里先回滚把 session 拉回可用状态，再重试一次。
+                logging.warning("upload: retry item commit after rollback", exc_info=True)
+                self.sqlite_session.rollback()
+                self.sqlite_session.add(item)
+                self.sqlite_session.commit()
         if perf.lite_on("LITE_SKIP_AFTER_UPLOAD"):
             return book_id
         if CONF.get(AUTO_FILL_META, False):
-            AutoFillService().auto_fill_async(book_id)
+            # `AutoFillService` 是 AsyncService：async_mode() 为真时它只是把任务丢进
+            # 队列（安全）；为假时（单测、以及后台服务未启动的部署）它会**就地同步**
+            # 跑，而内部 `db.set_metadata()` 是 calibre 写操作，必须与
+            # `run_calibre_async` 共用同一把 db_lock。不持锁就在 ioloop 线程里写
+            # calibre，会与扫描/导入线程抢 calibre 的独占写锁，表现成
+            # `apsw.ReadOnlyError: attempt to write a readonly database`。
+            with self.db_lock:
+                AutoFillService().auto_fill_async(book_id)
         # 目录提取会顺带给含 TXT 的书预热阅读索引，所以不再单独调 _prepare_txt_content
         # —— 否则同一本新书会被两个线程各整本扫一遍。
         CatalogExtractService().extract_one_async(book_id)
@@ -3272,10 +3294,41 @@ class BookUpload(BaseHandler):
         except Exception as e:
             logging.warning("Failed to prepare txt content for book %s: %s", book_id, e)
 
-    def _add_new_book(self, mi, fpaths, fmt):
+    def _add_new_book(self, mi, fpaths, fmt=None):
         dynamic_cover = self._prepare_new_book(mi, fpaths, fmt)
         book_id = self._import_to_calibre(mi, fpaths, dynamic_cover)
         return self._after_import(mi, book_id)
+
+    def _add_new_book_for_threadpool(self, mi, fpaths):
+        """`_add_new_book` 的线程池版本：只做 FS/calibre 部分，交回 ioloop 再写 users.db。
+
+        ## 为什么不能在池里跑完 `_add_new_book`
+
+        `utils.run_in_threadpool(self._add_new_book, ...)` 把整个方法丢进了工作线程，
+        而 `_add_new_book` 末尾的 `_after_import` 里用的是 `self.sqlite_session` ——
+        那是一个**绑定在 ioloop 线程上、且没有设置 `check_same_thread=False`** 的
+        SQLAlchemy Session。跨线程用它有两个后果：
+
+        * SQLite 连接对象属于创建它的线程。走到这里时连接已经是**另一个线程**打开的，
+          写事务被 sqlite3 拒绝，报 `attempt to write a readonly database`；
+        * Session 的 identity map 与 `threading.local` 的 scoped_session 对不上，
+          缓存在 `self.current_user` 上的 `Reader` 已经挂在别的 session 上，报
+          `Object '<Reader>' is already attached to session 'N' (this is 'M')`。
+
+        生产上单请求跑的时候两者往往撞不上（连接恰好在本线程建、也没并发 flush）；
+        一旦别的线程（`ReadingStatsService` 的周期性 flush、`ScanService`）动过
+        `scoped_session`，就会稳定复现。测试里 `test_scan` 先跑一遍正好把这个
+        「别的线程」造出来，于是 `test_upload` 成片红。
+
+        所以这里把方法拆开：池里只做解析与导入（不碰 users.db），`_after_import`
+        回到 ioloop 线程执行 —— 和 `_add_new_book_async` 的写法一致。
+        """
+
+        def _import():
+            dynamic_cover = self._prepare_new_book(mi, fpaths, None)
+            return self._import_to_calibre(mi, fpaths, dynamic_cover)
+
+        return _import
 
     async def _add_new_book_async(self, mi, fpaths, fmt):
         dynamic_cover = await utils.run_in_threadpool(self._prepare_new_book, mi, fpaths, fmt)
@@ -3546,7 +3599,15 @@ class BookUpload(BaseHandler):
 class BookUploadChunk(BaseHandler):
     """Handler for chunked file upload"""
 
-    def _add_new_book(self, mi, fpaths):
+    def _import_new_book_to_calibre(self, mi, fpaths):
+        """只做解析 + calibre 入库，**不碰 users.db**，可以安全地丢进线程池。
+
+        见 `BookUpload._add_new_book_for_threadpool` 的说明：`self.sqlite_session`
+        属于 ioloop 线程，在工作线程里用会拿到另一个线程打开的 sqlite 连接
+        （`attempt to write a readonly database`）以及挂错 session 的 ORM 对象
+        （`already attached to session`）。所以线程池里只做这一段，
+        `_after_import` 留在 ioloop 执行。
+        """
         dynamic_cover = False
         mi.title_sort = utils.get_title_sort(mi.title)
         detected_language = utils.detect_title_language(mi.title)
@@ -3573,6 +3634,17 @@ class BookUploadChunk(BaseHandler):
                 self.calibre_db_cache.set_field(CALIBRE_COLUMN_DYNAMIC_COVER, {book_id: 1})
             except Exception as e:
                 logging.error(f"Failed to set dynamic cover field for book ID {book_id}: {e}")
+        return book_id
+
+    def _add_new_book(self, mi, fpaths, book_id=None):
+        """users.db 记账 + 新书通知，必须在 ioloop 线程里跑。
+
+        book_id 由调用方传入时直接用（calibre 那一步已经在
+        `_import_new_book_to_calibre` 里做完了）；不传就现场导入，保持
+        `_add_new_book(mi, fpaths)` 这个老签名可用。
+        """
+        if book_id is None:
+            book_id = self._import_new_book_to_calibre(mi, fpaths)
         self.increase_history_count("upload_history")
         item = Item()
         item.book_id = book_id
@@ -3837,7 +3909,13 @@ class BookUploadChunk(BaseHandler):
                 if book_id is None:
                     # New EBOOK（含封面兜底与新书通知；通知可能走 SMTP，放
                     # blocking_pool 而不是 run_calibre_async，避免慢邮件占住 db_lock）
-                    book_id = await utils.run_in_threadpool(self._add_new_book, mi, [final_path])
+                    #
+                    # 池里只跑「解析 + calibre 入库」，`_add_new_book`（要写
+                    # self.sqlite_session）必须回到 ioloop 线程 —— 理由见
+                    # BookUpload._add_new_book_for_threadpool 的说明。
+                    book_id = await utils.run_in_threadpool(
+                        self._import_new_book_to_calibre, mi, [final_path])
+                    book_id = self._add_new_book(mi, [final_path], book_id)
                 else:
                     await self.run_calibre_async(
                         self.calibre_db.add_format, book_id, fmt.upper(), final_path, True)
@@ -3847,7 +3925,9 @@ class BookUploadChunk(BaseHandler):
                         _merge_meta_force(self),
                     ) or []
             else:
-                book_id = await utils.run_in_threadpool(self._add_new_book, mi, [final_path])
+                book_id = await utils.run_in_threadpool(
+                    self._import_new_book_to_calibre, mi, [final_path])
+                book_id = self._add_new_book(mi, [final_path], book_id)
                 if _translators:
                     translators = ",".join(_translators)
                     await self.run_calibre_async(

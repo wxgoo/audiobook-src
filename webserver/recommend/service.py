@@ -143,6 +143,12 @@ class RecommendService:
         new_ids = _pick_avoiding(lambda c: new_books.pick(pool.new_pool, c, n_new), personal_ctx, n_new)
         sampler = SampledRecommender(config, pool.random_scorer)
         random_ids = _pick_avoiding(lambda c: sampler.pick(pool.random_pool, library.books, library.ids, c, n_random), personal_ctx.excluding(new_ids), n_random)
+        if len(random_ids) < n_random:
+            # 「随便推荐」默认要和「最近上新」错开，但错开是**软**目标：
+            # 小库里上新卡片一占就是十几本，硬排除之后可能只剩三四本可选，
+            # 首页就发出稀稀拉拉几张图（甚至一张都没有）。这种情况宁可让两块
+            # 内容有重叠，也要把卡片填满——用户看到重复的书，远好过看到空位。
+            random_ids = _pick_avoiding(lambda c: sampler.pick(pool.random_pool, library.books, library.ids, c, n_random), personal_ctx, n_random)
         if profile and len(random_ids) < n_random and profile.finished:
             relaxed = ctx.excluding(profile.reading | profile.disliked | frozenset(new_ids))
             random_ids = _pick_avoiding(lambda c: sampler.recommend(library.books, c, n_random), relaxed, n_random)
@@ -229,6 +235,14 @@ class RecommendService:
         if state is None:
             return build()
         if state.key != key:
+            # 池是「打分器 + 候选集」的缓存，候选集在池里存的是**当时的** book 对象和 id。
+            # 如果 index 版本变了（库增删了书），旧池里的 id 可能已经不在库里，
+            # SampledRecommender.pick 拿旧池去配 library.books 会配不上，直接把
+            # 「随便推荐」的卡片数量压到远低于请求值（库里 1000 本，只发出 4 张）。
+            # 那种情况下不能沿用旧池，必须按当前快照现建；只有 n_random / n_new 变化
+            # （同一个库、只是这次要多要几本）时才继续走 stale-while-revalidate。
+            if state.key[0] != self.index.version:
+                return build()
             self._schedule(reader_key, build)
         return state
 

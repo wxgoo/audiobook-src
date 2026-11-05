@@ -20,6 +20,35 @@ class TestAdminTrashBooks(TestWithUserLogin):
         from tests.test_main import _app
         return _app.settings["legacy"].new_api
 
+    def tearDown(self):
+        """把 calibre 进程内视图的 id 集合复位回磁盘真实状态。
+
+        回收站恢复/清理接口是这么写的（webserver/handlers/admin.py）：
+
+            ok, failed = TrashManager.restore_trash_books(cache, book_ids)
+            if ok:
+                self.calibre_db.data.books_added(tuple(ok))
+
+        而 calibre 的 `View.books_added()` 是**无条件前置拼接**：
+
+            self._map = ids + self._map      # calibre/db/view.py:486
+
+        它不去重、也不校验 id 在库里是否真的存在。本夹具库里压根没有回收站
+        记录，测试又把 TrashManager 钉成「原样返回」，于是每跑一次恢复用例，
+        `_map` 就多叠一份 [1] / [1, 2]。而 `db.count()` 读的正是
+        `View.count() == len(View._map)`（内存，不是磁盘），所以后面
+        test_main 的 `sys.books == 13` 就被撑成 16。
+
+        这里按磁盘真实 id 复位，等价于真实环境下「恢复其实就是把磁盘上已有的
+        行重新挂回视图」的语义。
+        """
+        super().tearDown()
+        from tests.test_main import _app
+        legacy = _app.settings["legacy"]
+        view = legacy.count.__self__
+        view._map = tuple(sorted(legacy.new_api.all_book_ids()))
+        view._map_filtered = tuple(sorted(legacy.new_api.all_book_ids()))
+
     def test_list_trash_books(self):
         entries = [
             SimpleNamespace(book_id=1, title="Book One", author="Author A", mtime=100.0),
@@ -39,7 +68,20 @@ class TestAdminTrashBooks(TestWithUserLogin):
         self.assertEqual(d["err"], "params.error")
 
     def test_restore_trash_books_success(self):
-        with mock.patch.object(self.new_api(), "move_book_from_trash", return_value=None) as m:
+        # 恢复接口内部走 `TrashManager.restore_trash_books(cache, ids)`，
+        # 它才真正调 `cache.move_book_from_trash()`。只把 new_api 的方法换成
+        # mock 是够不到那层的（TrashManager 拿的是同一个 cache 对象，但它自己
+        # 也会被测试入口整体钉成空实现）。这里改成直接断言到 TrashManager 层，
+        # 顺带验证「ids 原样传进去、结果原样透出」。
+        from webserver.base import trash_manager as tm_mod
+
+        calls = []
+
+        def fake_restore(cache, book_ids):
+            calls.append(list(book_ids))
+            return list(book_ids), {}
+
+        with mock.patch.object(tm_mod.TrashManager, "restore_trash_books", side_effect=fake_restore):
             d = self.json(
                 "/api/admin/trash/books/restore",
                 method="POST",
@@ -47,14 +89,21 @@ class TestAdminTrashBooks(TestWithUserLogin):
             )
         self.assertEqual(d["err"], "ok")
         self.assertEqual(sorted(d["restored"]), [1, 2])
-        self.assertEqual(m.call_count, 2)
+        self.assertEqual(calls, [[1, 2]])
 
     def test_restore_trash_books_partial_failure(self):
-        def fake_restore(book_id):
-            if book_id == 2:
-                raise ValueError("A book with the id 2 already exists")
+        from webserver.base import trash_manager as tm_mod
 
-        with mock.patch.object(self.new_api(), "move_book_from_trash", side_effect=fake_restore):
+        def fake_restore(cache, book_ids):
+            ok, failed = [], {}
+            for book_id in book_ids:
+                if book_id == 2:
+                    failed[book_id] = "A book with the id 2 already exists"
+                else:
+                    ok.append(book_id)
+            return ok, failed
+
+        with mock.patch.object(tm_mod.TrashManager, "restore_trash_books", side_effect=fake_restore):
             d = self.json(
                 "/api/admin/trash/books/restore",
                 method="POST",
@@ -69,7 +118,15 @@ class TestAdminTrashBooks(TestWithUserLogin):
         self.assertEqual(d["err"], "params.error")
 
     def test_purge_trash_books_success(self):
-        with mock.patch.object(self.new_api(), "delete_trash_entry", return_value=None) as m:
+        from webserver.base import trash_manager as tm_mod
+
+        calls = []
+
+        def fake_purge(cache, book_ids):
+            calls.append(list(book_ids))
+            return list(book_ids), {}
+
+        with mock.patch.object(tm_mod.TrashManager, "purge_trash_books", side_effect=fake_purge):
             d = self.json(
                 "/api/admin/trash/books/purge",
                 method="POST",
@@ -77,4 +134,4 @@ class TestAdminTrashBooks(TestWithUserLogin):
             )
         self.assertEqual(d["err"], "ok")
         self.assertEqual(d["purged"], [1])
-        m.assert_called_once_with(1, "b")
+        self.assertEqual(calls, [[1]])

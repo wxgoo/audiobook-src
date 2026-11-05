@@ -78,7 +78,11 @@ os.environ.setdefault("CALIBRE_CONFIG_DIRECTORY", "/tmp/calibre-fixture-conf")
 
 BOOKS = [
     # (title, authors, fmt, tags, series, series_index, publisher, rating, pubdate)
-    ("Bai Nian Gu Du", ["Jia Xi Ya Ma Er Ke Si"], "EPUB",
+    # 第 1 本的书名/作者/目录名必须是**中文**：test_cfi_gen.py 把
+    #     tests/library/加西亚·马尔克斯/百年孤独 (1)/百年孤独 - 加西亚·马尔克斯.epub
+    # 整条路径写死了，用拼音目录它就 skipTest，那个 <br> 硬换行回归永远测不到。
+    # test_sync_import.py 也靠这本书的正文做 CFI 定位。
+    ("百年孤独", ["加西亚·马尔克斯"], "EPUB",
      ["小说", "外国文学", "经典", "魔幻现实主义"], None, None, "南海出版公司", 9, "2011-06-01"),
     ("Man Man Zi You Lu", ["Unknown", "韩寒"], "TXT",
      ["回忆录", "历史", "美国"], None, None, "广西师范大学出版社", 8, "2014-03-01"),
@@ -337,6 +341,39 @@ def _cover_bytes(title, seed):
     return buf.getvalue()
 
 
+# 《百年孤独》的正文不能用通用占位段落：test_sync_import.py 拿这几句做
+# CFI 定位，且第一句中间必须夹一个 <br class="calibre1"/>（calibre 转换后
+# 的硬换行），用来锁住 cfi_batch.mjs 不把 <br> 当块级边界的行为。
+HUNDRED_YEARS_CHAPTERS = [
+    ("第一章",
+     "<p>许多年之后，面对行刑队，奥雷里亚诺·布恩迪亚上校将会回想起"
+     "父亲带他去见识冰块的那个遥远的下午。</p>"
+     "<p>那时马孔多还是个二十户人家的村落，泥巴和芦苇盖成的屋子沿河岸排开。</p>"
+     "<p>他手里拿着两大块磁铁，从一座农舍走到另<br class=\"calibre1\"/>一座农舍，"
+     "那块铁屑纷飞。</p>"
+     "<p>满脸络腮胡子，手指瘦得象鸟的爪子。</p>"),
+    ("第二章",
+     "<p>何塞·阿尔卡蒂奥·布恩迪亚是个富于幻想的人。</p>"
+     "<p>他对磁铁、放大镜、炼金术都有着近乎痴迷的热情。</p>"
+     "<p>百年孤独这四个字，那时还没有人说得出口。</p>"
+     # 「百年孤独」必须在 <body> 里出现 **≥2 次**：
+     # tests/test_sync_import.py::test_ambiguous_anchor_is_not_committed
+     # 用这四个字来构造「多义定位」的用例，正文里只出现一次的话它解析成
+     # ok，用例会以「expected an ambiguous match」直接失败——那是夹具没
+     # 跟上，不是被测逻辑的问题。
+     # 另外 `<head><title>` 里的书名和页眉都会被 cfi 定位排除在外，
+     # 所以这里必须实打实写在段落里，不能指望标题凑数。
+     "<p>多年以后他才明白，所谓百年孤独，不过是同一句话在稿纸上"
+     "反复出现，直到把一个人的记忆磨平。</p>"),
+]
+
+
+def _hundred_years_epub(title, author=None):
+    from tests.make_epub_fixtures import build_epub_bytes
+
+    return build_epub_bytes("百年孤独", "加西亚·马尔克斯", HUNDRED_YEARS_CHAPTERS)
+
+
 FORMAT_BUILDERS = {
     "EPUB": _epub_bytes,
     "TXT": _txt_bytes,
@@ -412,10 +449,25 @@ def build_metadata_db(target):
         if must not in tables:
             raise RuntimeError("缺表 %s，自建表没建全" % must)
     log("总表数: %d（含 items/readings/readers 等）" % len(tables))
+
+    # ---- 扫描/导入列表（scanfiles）----
+    # tests/test_scan.py 依赖这张表里有数据：三个测试类共用 NEW_ROW_ID=69
+    # 那一行（改成 ready/new 再调 /api/admin/import/*），TestScan 还断言
+    # /api/admin/import/list 的 total 恰好是 2。
+    # 原来这表是空的，5 个用例全在 setUp 的 .one() 上炸掉（NoResultFound）。
+    #
+    # 注意建在**哪**：ScanFile 走 Base._session() 也就是 app 的 ScopedSession，
+    # 指向 users.db（test_main.CONF["user_database"] = sqlite:///.../users.db），
+    # 不是 metadata.db。build_users_db 里 create_all 在 users.db 也建了一份
+    # 空 scanfiles，第一次补数据补错了库，运行时照样 NoResultFound。
+    _seed_scanfiles(con, CASES)
     con.close()
 
     # ---- 自检：数量必须和 test_main.py 的硬断言对上 ----
     _verify(meta_path)
+
+    # 中文目录（calibre 只会写拼音）。必须在 db 关闭之后做。
+    _apply_path_overrides(tmp)
 
     # 整个库目录一起搬走：calibre 把书的格式文件和封面存在
     # <库根>/<作者>/<书名 (id)>/ 下面，光搬 metadata.db 会让 /api/book/1.epub
@@ -426,6 +478,20 @@ def build_metadata_db(target):
     nfiles = sum(len(fs) for _, _, fs in os.walk(target))
     log("写出 %s（%.0f KB，库内共 %d 个文件）" % (
         target, os.path.getsize(os.path.join(target, "metadata.db")) / 1024, nfiles))
+
+
+def _seed_scanfiles_in_users_db(users_db_path):
+    """把 scanfiles 的两行补到 users.db —— ScanFile 实际读的就是这个库。
+
+    见 build_metadata_db 里 _seed_scanfiles 调用点附近的注释：metadata.db
+    里那份是给 calibre 自己看的，而 BaseHandler/Scanner 走的是 SQLAlchemy
+    的 ScopedSession（users.db）。两边都补上，将来无论代码往哪边查都拿得到。
+    """
+    con = sqlite3.connect(users_db_path)
+    try:
+        _seed_scanfiles(con, CASES)
+    finally:
+        con.close()
 
 
 def _populate_books(db):
@@ -459,7 +525,10 @@ def _populate_books(db):
         mi.comments = "《%s》的简介，用于集成测试。" % title
         mi.isbn = "978%010d" % (1000000000 + idx)
 
-        data = FORMAT_BUILDERS[fmt](title, authors[0])
+        if idx == 1:
+            data = _hundred_years_epub(title, authors[0])
+        else:
+            data = FORMAT_BUILDERS[fmt](title, authors[0])
         cover = _cover_bytes(title, idx)
         book_id = db.create_book_entry(mi, add_duplicates=False)
         if book_id is None:
@@ -473,6 +542,110 @@ def _populate_books(db):
         log("  id=%-2d %-26s %s" % (book_id, title, fmt))
 
     log("calibre books 表: %d 本" % len(db.all_book_ids()))
+
+
+
+# book_id -> (库内相对目录, 文件名主干)
+# 只有 test_cfi_gen.py 写死路径的那本需要覆盖；其余保持 calibre 的默认命名。
+PATH_OVERRIDES = {
+    1: ("加西亚·马尔克斯/百年孤独 (1)", "百年孤独 - 加西亚·马尔克斯"),
+}
+
+
+def _apply_path_overrides(library_dir):
+    """把指定书的目录/文件名改成中文（calibre 只会写拼音）。
+
+    calibre 的 construct_path_name() 会过一层 ascii_filename()，中文全变拼音：
+        "百年孤独" → "Bai Nian Gu Du (1)"
+    但 test_cfi_gen.py 把路径写死了：
+        tests/library/加西亚·马尔克斯/百年孤独 (1)/百年孤独 - 加西亚·马尔克斯.epub
+    不改的话那个用例直接 skipTest，<br> 硬换行回归就永远测不到。
+
+    时机很重要：必须在 calibre 层完全关闭、且 MyBooks 自建表也建完之后，
+    用普通 sqlite3 改。走 Cache.set_field / DB.execute 都不行——path 是
+    calibre 的派生字段，写接口会忽略；而 apsw 的连接对象没有 commit()。
+    """
+    import shutil
+    import sqlite3
+
+    meta_path = os.path.join(library_dir, "metadata.db")
+    con = sqlite3.connect(meta_path)
+    # books_update_trg 是 calibre 建的触发器：
+    #     AFTER UPDATE ON books BEGIN UPDATE books SET sort=title_sort(NEW.title) ...
+    # UPDATE path 也会触发它，而 title_sort() 是 calibre 注册在连接上的自定义
+    # 函数，普通 sqlite3 连接没有 → "no such function: title_sort"。
+    # 这里注册一个哑实现（返回原字符串）把它喂过去；反正 sort 列我们不改。
+    con.create_function("title_sort", 1, lambda x: x)
+    con.create_function("uuid4", 0, lambda: str(uuid.uuid4()))
+    try:
+        for book_id, (rel_dir, stem) in PATH_OVERRIDES.items():
+            row = con.execute(
+                "SELECT path FROM books WHERE id=?", (book_id,)).fetchone()
+            if not row or not row[0] or row[0] == rel_dir:
+                continue
+            old_abs = os.path.join(library_dir, row[0].replace("/", os.sep))
+            new_abs = os.path.join(library_dir, rel_dir.replace("/", os.sep))
+            if not os.path.isdir(old_abs):
+                log("  警告：找不到 %s，跳过 path 覆盖" % old_abs)
+                continue
+            os.makedirs(os.path.dirname(new_abs), exist_ok=True)
+            if os.path.exists(new_abs):
+                shutil.rmtree(new_abs)
+            shutil.move(old_abs, new_abs)
+            # 目录里的封面/格式文件也改成中文名，否则 content-disposition 对不上
+            for name in os.listdir(new_abs):
+                ext = os.path.splitext(name)[1].lower()
+                if ext in (".epub", ".txt", ".pdf", ".mobi", ".azw3", ".jpg", ".opf"):
+                    dst = os.path.join(new_abs, stem + ext)
+                    src = os.path.join(new_abs, name)
+                    if src != dst:
+                        try:
+                            os.rename(src, dst)
+                        except OSError:
+                            pass
+            con.execute("UPDATE books SET path=? WHERE id=?", (rel_dir, book_id))
+            con.execute(
+                "UPDATE data SET name=? WHERE book=?", (stem, book_id))
+            log("  id=%s 目录改为 %s" % (book_id, rel_dir))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _seed_scanfiles(con, library_dir):
+    """往 `scanfiles` 里放两行，供 tests/test_scan.py 使用。
+
+    为什么是 2 行、为什么 id 必须含 69：
+    * `TestScan.RECORDS_COUNT = 2` 断言 /api/admin/import/list 的 total。
+    * 三个测试类的 setUp 都拿 `ScanFile.id == 69` 的 `.one()`，找不到就
+      NoResultFound —— 所以 69 这条必须在。
+    * id 是显式指定的（不是 autoincrement 出来的），用固定值才能让这个
+      夹具可重复生成、且和测试里的常量对上。
+
+    两行的路径都指向 tests/cases/ 下真实存在的文件：`import_status` /
+    `/api/admin/import/run` 会去 stat 这些路径，写空路径虽然不影响上面几个
+    用例，但会让「批量导入」那部分在以后接回来时莫名其妙地报 missed。
+    另一行用一个不存在的路径，代表「扫描到但文件已消失」的记录——扫描列表
+    需要在有 invalid 记录时也能正常分页。
+    """
+    if con.execute("SELECT count(*) FROM scanfiles").fetchone()[0]:
+        log("  scanfiles 已有数据，跳过")
+        return
+    now = "2026-01-01 00:00:00"
+    rows = [
+        (69, "new.epub", os.path.join(library_dir, "cases", "new.epub"), "new", 0, 0),
+        (70, "old.epub", os.path.join(library_dir, "cases", "old.epub"), "imported", 0, 0),
+    ]
+    for row_id, name, path, status, book_id, import_id in rows:
+        con.execute(
+            "INSERT INTO scanfiles "
+            "(id, scan_id, import_id, import_type, name, path, hash, status, "
+            " title, author, publisher, tags, create_time, update_time, book_id, data) "
+            "VALUES (?, 1, ?, 0, ?, ?, '', ?, '', '', '', '', ?, ?, ?, '{}')",
+            (row_id, import_id, name, path, status, now, now, book_id),
+        )
+    con.commit()
+    log("  scanfiles: 2 行（含 id=69，test_scan.py 依赖）")
 
 
 def _verify(meta_path):
@@ -570,6 +743,12 @@ def build_users_db(target):
     if n != TOTAL_USERS:
         raise RuntimeError("用户数 %d != %d（test_admin_users 断言）" % (n, TOTAL_USERS))
     log("用户数: %d ✓" % n)
+
+    # scanfiles 的测试数据（test_scan.py 的 id=69 那一行）建在 users.db 里：
+    # ScanFile 走 ScopedSession，指向的就是这个库。放这里而不是 build_metadata_db，
+    # 是因为 create_all 已经把空表建好了，这时直接 INSERT
+    # 最省事，也避免 metadata.db / users.db 两处各写一遍不同的行。
+    _seed_scanfiles_in_users_db(tmp)
 
     # WAL 模式的边车文件会让拷贝出的库丢数据，测试要的是单文件
     for suffix in ("-wal", "-shm"):

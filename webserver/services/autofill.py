@@ -331,6 +331,15 @@ class AutoFillService(AsyncService):
 
     @AsyncService.register_service
     def auto_fill_async(self, book_id):
+        # self.db 来自 AsyncService.setup()，在「注册服务被同步调用、但调用方没接
+        # calibre 库」的路径上会是 None（测试桩、工具脚本、以及导入流程里
+        # setup(s.db) 传空的场景）。原来这里直接 self.db.new_api 会抛
+        # `'NoneType' object has no attribute 'new_api'`——它挂在上传/导入主流程
+        # 上（_add_new_book → auto_fill_async），一次自动填充失败就把整次导入
+        # 打成 500。没库就当这本书不在了，跳过即可，不是需要上报的故障。
+        if self.db is None:
+            logging.info("[AutoFill] book %s skipped: no calibre db bound", book_id)
+            return
         if not self.db.new_api.has_id(book_id):
             logging.info("[AutoFill] book %s no longer exists, skip", book_id)
             return

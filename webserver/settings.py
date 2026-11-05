@@ -81,6 +81,14 @@ settings = {
     "USE_BOOKBARN_PROXY": False,
     "BOOK2AUDIO_PROXY": "",
     "ENABLE_PHYSICAL_BOOKS": True,
+    # 功能模块总开关，见 webserver/base/modules.py。
+    # 默认全开：升级过来的人不该因为新增了这层开关而突然少一半功能。
+    "ENABLE_MODULE_MULTIUSER": True,
+    "ENABLE_MODULE_COMMUNITY": True,
+    "ENABLE_MODULE_SHARED_READING": True,
+    "ENABLE_MODULE_AUDIO": True,
+    "ENABLE_MODULE_PHYSICAL": True,
+    "ENABLE_MODULE_AI": True,
     "ENABLE_FOLDER_BROWSE": False,
     "ALLOW_GUEST_UPLOAD": False,
     "AI_ENABLED": False,

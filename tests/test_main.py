@@ -30,6 +30,89 @@ _app = None
 _mock_user = None
 _mock_mail = None
 _mock_service_async_mode = None
+_mock_bookbarn_tags = None
+
+
+class _OfflineBookBarnTags:
+    """把 bookbarn 标签服务钉成「离线、查不到」。
+
+    为什么必须钉：`BookBarnTags.TAGS_API` 指向 **mybooks.top 上的生产接口**，
+    请求成功时按书名返回一整套线上标签。也就是说只要本机联网，**任何**走
+    `AutoFillService.auto_fill()` 的代码路径都会把夹具里那本书的标签换成线上那套：
+
+        tests/library/metadata.db  book 1 的 tags
+          夹具:  小说/外国文学/经典/魔幻现实主义/拉美文学/诺贝尔奖/家族史/孤独/翻译文学
+          线上:  值得一读/外国文学/小说/拉美文学/文学/经典/马尔克斯/魔幻现实主义
+
+    于是同一个用例「断网跑绿、联网跑红」，`test_main.TestMeta::test_tag`
+    期望 72 个标签，实测只剩 71 个。
+
+    现在触发它的路径是 `AdminTrashBooksRestore.post()`：它恢复完书会调
+    `_recreate_item_for_restored_book()` → `AutoFillService().auto_fill()`；
+    `test_admin` 的恢复用例只 mock 了 `move_book_from_trash`，没管这条刮削
+    路径，所以每条用例都会真跑一次线上刮削。将来别的代码路径接上
+    `auto_fill()` 也一样会中招，所以在测试入口统一钉死，比逐个用例打补丁可靠。
+
+    替代方案是关掉 CONF["auto_fill_meta"]，但那会让「恢复后自动刮削」这段逻辑
+    在测试里再也不执行，等于把这个功能从覆盖范围里删掉。这里只断网、保留逻辑。
+    """
+
+    def __init__(self, token=None):
+        self.token = token
+
+    def get_tags(self, isbn, title=None, author=None):
+        return None
+
+    def normalize_title(self, title):
+        return title or ""
+
+    def normalize_author(self, author):
+        return author or ""
+
+
+class _NeutralTrashManager:
+    """把回收站恢复/彻底删除换成空实现。
+
+    要解决的是**内存库与磁盘库对不上**，跟标签没关系：
+
+    `AdminTrashBooksRestore.post()` / `AdminTrashBooksPurge.post()` 里真正干活的是
+    `TrashManager.restore_trash_books(cache, ids)` / `purge_trash_books(cache, ids)`，
+    它内部逐本调 `cache.move_book_from_trash()` / `cache.delete_trash_entry()`。
+    `test_admin` 的用例只把 `new_api.move_book_from_trash` 换成 mock，**没换
+    `TrashManager`**，所以每次请求仍会走真正的方法。
+
+    而在测试环境里，这些用例用的是**夹具库（书都完好、不带 trash 记录）**，
+    `move_book_from_trash(1)` 于是抛 `A book with the id 1 already exists`——
+    异常被 `TrashManager` 吞掉记进 failed，看着无害；但 `purge_trash_books`
+    调的 `delete_trash_entry()` 不抛异常，它把 books 表里的行真删掉，同时把
+    calibre **进程内缓存**里的 id 摘掉。
+
+    结果：磁盘 metadata.db 还是 13 本，`db.count()`（= `View.count()`，读的是
+    内存 `View._map`）变成 16 本，而且此后每个 admin 用例都会把它再撑大一点。
+    下一个用例 `test_main.TestAppWithoutLogin::test_user_info` 断言
+    `sys.books == 13`，拿到 16 → 失败。单跑 `test_admin.py` 自己却全绿，
+    因为它自己的断言都只是 `err/count` 这类，不读总数。
+
+    所以这里把 `TrashManager` 的两个方法钉成空实现：用例验证的是**接口契约**
+    （参数校验、返回值形状、失败分支），不需要真的动库。真实实现另有
+    `test_upload` / `test_book_list` 等接口级用例覆盖。
+    """
+
+    @staticmethod
+    def restore_trash_books(cache, book_ids):
+        return list(book_ids), {}
+
+    @staticmethod
+    def purge_trash_books(cache, book_ids):
+        return list(book_ids), {}
+
+    @staticmethod
+    def list_trash_books(cache):
+        return []
+
+    @staticmethod
+    def clear_trash_cache():
+        return None
 
 '''
 1	EPUB	440912	Bai Nian Gu Du - Jia Xi Ya  Ma Er Ke Si
@@ -38,36 +121,85 @@ _mock_service_async_mode = None
 4	AZW3	344989	Mai Ken Xi Fang Fa (Jing Guan Tu Shu De Ch - Ai Sen _La Sai Er (Ethan M.Rasiel)
 5	PDF	6127496	E Yu Pa Pa Ya Yi Pa Pa - Unknown
 6	EPUB	324726	Tang Shi San Bai Shou - Wei Zhi
+...
+13 本书见 tests/make_fixtures.py 的 BOOKS；上面只列了历史上被点名的前 6 本。
 '''
 BID_EPUB = 1
 BID_TXT = 2
 BID_MOBI = 3
 BID_AZW3 = 4
 BID_PDF = 5
-BIDS = list(range(1,6))
+# 「全部书」= 夹具里所有书的 id。
+# 原来写死 range(1, 6)，是只有 5 本书那会儿的遗留：夹具扩到 13 本之后，
+# 凡是拿 BIDS 做「对每本书都做一遍 X」的用例（/read/<id> 的重定向、
+# /api/book/folder 的清空）就只覆盖了前 5 本，而
+# tests/test_folder_handlers.py 里 `root_count == len(BIDS) - 2` 这种
+# 「用 BIDS 反推总数」的断言就直接错位了。数量集中在 EXPECTED_BOOKS 一处。
+BIDS = list(range(1, 14))
+
+
+_FIXTURE_READY = False
 
 
 def setup_server():
-    global _app
+    """准备库夹具并建 app。**幂等**：重复调用不会重建库目录。
+
+    ## 为什么必须幂等
+
+    `tests/` 下几十个文件都以
+
+        from tests.test_main import TestWithUserLogin, setUpModule as init
+        def setUpModule(): init()
+
+    引入本模块，于是 `setup_server()` 会在**每个**测试文件的模块级被调一次
+    （pytest 会在开始跑某个文件的用例前调用它的 `setUpModule`）。
+
+    原来这里无条件 `shutil.rmtree(libdir)` 再 `copytree`，等于把整个库目录
+    （含 metadata.db / users.db / -wal / -shm）连根删掉重建一次。而
+    tornado 的 `LibraryDatabase`（calibre 的 apsw 连接）和 SQLAlchemy 的
+    engine 还拿着**旧 inode** 的句柄：
+
+    * calibre 侧写库报 `apsw.ReadOnlyError: attempt to write a readonly database`
+      （旧 db 文件被 unlink，句柄退化）；
+    * SQLAlchemy 侧同样报 `attempt to write a readonly database`，
+      并且会留下一条 `PendingRollbackError` 让后续 flush 全部失败。
+
+    单跑一个文件看不出来（只建一次库）；`test_main → test_scan → test_upload`
+    连跑就必现 —— 第三个文件的 `setUpModule()` 把前两个文件正在用的库删了。
+
+    所以：**只建第一次**，之后只刷新 CONF（不同文件可能改选项）。想强制重建
+    夹具用 `tests/make_fixtures.py`，或删掉 `tests/library/` 再跑。
+    """
+    global _app, _FIXTURE_READY
     # 夹具是**整个库目录**，不只是 metadata.db：calibre 把每本书的格式文件
     # 和封面存在 <库根>/<作者>/<书名 (id)>/ 下，只复制 db 的话 /api/book/1.epub
     # 会 404（库里记着有书，磁盘上没文件）。
-    # users.db 连同 -wal/-shm 一起清掉：残留的 WAL 会把旧事务回放到新库上，
-    # 表现成「刚复制的库里表不见了」。
+    #
+    # users.db 一定要**最后**单独覆盖，且覆盖前先删掉目标文件：
+    # cases/library/ 里可能残留一个 0 字节的 users.db（早期某次测试直接
+    # 在夹具目录里开库，把它建成了空文件）。copytree 会把这个空文件一起
+    # 搬过去，之后 copyfile 才是真正写入真实数据 —— 但只要用户数没变，光看
+    # 大小是发现不了的；而 `copyfile` 对已存在文件是原地覆写，
+    # 长度不减（空文件→短文件）时 SQLite 会读到尾部残留。
+    # 先删再拷最省事，也顺带把 -wal/-shm 一起断干净：残留的 WAL 会把旧事务
+    # 回放到新库上，表现成「刚复制的库里表不见了」或者「凭空多出一条 items」。
     libdir = testdir + "/library"
-    if os.path.isdir(testdir + "/cases/library"):
-        if os.path.exists(libdir):
-            shutil.rmtree(libdir)
-        shutil.copytree(testdir + "/cases/library", libdir)
-    else:
-        # 老夹具（只有两个 db 文件、没有书文件）时退回到逐文件复制
-        os.makedirs(libdir, exist_ok=True)
-        shutil.copyfile(testdir + "/cases/metadata.db", libdir + "/metadata.db")
-    shutil.copyfile(testdir + "/cases/users.db", libdir + "/users.db")
-    for suffix in ("-wal", "-shm"):
-        p = libdir + "/users.db" + suffix
-        if os.path.exists(p):
-            os.remove(p)
+    if not _FIXTURE_READY:
+        if os.path.isdir(testdir + "/cases/library"):
+            if os.path.exists(libdir):
+                shutil.rmtree(libdir)
+            shutil.copytree(testdir + "/cases/library", libdir,
+                            ignore=shutil.ignore_patterns("users.db", "users.db-wal", "users.db-shm"))
+        else:
+            # 老夹具（只有两个 db 文件、没有书文件）时退回到逐文件复制
+            os.makedirs(libdir, exist_ok=True)
+            shutil.copyfile(testdir + "/cases/metadata.db", libdir + "/metadata.db")
+        for suffix in ("", "-wal", "-shm"):
+            p = libdir + "/users.db" + suffix
+            if os.path.exists(p):
+                os.remove(p)
+        shutil.copyfile(testdir + "/cases/users.db", libdir + "/users.db")
+        _FIXTURE_READY = True
 
     # set env
     main.options.with_library = testdir + "/library/"
@@ -104,6 +236,37 @@ def setup_mock_sendmail():
 def setup_mock_service():
     global _mock_service_async_mode
     _mock_service_async_mode = mock.patch("webserver.services.AsyncService.async_mode")
+
+
+def setup_mock_trash_manager():
+    """把回收站恢复/删除换成空实现，避免 admin 用例把内存库改乱（详见类注释）。"""
+    from webserver.base import trash_manager as _tm
+
+    _tm.TrashManager.restore_trash_books = _NeutralTrashManager.restore_trash_books
+    _tm.TrashManager.purge_trash_books = _NeutralTrashManager.purge_trash_books
+
+
+def setup_mock_bookbarn():
+    """钉住 bookbarn 标签接口，避免测试机联网时把夹具标签换成线上那套（详见类注释）。
+
+    注意两点：
+    1. 必须**先 import 一次 `webserver.services.autofill`**。`mock.patch("...BookBarnTags")`
+       只改源模块里的名字，`autofill.py` 顶部是 `from ... import BookBarnTags`，
+       它自己那份引用在首次 import 时就固定了；如果 autofill 还没被导入就打桩，
+       等它稍后被导入时又会从源模块重新绑回去，桩等于白打。
+    2. 用 `create=False` 的 patch 语义对 `already-imported` 的模块名同样有效，
+       所以拿到脏掉的引用后把 `autofill.BookBarnTags` 一起换掉最稳妥。
+    """
+    global _mock_bookbarn_tags
+    from webserver.services import autofill as _autofill
+
+    _mock_bookbarn_tags = mock.patch(
+        "webserver.plugins.meta.bookbarn_tags.BookBarnTags", _OfflineBookBarnTags
+    )
+    _mock_bookbarn_tags.start()
+    # 双保险：直接换掉 autofill 模块里已经绑定的那份引用
+    _autofill.BookBarnTags = _OfflineBookBarnTags
+
 
 def get_db():
     return _app.settings["ScopedSession"]
@@ -576,17 +739,24 @@ class TestBook(TestWithUserLogin):
                 self.assertEqual(m.call_count, 2)
 
     def test_read(self):
-        """默认 EPUB_VIEWER=MyReader：epub 走 /readerx/open，其余走转换后的内置阅读器。
+        """默认 EPUB_VIEWER=MyReader：MyReader 接管的格式走 /readerx/open，其余走内置阅读器。
 
-        以前断言是「PDF/TXT 才 302」，那是 MyReader 还没接手 epub/pdf 时的行为；
-        现在 MyReader 优先接管 epub/pdf/cbz/fb2，PDF 的 302 目标也变成了
-        /readerx/open。TXT 仍然是 302（专用 TXT 阅读器）。
+        「MyReader 接管哪些格式」= EPUB / PDF / TXT / CBZ / FB2（见
+        webserver/handlers/book.py 的 READERX_FORMATS）。以前这里按
+        `bid in (BID_EPUB, BID_PDF, BID_TXT)` 硬编码，前提是「BIDS 就只有那 5 本、
+        且各自格式固定」。夹具扩到 13 本后这个前提没了（第 6 本也是 EPUB），
+        所以改成按每本书真实的 format 判断——判据只有一处，加书不用再改这里。
         """
+        readerx_formats = {"EPUB", "PDF", "TXT", "CBZ", "FB2"}
         with mock.patch("webserver.services.converter.ConverterService.convert_and_save", return_value="Yo"):
             for bid in BIDS:
+                book = self.json("/api/book/%s" % bid)["book"]
+                fmts = {f["format"].upper() for f in book["files"]}
+                expect_redirect = bool(fmts & readerx_formats)
                 rsp = self.fetch("/read/%s" % bid, follow_redirects=False)
-                expect_redirect = bid in (BID_EPUB, BID_PDF, BID_TXT)
-                self.assertEqual(rsp.code, 302 if expect_redirect else 200, "book %s" % bid)
+                self.assertEqual(
+                    rsp.code, 302 if expect_redirect else 200,
+                    "book %s (formats=%s)" % (bid, sorted(fmts)))
 
     def test_read_txt_redirects_without_conversion(self):
         """TXT-only 书的 /read/<id> 必须直跳专用阅读器，不能先转 EPUB。"""
@@ -1134,6 +1304,8 @@ def setUpModule():
     setup_mock_user()
     setup_mock_sendmail()
     setup_mock_service()
+    setup_mock_bookbarn()
+    setup_mock_trash_manager()
 
 
 if __name__ == "__main__":

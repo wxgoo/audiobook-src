@@ -7,11 +7,30 @@ import warnings
 from unittest import mock
 from tests.test_main import TestWithUserLogin, setUpModule as init, testdir
 from tests.test_book_files import _make_djvu, _make_uvz
+from webserver.models import Item
 
 def setUpModule():
     init()
 
 class TestUpload(TestWithUserLogin):
+    def setUp(self):
+        """每个用例前清掉 `items` 表。
+
+        这一组用例把 `LibraryDatabase.import_book` mock 成**固定返回**
+        1008610086，于是每个「上传成功」的用例都会往 items 里插同一条
+        book_id=1008610086 的记录。而 items 的主键就是 book_id，第二次插入
+        直接 IntegrityError → 接口返回 "exception"，用例红。
+        单跑任意一个用例是绿的，整文件跑就成片失败 —— 实测 `--co` 顺序下
+        test_upload_new_file 排在第三个写入者，必挂。
+
+        清表而不是让每个用例换一个 id：被测代码根本不 care id 从哪来，
+        固定 id 反而是刻意的（方便断言）。把状态复位才是对的。
+        """
+        super().setUp()
+        session = self.get_app().settings["ScopedSession"]
+        session.query(Item).delete()
+        session.commit()
+
     @mock.patch("webserver.handlers.book.BookUpload.get_upload_file")
     def test_upload_bad_filename(self, m1):
         name = "索恩·德国史"

@@ -97,13 +97,31 @@ class TestCoreAPINamespaces(unittest.TestCase):
         self.api.calibre.set_language(5, "zh")
         self.owner.set_book_language.assert_called_once_with(5, "zh")
 
+    @staticmethod
+    def _book_dict(book_id):
+        """`SimpleBookFormatter` 需要的最小书籍字典。
+
+        以前这里只给了 `{"id": 1}`，`search_books()` 一转手进 formatter 就
+        `KeyError: 'title'` —— formatter 会直接取 `title` / `rating` /
+        `authors` / `tags`，不是 `.get()`。
+        """
+        return {
+            "id": book_id,
+            "title": "Book %d" % book_id,
+            "rating": 0,
+            "authors": ["Author"],
+            "author_sort": "Author",
+            "tags": [],
+        }
+
     def test_calibre_search_books_uses_new_api_search(self):
         self.owner.db.new_api.search.return_value = [1, 2]
-        self.owner.db.get_data_as_dict.return_value = [{"id": 1}, {"id": 2}]
+        self.owner.db.get_data_as_dict.return_value = [self._book_dict(1), self._book_dict(2)]
         result = self.api.calibre.search_books("title:foo", max_results=5)
         self.owner.db.new_api.search.assert_called_once_with("title:foo")
         self.owner.db.get_data_as_dict.assert_called_once_with(ids=[1, 2])
-        self.assertEqual(result, [{"id": 1}, {"id": 2}])
+        self.assertEqual([b["id"] for b in result], [1, 2])
+        self.assertEqual([b["title"] for b in result], ["Book 1", "Book 2"])
 
     def test_calibre_search_books_empty(self):
         self.owner.db.new_api.search.return_value = []
@@ -112,7 +130,11 @@ class TestCoreAPINamespaces(unittest.TestCase):
 
     def test_calibre_add_format_and_format_abspath(self):
         self.api.calibre.add_format(1, "PDF", "/tmp/a.pdf")
-        self.owner.db.add_format.assert_called_once_with(1, "PDF", "/tmp/a.pdf", index_is_id=True)
+        # 4.6.0 起 `CoreAPI.calibre.add_format` 多带一个 `replace=True`
+        # （见 core_api.py：`add_format(..., index_is_id=True, replace=replace)`），
+        # 断言要跟着走，否则每次调用都是「多了一个 kwarg」。
+        self.owner.db.add_format.assert_called_once_with(
+            1, "PDF", "/tmp/a.pdf", index_is_id=True, replace=True)
 
         self.owner.db.format_abspath.return_value = "/tmp/a.pdf"
         path = self.api.calibre.format_abspath(1, "PDF")

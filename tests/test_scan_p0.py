@@ -34,6 +34,7 @@ from webserver.models import Item, ScanFile
 from webserver.services import scan_service
 from webserver.services.scan_service import ScanService, ImportOptions, ImportInternalOptions
 from webserver import constants
+from tests.session_isolation import _MISSING, restore_models_session
 
 try:
     from calibre import force_unicode  # noqa: F401
@@ -125,6 +126,9 @@ class NoNewAPIDB(FakeCalibreDB):
 
 class ScanP0TestBase(unittest.TestCase):
     def setUp(self):
+        # 单例（ScanService / AsyncService）和 models 的全局绑定都要在 tearDown
+        # 还原，否则脏 session 会漏给后续文件，见 tests/session_isolation.py
+        self._shared_session = models.get_bound_session()
         engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
@@ -140,6 +144,7 @@ class ScanP0TestBase(unittest.TestCase):
         # 跑的是真实实现。
         if "_import_one_file" in self.svc.__dict__:
             del self.svc._import_one_file
+        self._old_scoped_session = self.svc.__dict__.get("scoped_session", _MISSING)
         self.svc.session = self.session
         self.svc.scoped_session = self.session
         self._conf_backup = {}
@@ -167,7 +172,10 @@ class ScanP0TestBase(unittest.TestCase):
         ScanService.static_is_importing = False
         ScanService.static_import_user_id = 0
         self.session.remove()
+        if self._old_scoped_session is not _MISSING:
+            self.svc.scoped_session = self._old_scoped_session
         shutil.rmtree(self.tmpdir, ignore_errors=True)
+        restore_models_session(self._shared_session)
 
     def _patch(self, patcher):
         patcher.start()
@@ -357,7 +365,7 @@ class TestPhase1Batching(ScanP0TestBase):
 
         self.svc._import_one_file = fake_import_one_file
         self.addCleanup(self._restore_import_one_file)
-        self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+        self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
         self.assertEqual(len(txn_at_book_start), 6)
         # 每本开工时都不该已经在写事务里（旧 autoflush=True 从第 2 本起恒为 True）
         self.assertEqual(txn_at_book_start, [False] * 6)
@@ -374,7 +382,7 @@ class TestPhase1Batching(ScanP0TestBase):
 
         self.svc._import_one_file = fake_import_one_file
         self.addCleanup(self._restore_import_one_file)
-        self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+        self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
         self.assertEqual(sorted(delivered), sorted(files))
         self.assertEqual(self.session.query(ScanFile).filter(ScanFile.status == ScanFile.READY).count(), 5)
 
@@ -405,7 +413,7 @@ class TestPhase1Batching(ScanP0TestBase):
 
         with mock.patch.object(scan_service, "PHASE1_BATCH_SIZE", 2):
             with mock.patch.object(ScanService, "_apply_phase1_batch", spying_apply):
-                self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+                self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
         self.assertEqual(batches, [2, 2, 1])
         self.assertEqual(sorted(delivered), sorted(files))
         self.assertEqual(self.session.query(ScanFile).filter(ScanFile.status == ScanFile.READY).count(), 5)
@@ -432,7 +440,7 @@ class TestPhase1Batching(ScanP0TestBase):
             svc._import_one_file = counting
             self.addCleanup(self._restore_import_one_file)
             with mock.patch.dict(scan_service.CONF, {"scan_hash_workers": workers}):
-                svc.do_import_internal([fpath, fpath], ImportInternalOptions(user_id=9, force=force))
+                svc.do_import_internal([fpath, fpath], opts=ImportInternalOptions(user_id=9, force=force))
             self.assertEqual(calls, [fpath], (workers, force))
             rows = self.session.query(ScanFile).all()
             self.assertEqual(len(rows), 1, (workers, force))
@@ -458,7 +466,7 @@ class TestHashParallel(ScanP0TestBase):
         self.session.commit()
         self.svc.db = FakeCalibreDB()
         with mock.patch.dict(scan_service.CONF, {"scan_hash_workers": workers}):
-            self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+            self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
         rows = self.session.query(ScanFile).order_by(ScanFile.path).all()
         return [(r.path, r.status, r.hash) for r in rows]
 
@@ -491,7 +499,7 @@ class TestHashParallel(ScanP0TestBase):
 
         with mock.patch.dict(scan_service.CONF, {"scan_hash_workers": 2}):
             with mock.patch.object(ScanService, "_compute_hash", slow_first):
-                self.svc.do_import_internal([p1, p2], ImportInternalOptions(user_id=9))
+                self.svc.do_import_internal([p1, p2], opts=ImportInternalOptions(user_id=9))
         status = {r.path: r.status for r in self.session.query(ScanFile).all()}
         self.assertEqual(status[p1], ScanFile.IMPORTED)
         self.assertEqual(status[p2], ScanFile.DROP)
@@ -515,7 +523,7 @@ class TestHashParallel(ScanP0TestBase):
             self.svc.db = FakeCalibreDB()
             with mock.patch.dict(scan_service.CONF, {"scan_hash_workers": workers}):
                 with mock.patch.object(ScanService, "_compute_hash", spying_hash):
-                    self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+                    self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
             self.assertEqual(len(seen_threads), 4)
             if expect_pool:
                 self.assertTrue(all(n.startswith("scan_hash") for n in seen_threads), seen_threads)
@@ -538,7 +546,7 @@ class TestHashParallel(ScanP0TestBase):
         self.svc._import_one_file = fake_import_one_file
         self.addCleanup(self._restore_import_one_file)
         with mock.patch.dict(scan_service.CONF, {"scan_hash_workers": 1}):
-            self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+            self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
         self.assertEqual(sorted(delivered), sorted(files))
         self.assertEqual(self.session.query(ScanFile).filter(ScanFile.status == ScanFile.READY).count(), 2)
 
@@ -567,7 +575,7 @@ class TestHashParallel(ScanP0TestBase):
 
         with mock.patch.dict(scan_service.CONF, {"scan_hash_workers": 2}):
             with mock.patch.object(ScanService, "_scan_prepare", spying_prepare):
-                self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+                self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
         self.assertEqual(len(calls), 2)
         # abort 语义：worker 跳过队列所有行（保持 READY 下轮 union-pending 重导），
         # 但已提交进流水线的文件必须被收尾收割并落 READY 行（尾批照常提交）。
@@ -636,7 +644,7 @@ class TestPhase2Batching(ScanP0TestBase):
         self.addCleanup(self._restore_import_one_file)
         with mock.patch.object(ScanService, "_apply_phase2_batch", spying_apply2):
             with mock.patch.object(ScanService, "save_or_rollback") as mock_save:
-                self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+                self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
         self.assertEqual(batches, [20])
         mock_save.assert_not_called()
         self.assertEqual(self.session.query(ScanFile).filter(ScanFile.status == ScanFile.IMPORTED).count(), 20)
@@ -821,7 +829,7 @@ class TestTitleDedupDispatch(ScanP0TestBase):
         self.svc._title_dedup_ids = fake_dedup
         self.addCleanup(self._restore_dedup_ids)
         ScanService.static_title_index_total = 60
-        self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+        self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
         mock_index.close.assert_called_once()
         self.assertIsNone(ScanService.static_title_index)
         self.assertEqual(ScanService.static_title_index_total, 0)  # 收尾连门限一起清：lingering worker 不再重建孤儿索引
@@ -845,7 +853,7 @@ class TestTitleIndexEndToEnd(ScanP0TestBase):
         import glob as _glob
         temp_files_before = set(_glob.glob(os.path.join(tempfile.gettempdir(), "scan_title_idx_*.sqlite")))
         with mock.patch.object(scan_service, "TITLE_INDEX_MIN_BOOKS", 1):
-            self.svc.do_import_internal([f1, f2], ImportInternalOptions(user_id=9))
+            self.svc.do_import_internal([f1, f2], opts=ImportInternalOptions(user_id=9))
         self.assertEqual(len(db.import_calls), 1)  # 第二本并入，不重复建书
         self.assertEqual(len(db.add_format_calls), 1)
         self.assertEqual(db.same_title_calls, [])  # 两次判重全部走索引，零全库扫描
@@ -931,7 +939,7 @@ class TestPersistFailureGate(ScanP0TestBase):
 
         self.svc.session = CommitBoom(real_session)
         self._stub_import_one_file()
-        self.svc.do_import_internal([fpath], ImportInternalOptions(user_id=9))
+        self.svc.do_import_internal([fpath], opts=ImportInternalOptions(user_id=9))
         self.assertTrue(ScanService.static_phase1_persist_failed)
 
     def test_dropped_save_sets_flag(self):
@@ -949,7 +957,7 @@ class TestPersistFailureGate(ScanP0TestBase):
         fpath = self._touch("dupfile.txt", b"dup-content")
         self._stub_import_one_file()
         with mock.patch.object(ScanService, "_compute_hash", return_value=("sha256:dup", None)):
-            self.svc.do_import_internal([fpath], ImportInternalOptions(user_id=9))
+            self.svc.do_import_internal([fpath], opts=ImportInternalOptions(user_id=9))
         self.assertTrue(ScanService.static_phase1_persist_failed)
 
 
@@ -1011,7 +1019,7 @@ class TestSameTitleEndToEnd(ScanP0TestBase):
         self.svc.db = db
         f1 = self._touch(os.path.join("d1", "同名书.txt"), b"first-content-aaa")
         f2 = self._touch(os.path.join("d2", "同名书.txt"), b"second-content-bbb")
-        self.svc.do_import_internal([f1, f2], ImportInternalOptions(user_id=9))
+        self.svc.do_import_internal([f1, f2], opts=ImportInternalOptions(user_id=9))
         self.assertEqual(len(db.import_calls), 1)
         self.assertEqual(len(db.add_format_calls), 1)
         self.assertEqual(len(db.same_title_calls), 2)
@@ -1035,7 +1043,7 @@ class TestSetFieldPerBook(ScanP0TestBase):
         files = []
         for i in range(25):
             files.append(self._touch(os.path.join("c%d" % (i % 3), "book%02d.txt" % i), b"cat-content-%02d" % i))
-        self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+        self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
         cat_calls = [m for name, m in db.new_api.set_field_calls if name == constants.CALIBRE_COLUMN_CATEGORY]
         # 逐本写回：25 本 = 25 次调用，且每次只写一本（不是攒批的多键映射）
         self.assertEqual(len(cat_calls), 25)
@@ -1058,7 +1066,7 @@ class TestSetFieldPerBook(ScanP0TestBase):
         db = FakeCalibreDB()
         self.svc.db = db
         fpath = self._touch(os.path.join("cats", "plain.txt"), b"plain-content")
-        self.svc.do_import_internal([fpath], ImportInternalOptions(user_id=9))
+        self.svc.do_import_internal([fpath], opts=ImportInternalOptions(user_id=9))
         row = self.session.query(ScanFile).filter(ScanFile.path == fpath).one()
         self.assertEqual(row.status, ScanFile.IMPORTED)
         cat_calls = [m for name, m in db.new_api.set_field_calls if name == constants.CALIBRE_COLUMN_CATEGORY]
@@ -1077,7 +1085,7 @@ class TestSetFieldPerBook(ScanP0TestBase):
         db = FakeCalibreDB()
         self.svc.db = db
         fpath = self._touch(os.path.join("cats2", "plain.txt"), b"plain-content-2")
-        self.svc.do_import_internal([fpath], ImportInternalOptions(user_id=9))
+        self.svc.do_import_internal([fpath], opts=ImportInternalOptions(user_id=9))
         cat_calls = [m for name, m in db.new_api.set_field_calls if name == constants.CALIBRE_COLUMN_CATEGORY]
         self.assertEqual(cat_calls, [])
 
@@ -1123,7 +1131,7 @@ class TestIncrementalSnapshotCommit(ScanP0TestBase):
         self._touch(os.path.join("d1", "a.txt"), b"a-content")
         filelist, _visited, _file_dir = self.svc._collect_files([self.tmpdir], use_snapshot=False)
         self._install_fake()
-        self.svc.do_import_internal(filelist, ImportInternalOptions(user_id=9))  # 无 visited/file_dir → 无增量提交
+        self.svc.do_import_internal(filelist, opts=ImportInternalOptions(user_id=9))  # 无 visited/file_dir → 无增量提交
         self.assertEqual(self._snapshot_dirs(), set())
 
     def test_dropped_phase1_row_suppresses_incremental_snapshot(self):
@@ -1226,7 +1234,7 @@ class TestPhase1NoWriteHold(ScanP0TestBase):
         self.addCleanup(self._restore_import_one_file)
         with mock.patch.object(ScanService, "_compute_hash", slow_hash):
             with mock.patch.object(scan_service, "PHASE1_BATCH_SIZE", 4):
-                self.svc.do_import_internal(files, ImportInternalOptions(user_id=9))
+                self.svc.do_import_internal(files, opts=ImportInternalOptions(user_id=9))
         self.assertEqual(len(delivered), 12)
         self.assertEqual(
             session.query(ScanFile).filter(ScanFile.status == ScanFile.IMPORTED).count(), 12
@@ -1267,7 +1275,7 @@ class TestNonReadyNotEnqueued(ScanP0TestBase):
 
         self.svc._import_one_file = fake_import_one_file
         self.addCleanup(self._restore_import_one_file)
-        self.svc.do_import_internal([f1, f2], ImportInternalOptions(user_id=9))
+        self.svc.do_import_internal([f1, f2], opts=ImportInternalOptions(user_id=9))
         self.assertEqual(delivered, [f1])
         statuses = sorted(r.status for r in self.session.query(ScanFile).all())
         self.assertEqual(statuses, [ScanFile.DROP, ScanFile.READY])

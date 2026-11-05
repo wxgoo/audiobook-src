@@ -7,8 +7,20 @@ import sys
 import unittest
 from unittest import mock
 
-testdir = os.path.realpath(os.path.dirname(os.path.realpath(__file__)) + "/../../../")
-sys.path.append(testdir)
+# 项目根 = tests/ 的父目录。**不要**用原来那句
+#   testdir = .. / "../../../"   +  sys.path.append(testdir)
+# 它有两个毛病，单跑这个文件时都看不出来、只有全量跑才炸：
+#   1. `tests/../../../` 比项目根还高两层，压根没有 `webserver/`；
+#   2. `append` 把路径排在 sys.path 末尾。pytest 以 `tests/` 为 rootdir 收集时，
+#      `tests/` 的父目录（= 项目根）本来就已经在 sys.path 里，只是**排在后面**；
+#      而 `tests/` 自己的目录也在里面。于是 `import webserver` 会先命中
+#      别的东西（同名目录被当成命名空间包），得到一个空的 `webserver` 模块，
+#      后面 `webserver.main` / `webserver.utils` 全部 AttributeError。
+# 用 insert(0) 抢到最前面，路径也只到项目根为止。
+_PROJECT_ROOT = os.path.realpath(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+testdir = _PROJECT_ROOT
 
 import webserver.main
 from webserver.plugins.meta.douban import CHROME_HEADERS, DoubanBookApi
@@ -194,7 +206,13 @@ class TestDoubanApi(unittest.TestCase):
     def test_metadata(self, mk):
         api = DoubanBookApi("apikey", "baseurl")
         book = dict(DOUBAN_BOOK)
-        image = unittest.TestResult()
+        # 这里要的是「一个带 status_code / content 的假响应」。
+        # 原来写的是 `unittest.TestResult()`，只手工补了 `.content`：
+        # 以前 `get_cover()` 不看 status_code，现在会先判 200 才读 body，
+        # 于是属性缺失直接炸成 `'TestResult' object has no attribute 'status_code'`。
+        # 用 Mock 显式给出这两个字段，别复用测试框架自己的类型。
+        image = mock.Mock()
+        image.status_code = 200
         image.content = b"image-body"
         mk.return_value = image
 

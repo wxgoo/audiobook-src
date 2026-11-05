@@ -6,8 +6,20 @@ import sys
 import unittest
 from unittest import mock
 
-testdir = os.path.realpath(os.path.dirname(os.path.realpath(__file__)) + "/../../../")
-sys.path.append(testdir)
+# 项目根 = tests/ 的父目录。**不要**用原来那句
+#   testdir = .. / "../../../"   +  sys.path.append(testdir)
+# 它有两个毛病，单跑这个文件时都看不出来、只有全量跑才炸：
+#   1. `tests/../../../` 比项目根还高两层，压根没有 `webserver/`；
+#   2. `append` 把路径排在 sys.path 末尾。pytest 以 `tests/` 为 rootdir 收集时，
+#      `tests/` 的父目录（= 项目根）本来就已经在 sys.path 里，只是**排在后面**；
+#      而 `tests/` 自己的目录也在里面。于是 `import webserver` 会先命中
+#      别的东西（同名目录被当成命名空间包），得到一个空的 `webserver` 模块，
+#      后面 `webserver.main` / `webserver.utils` 全部 AttributeError。
+# 用 insert(0) 抢到最前面，路径也只到项目根为止。
+_PROJECT_ROOT = os.path.realpath(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+testdir = _PROJECT_ROOT
 sys.path.append("/home/batkiz/code/talebook")
 
 import webserver.main

@@ -28,6 +28,7 @@ from webserver.loader import get_settings
 from webserver.models import InstalledTool
 from webserver.toolbox import toolbox_manager
 from webserver.toolbox.toolset import ToolSet
+from tests.session_isolation import restore_models_session
 
 CONF = get_settings()
 
@@ -168,6 +169,7 @@ class TestToolboxManager(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        self._shared_session = models.get_bound_session()
         models.bind_session(self.session)
         models.Base.metadata.create_all(engine)
 
@@ -186,6 +188,7 @@ class TestToolboxManager(unittest.TestCase):
         self._tmp_files = []
 
     def tearDown(self):
+        restore_models_session(self._shared_session)
         self._collect_tools_patcher.stop()
         self.session.remove()
         shutil.rmtree(self._tool_root, ignore_errors=True)

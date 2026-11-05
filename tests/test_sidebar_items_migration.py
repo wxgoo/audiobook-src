@@ -206,7 +206,17 @@ class TestSidebarItemsServedToInfo(unittest.TestCase):
     def served(self, stored):
         from webserver.handlers import base as base_module
 
-        with mock.patch.dict(base_module.CONF, {"SIDEBAR_ITEMS": stored}):
+        # 必须显式把「已迁移」标记钉成 False：
+        # 这个语境的用例全都假设「还没迁移过，读的时候要补齐旧默认」。
+        # 而 SIDEBAR_ITEMS_MIGRATED 是**持久化**的（/tmp/auto.py，
+        # settings_path 指过去），凡是在同一台机器上跑过任何一次「保存设置页」
+        # 的测试，它就被 admin.py 写成 True，之后的读路径变成「管理员说了算、
+        # 原样返回」。于是这批用例全红，而单独 checkout 一个干净环境又全绿 ——
+        # 正是那种「我这儿没问题」的脏环境 bug。
+        with mock.patch.dict(base_module.CONF, {
+            "SIDEBAR_ITEMS": stored,
+            SIDEBAR_ITEMS_MIGRATED_KEY: False,
+        }):
             sync_info = self.handler.get_sys_info()
             async_info = asyncio.run(self.handler.get_sys_info_async())
         self.assertEqual(sync_info["sidebar_items"], async_info["sidebar_items"])

@@ -14,9 +14,22 @@ from webserver.services import book_access_service
 from webserver.services.book_access_service import BookAccessService
 from webserver.services.booklist_service import BookListService
 from webserver.services.book_share_service import BookShareService
+from tests.session_isolation import restore_models_session
 
 WEBSERVER = pathlib.Path(__file__).resolve().parent.parent / "webserver"
-ALLOWED_DIRECT_USERS = {"services/book_access_service.py", "settings.py", "base/setting_saver.py", "handlers/base.py"}
+# 允许出现访客开关名字的文件，按「为什么允许」分三类：
+#   book_access_service.py —— 唯一的判定位；
+#   settings.py / base/setting_saver.py —— 默认值与持久化白名单；
+#   base/modules.py —— 模块开关的**写入方**：关掉「多用户」模块时要把这几个
+#     访客开关改写成安全默认值（MODULE_OFF_SWITCHES）。它写配置，不判权限，
+#     和 handler 直接读开关来放行是两回事，所以列进来。
+ALLOWED_DIRECT_USERS = {
+    "services/book_access_service.py",
+    "settings.py",
+    "base/setting_saver.py",
+    "handlers/base.py",
+    "base/modules.py",
+}
 
 
 class NoCookieHandler:
@@ -106,6 +119,7 @@ class TestBookListGuestRead(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        self._shared_session = models.get_bound_session()
         models.bind_session(self.session)
         models.Base.metadata.create_all(engine)
         reader = Reader()
@@ -117,6 +131,7 @@ class TestBookListGuestRead(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def tearDown(self):
+        restore_models_session(self._shared_session)
         self.session.remove()
 
     def make_list(self, public=True, guest_read=True, books=(10,)):

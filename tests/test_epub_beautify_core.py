@@ -21,8 +21,40 @@ TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 TOOLBOX_DIR = os.path.join(TESTS_DIR, "..", "webserver", "toolbox")
 
 
+# 本文件注入过的模块名；收尾（pytest_collection_modifyitems）时逐个摘掉
+_STUBBED = []
+
+
 def _stub_webserver():
-    """注入最小 webserver 依赖，使 epub_beautify 相关模块可独立导入。"""
+    """注入最小 webserver 依赖，使 epub_beautify 相关模块可独立导入。
+
+    ⚠️ 关键在于**什么时候不注入**。
+
+    原来的写法二话不说就往 `sys.modules` 里塞一个 `types.ModuleType("webserver")`
+    —— 一个没有 `__file__`、没有 `__path__` 的空壳。单跑本文件时没事，pytest
+    全量跑就炸：它按文件名顺序先把所有测试文件 import 一遍，本文件排得靠前，
+    塞完空壳后，后面 test_folder_helper / test_scan / test_sync …… 三十多个
+    文件一 import 就失败：
+
+        AttributeError: module 'webserver' has no attribute '__path__'
+        ImportError: cannot import name 'Reader' from 'webserver.models' (unknown location)
+
+    试图「事后再还原」也救不了：pytest 是**先 import 全部文件、再跑用例**，
+    而 `importlib.import_module()` 命中 `sys.modules` 就直接返回、根本不走
+    `sys.meta_path`，钩子拦不到。等到 tearDown / modifyitems 时，后面的文件
+    早就 import 失败了。
+
+    所以规则很简单：**真包只要有一丁点可能被用到，就绝不覆盖**。
+    判定依据是 `webserver.__file__` 能否找到——能找到就说明这是真包，
+    直接用，什么都不改（本文件需要的几个属性真包里都有）。
+    """
+    real = sys.modules.get("webserver")
+    if real is not None and getattr(real, "__file__", None):
+        return False
+    # 目录里确实有 webserver/__init__.py 时，也让真包优先
+    if os.path.exists(os.path.join(TOOLBOX_DIR, "..", "__init__.py")):
+        return False
+
     webserver = types.ModuleType("webserver")
     toolbox = types.ModuleType("webserver.toolbox")
     toolbox.__path__ = [TOOLBOX_DIR]
@@ -74,7 +106,7 @@ def _stub_webserver():
     calibre.ebooks.metadata.book = book
     calibre.ebooks.metadata.book.base = base
 
-    sys.modules.update({
+    stubs = {
         "webserver": webserver,
         "webserver.toolbox": toolbox,
         "webserver.i18n": i18n,
@@ -88,10 +120,34 @@ def _stub_webserver():
         "calibre.ebooks.metadata": metadata,
         "calibre.ebooks.metadata.book": book,
         "calibre.ebooks.metadata.book.base": base,
-    })
+    }
+    # 只塞进「本来就没有」的名字，绝不覆盖已有模块
+    for name, mod in stubs.items():
+        if name not in sys.modules:
+            sys.modules[name] = mod
+            _STUBBED.append(name)
+    return bool(_STUBBED)
 
 
-_stub_webserver()
+_MODULE_NAMES = ("webserver", "webserver.toolbox", "webserver.i18n", "webserver.utils",
+                 "webserver.models", "webserver.services",
+                 "webserver.services.background_service", "webserver.toolbox.base_tool")
+
+
+def _snapshot_modules():
+    return {name: sys.modules.get(name) for name in _MODULE_NAMES}
+
+
+def _restore_modules(snapshot):
+    for name, mod in snapshot.items():
+        if mod is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = mod
+
+
+_REAL_MODULES = _snapshot_modules()
+_injected = _stub_webserver()
 
 from webserver.toolbox.utils import chapter_patterns  # noqa: E402
 from webserver.toolbox.utils import epub_beautify_lib as lib  # noqa: E402
@@ -101,6 +157,53 @@ from webserver.toolbox.utils.styles import (  # noqa: E402
     _apply_palette_overrides,
     get_preset_css, list_presets, list_toc_styles,
 )
+
+
+def _restore():
+    """拆掉本文件注入的 stub（只拆自己塞进去的，不碰别人的）。"""
+    for name in _STUBBED:
+        sys.modules.pop(name, None)
+    del _STUBBED[:]
+
+
+# ---------------------------------------------------------------------------
+# 全局状态复原：本文件跑完必须让 `webserver.models` / `webserver.services`
+# 回到测试开始前的样子。
+#
+# 事故链条（全量跑才出现）：
+#   1. 本文件的 stub 只在真包还没被 import 时才注入；全量跑时 pytest 会先按
+#      **字母序** import 一遍全部测试文件，那时 `webserver.models` 还不存在，
+#      于是这里塞进去的是一个假 `webserver.models`；
+#   2. `tests.test_main`（app、CONF、ScopedSession）在字母序上排在很后面，
+#      等它真正 import 时，`webserver.models` 已经被 release_memory 之类测试
+#      从 `sys.modules` 里 pop 掉过，于是重新执行了一次 models.py —— 得到的
+#      是一套**新的** Base / Reader / Reading，并且绑定在 app 的 session 上；
+#   3. 本模块顶层 `from tests.test_main import ...` 存下来的 `models` 引用却
+#      还指着第 1 步那个假模块。后面 `_release_memory`、`test_folder_handlers`
+#      之类用 `models.bind_session(...)` 时，改的是假模块（或旧模块）的全局变量，
+#      app 真正用的那套模型类完全没被绑上 —— 表现成 readings 表没有
+#      `ux_readings_read` 索引、`ON CONFLICT clause does not match ...`，
+#      sync / book_review 等用例成片红。
+#
+# 所以收尾要按「名字」重新取当前模块对象来还原，而不是靠顶层 import 的那个引用。
+def pytest_collection_modifyitems(session, config, items):
+    """collect 阶段：把 stub 摘掉，并等「真包都 import 完」之后再还原一次模块表。
+
+    为什么不能只在模块级做：pytest 先 import 全部测试文件再跑用例，本文件
+    被 import 的那一刻 `tests.test_main` 可能还没跑过，我们不知道 app 最终
+    绑的是哪套模型类。这里已经全部 import 完毕，可以安全地对齐。
+    """
+    _restore()
+    for name in _STUBBED:
+        real = _REAL_MODULES.get(name)
+        if real is not None:
+            sys.modules[name] = real
+    del _STUBBED[:]
+
+
+def tearDownModule():
+    """不经 pytest、直接 `python tests/test_epub_beautify_core.py` 时也能收尾。"""
+    _restore()
 
 CONTAINER = (
     '<?xml version="1.0"?>'
@@ -701,7 +804,15 @@ class TestPhase2Integrity(unittest.TestCase):
                     os.remove(p)
 
     def test_skip_run_preserves_running_task_id_and_lock(self):
-        """P3/P4：抢锁失败不覆盖在跑任务句柄、不释放他人持有的锁。"""
+        """P3/P4：抢锁失败不覆盖在跑任务句柄、不释放他人持有的锁。
+
+        这里必须把 `AsyncService.async_mode` 打成 False。真包生效时它默认
+        True，`create_task()` 就会去走后台队列 → `ins.setup(s.db, ...)` →
+        拿 `AsyncService` 默认的 `lambda: "no-session"` 当 session，
+        `ensure_readings_indexes()` 直接在字符串上 `.execute()` 炸掉。
+        这个用例以前能过，只是因为本文件的 `webserver.services` 是个空壳、
+        `async_service` 根本 import 不到而已。
+        """
         from webserver.toolbox import epub_beautify as beautify_tool
         tool = beautify_tool.EpubBeautifyTool()
         tool.create_task = lambda **kw: 999
@@ -710,9 +821,20 @@ class TestPhase2Integrity(unittest.TestCase):
         self.assertTrue(EpubBeautifyTool._run_lock.acquire())
         try:
             EpubBeautifyTool._last_task_id = 7
+            # `run()` 头上有 `@AsyncService.register_service`，包装层每次调用都会先跑
+            # `ins.setup(s.db, s.scoped_session)`，而 `AsyncService` 默认的
+            # `scoped_session` 是 `lambda: "no-session"` —— 本文件不建 app、没有
+            # 真 session，`ensure_readings_indexes()` 会在字符串上 `.execute()` 炸掉。
+            # 这里给它一个哑 session 顶过去：用例只验「抢锁失败时不动
+            # `_last_task_id`、不释放他人的锁」，和 DB 无关。
+            dummy = mock.Mock()
             with mock.patch.object(beautify_tool.BackgroundService, "get_task",
                                    lambda self, tid: {"status": "running"},
-                                   create=True):
+                                   create=True), \
+                 mock.patch.object(beautify_tool.AsyncService, "async_mode",
+                                   lambda self: False), \
+                 mock.patch.object(beautify_tool.AsyncService, "setup",
+                                   lambda self, *a, **kw: setattr(self, "session", dummy)):
                 tool.run(book_ids=[1], preset="classic", use_system_fonts=True,
                          toc_style="elegant", suffix="", user_id=0)
             # P3：skip 任务 id 不得覆盖在跑任务（前端轮询句柄）

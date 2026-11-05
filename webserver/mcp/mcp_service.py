@@ -1355,12 +1355,14 @@ class MCPService:
                   for t in API_TOOLS.values()]
         if self.need_login:
             for tool in tools:
-                if "token" not in tool.inputSchema.get("required", []):
-                    tool.inputSchema.setdefault("required", []).append("token")
-                    tool.inputSchema["properties"]["token"] = {
-                        "type": "string",
-                        "description": "Authentication token obtained t login"
-                    }
+                schema = self._tool_input_schema(tool)
+                required = schema.setdefault("required", [])
+                if "token" not in required:
+                    required.append("token")
+                schema.setdefault("properties", {})["token"] = {
+                    "type": "string",
+                    "description": "Authentication token obtained by login"
+                }
 
             tools.append(
                 Tool(
@@ -1399,6 +1401,31 @@ class MCPService:
                 )
             )
         return tools
+
+    @staticmethod
+    def _tool_input_schema(tool: Tool) -> Dict[str, Any]:
+        """返回工具的**可写**参数 schema。
+
+        ## 这个函数存在的唯一目的：拿到真正那份 dict
+
+        `mcp` 1.x 的 `Tool` 字段叫 `inputSchema`，2.x 改成了 `input_schema`
+        （camelCase 只剩 pydantic alias）。需要登录时我们要往 schema 里塞
+        `token` 参数，塞进去的那份 dict 必须就是**后面序列化时读的那份**，
+        否则改动会被丢掉。
+
+        两种版本都试，取到就返回；都没有（工具本来就无参）就现造一个空
+        schema 并写回属性，保证返回的对象是挂在 tool 上的。
+        """
+        schema = getattr(tool, "inputSchema", None)
+        if schema is None:
+            schema = getattr(tool, "input_schema", None)
+        if not isinstance(schema, dict):
+            schema = {"type": "object", "properties": {}}
+            if hasattr(tool, "input_schema"):
+                tool.input_schema = schema
+            else:
+                tool.inputSchema = schema
+        return schema
 
     def _create_jsonrpc_response(self, request_id: Any, result: Any = None, error: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -1484,7 +1511,13 @@ class MCPService:
                 tools = await self.list_tools()
                 return self._create_jsonrpc_response(
                     request_id,
-                    result={"tools": [tool.model_dump(exclude_none=True) for tool in tools]}
+                    # by_alias=True 是**必须的**，不是兼容性锦上添花：
+                    # mcp>=2 把模型字段命名为 snake_case（input_schema），
+                    # MCP 协议要求的却是 camelCase（inputSchema）。不加
+                    # by_alias，序列化出去的是 `input_schema`，客户端按协议读
+                    # `inputSchema` 读到 None，于是**每个工具都显示成无参**，
+                    # 调用时参数被静默丢弃 —— 表现就是「工具都在，但都用不了」。
+                    result={"tools": [tool.model_dump(exclude_none=True, by_alias=True) for tool in tools]}
                 )
 
             # 处理工具调用请求（支持新旧两种方法名）

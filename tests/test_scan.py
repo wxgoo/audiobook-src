@@ -19,6 +19,39 @@ def setUpModule():
     init()
     handlers.scan.SCAN_DIR_PREFIX = "/"
 
+
+def prepare_scan_row(session, row_id, status):
+    """把 `scanfiles` 里 id=row_id 的那行复位成指定状态并返回。
+
+    原来这里直接 `.one()`，前提是「夹具里一定已经有这一行」。这个前提在
+    单跑一个用例时成立，整文件跑就崩了：`TestScan.test_import_all` 真的
+    执行了一次导入，那条记录被消费/改写掉了，后面的 `TestImport` 再
+    `.one()` 就 NoResultFound。而 `TestImport::test_import_one` 单独跑
+    又是绿的 —— 典型的「测试顺序决定成败」。
+
+    改成找不到就按夹具口径重建一行，用例之间不再互相依赖。
+    """
+    row = session.query(ScanFile).filter(ScanFile.id == row_id).one_or_none()
+    if row is None:
+        # ScanFile 不是无参构造：__init__(self, path, hash_value, import_id)
+        # 会顺手填 name/status/create_time，绕过去直接赋属性不如按签名造。
+        row = ScanFile(testdir + "/cases/new.epub", "", 0)
+        row.id = row_id
+        row.scan_id = 1
+        row.import_type = 0
+        row.title = ""
+        row.author = ""
+        row.publisher = ""
+        row.tags = ""
+    row.path = testdir + "/cases/new.epub"
+    row.status = status
+    row.book_id = 0
+    row.import_id = 0
+    row.save()
+    session.commit()
+    return row
+
+
 class TestScan(TestWithUserLogin):
     NEW_ROW_ID = 69
     RECORDS_COUNT = 2
@@ -28,13 +61,7 @@ class TestScan(TestWithUserLogin):
         self.session = self.get_app().settings["ScopedSession"]
         self.session.rollback()
 
-        row = self.session.query(ScanFile).filter(ScanFile.id == self.NEW_ROW_ID).one()
-        row.path = testdir + "/cases/new.epub"
-        row.status = ScanFile.NEW
-        row.book_id = 0
-        row.import_id = 0
-        row.save()
-        self.session.commit()
+        prepare_scan_row(self.session, self.NEW_ROW_ID, ScanFile.NEW)
         return super().setUp()
 
     def test_list(self):
@@ -92,13 +119,7 @@ class TestScanContinue(TestWithUserLogin):
         self.session = self.get_app().settings["ScopedSession"]
         self.session.rollback()
 
-        row = self.session.query(ScanFile).filter(ScanFile.id == self.NEW_ROW_ID).one()
-        row.path = testdir + "/cases/new.epub"
-        row.status = ScanFile.NEW
-        row.book_id = 0
-        row.import_id = 0
-        row.save()
-        self.session.commit()
+        prepare_scan_row(self.session, self.NEW_ROW_ID, ScanFile.NEW)
         return super().setUp()
     # def test_scan(self):
     #     d = self.json("/api/admin/import/run", method="POST", body="")
@@ -116,13 +137,7 @@ class TestImport(TestWithUserLogin):
         session = self.get_app().settings["ScopedSession"]
         session.rollback()
 
-        row = session.query(ScanFile).filter(ScanFile.id == self.READY_ROW_ID).one()
-        row.path = testdir + "/cases/new.epub"
-        row.status = ScanFile.READY
-        row.book_id = 0
-        row.import_id = 0
-        row.save()
-        session.commit()
+        prepare_scan_row(session, self.READY_ROW_ID, ScanFile.READY)
         return super().setUp()
 
     @mock.patch("calibre.db.legacy.LibraryDatabase.import_book")

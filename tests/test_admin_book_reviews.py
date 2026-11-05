@@ -3,7 +3,8 @@
 
 import json
 
-from tests.test_main import BID_EPUB, BID_TXT, TestWithUserLogin, setUpModule as init, main
+from tests.test_main import BID_EPUB, BID_TXT, TestWithUserLogin, get_db, setUpModule as init, main
+from webserver.models import BookReview
 from webserver.services.book_review_service import BookReviewService
 
 
@@ -19,10 +20,34 @@ class TestAdminBookReviews(TestWithUserLogin):
         super().setUp()
         main.CONF["REVIEW_REQUIRES_APPROVAL"] = True
         BookReviewService.invalidate_stats(BID_EPUB)
+        # 每个用例都把 reader 1 在这两本书上的评论清干净。
+        #
+        # 本类的用例都会 POST 一条评价（有的还 delete / hide），而 tests/library
+        # 是整轮测试共用的一份库，不清就会留给后面的用例：按字母序 admin 系列
+        # 先跑，于是 test_book_review 里的
+        # `test_get_own_review_before_any_submission` 一上来就查到前任留下的
+        # pending 评价，断言 None 失败——单跑该文件永远是绿的。
+        self._purge_reviews()
 
     def tearDown(self):
+        self._purge_reviews()
         main.CONF["REVIEW_REQUIRES_APPROVAL"] = False
         super().tearDown()
+
+    @staticmethod
+    def _purge_reviews():
+        """物理删掉 reader 1 在测试书上的评价 + 相关统计缓存。
+
+        走 SQL 而不是 BookReviewService.delete：后者带状态机（只有 admin 的
+        delete 才是物理删），夹具复位不需要那些语义。
+        """
+        db = get_db()
+        db.query(BookReview).filter(
+            BookReview.reader_id == 1, BookReview.book_id.in_((BID_EPUB, BID_TXT))
+        ).delete(synchronize_session=False)
+        db.commit()
+        BookReviewService.invalidate_stats(BID_EPUB)
+        BookReviewService.invalidate_stats(BID_TXT)
 
     def test_list_filters_by_status(self):
         self.json("/api/book/%d/review" % BID_EPUB, method="POST", body=json.dumps({"rating": 8, "comment": "x"}))

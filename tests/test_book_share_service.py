@@ -25,6 +25,7 @@ from webserver.services.book_share_service import (
     BookShareService,
     ShareParamError,
 )
+from tests.session_isolation import restore_models_session
 
 
 class FakeHandler:
@@ -47,6 +48,7 @@ class ShareTestCase(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        self._shared_session = models.get_bound_session()
         models.bind_session(self.session)
         models.Base.metadata.create_all(engine)
         reader = Reader()
@@ -55,11 +57,20 @@ class ShareTestCase(unittest.TestCase):
         self.session.commit()
         BookShareService._failures.clear()
         BookShareService.invalidate_cache()
-        patcher = mock.patch.dict(book_access_service.CONF, {"ALLOW_GUEST_READ": False, "ALLOW_GUEST_DOWNLOAD": False}, clear=False)
+        patcher = mock.patch.dict(book_access_service.CONF, {
+            "ALLOW_GUEST_READ": False,
+            "ALLOW_GUEST_DOWNLOAD": False,
+            # 分享链接总开关。生产默认 `settings.py: ENABLE_SHARE_LINK = False`，
+            # 关着的时候 `_share_allows()` 一律 False，所有「已授权就该放行」的
+            # 用例都拿不到授权，表现成 `False is not true`。这组用例测的正是
+            # 开关打开后的授权语义，所以必须显式打开，不能靠默认值。
+            "ENABLE_SHARE_LINK": True,
+        }, clear=False)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def tearDown(self):
+        restore_models_session(self._shared_session)
         self.session.remove()
 
     def make(self, book_id=10, **kwargs):

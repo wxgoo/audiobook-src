@@ -47,8 +47,18 @@ class SyncHandler(BaseHandler):
         book_hash = self.get_argument("book", None)
         own_arg = self.get_argument("own", None)
         if own_arg is None:
-            # 客户端没传 own 时，表示为旧的客户端，按之前的逻辑只会返回自己的批注信息
-            own = 1
+            # 客户端没传 own 时按**用户偏好**决定，而不是硬编码 1：
+            # `show_other_annotations`（设置页「显示其他人的批注」，默认 True）
+            # 就是给这件事用的开关，不传 own 时应当与它的语义一致 —— 否则用户
+            # 在设置里打开了这个选项，旧客户端（或没带 own 的调用）依然只拿到
+            # 自己的批注，开关等于半个摆设。
+            # 只有在已经指定了具体书籍(`book`)时才查偏好：全量 pull 拿不到
+            # 跨用户数据（见 _shared_notes 的注释），此时查了也用不上，白多
+            # 一次 Reader 查询。
+            if book_hash:
+                own = 0 if self._show_other_annotations() else 1
+            else:
+                own = 1
         elif own_arg in ("0", "1"):
             own = int(own_arg)
         else:
@@ -58,6 +68,19 @@ class SyncHandler(BaseHandler):
         # ENABLE_SHARED_NOTES 开关与 book 参数约束），具体组装逻辑都在 MyReaderSyncService
         # 内部完成，这里只是把参数原样透传下去。
         return MyReaderSyncService.pull(self.current_user.id, int(since), type_, book_hash, own)
+
+    def _show_other_annotations(self) -> bool:
+        """当前用户是否愿意在阅读时看到其他人的批注（`extra.show_other_annotations`）。
+
+        默认 True —— 与 UserInfo / 用户设置页的默认值保持一致（见
+        webserver/handlers/user.py 里读同一个键的两处），老用户没有这个
+        extra 字段时也应当是「看得到」。
+        前端首次升级时 usersettings.vue 里还有一段「undefined 就当 true」的
+        兜底，两边语义必须对齐，否则设置页显示已开启、实际又收不到别人的批注。
+        """
+        user = self.current_user
+        extra = getattr(user, "extra", None) or {}
+        return bool(extra.get("show_other_annotations", True))
 
     @js
     @auth

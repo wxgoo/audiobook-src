@@ -11,12 +11,15 @@ from webserver import site_time
 from webserver.models import BookReadingStats, Item, Reader, Reading
 from webserver.services.reading_stats_service import MANUAL_READING_MAX_SECONDS, ReadingStatsService, ReadingWriteBuffer
 from webserver.services.reader_cache import ReaderStatsCache
+from tests.session_isolation import restore_models_session
 
 
 class TestReadingWriteBufferFlush(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        # models 的 session 是进程级全局状态，换成内存库后必须还原，见 tests/session_isolation.py
+        self._shared_session = models.get_bound_session()
         models.bind_session(self.session)
         models.Base.metadata.create_all(engine)
         self.session.execute(
@@ -34,6 +37,7 @@ class TestReadingWriteBufferFlush(unittest.TestCase):
 
     def tearDown(self):
         self.session.remove()
+        restore_models_session(self._shared_session)
 
     def test_first_read_creates_row_and_bumps_item_visit_once(self):
         t0 = datetime.datetime(2026, 1, 1, 0, 0, 0)
@@ -173,6 +177,8 @@ class TestReadingStatsServiceReportDuration(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        # models 的 session 是进程级全局状态，换成内存库后必须还原，见 tests/session_isolation.py
+        self._shared_session = models.get_bound_session()
         models.bind_session(self.session)
         models.Base.metadata.create_all(engine)
         self.session.execute(
@@ -189,6 +195,7 @@ class TestReadingStatsServiceReportDuration(unittest.TestCase):
         self._reset_singleton_buffers()
 
     def tearDown(self):
+        restore_models_session(self._shared_session)
         self._reset_singleton_buffers()
         ReaderStatsCache().invalidate(1)
         self.session.remove()

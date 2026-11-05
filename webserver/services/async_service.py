@@ -97,6 +97,13 @@ class AsyncService(metaclass=SingletonType):
     def __init__(self):
         self.scoped_session = lambda: "no-session"
 
+    def _safe_rollback(self):
+        """回滚，但绝不再抛：兜底分支里的二次异常会把首错吞掉。"""
+        try:
+            self.session.rollback()
+        except Exception as err:
+            logging.warning("rollback after setup failure failed: %s", err)
+
     def setup(self, calibre_db=None, scoped_session=None, need_check_db=False):
         self.db = calibre_db
         self.scoped_session = scoped_session
@@ -127,22 +134,27 @@ class AsyncService(metaclass=SingletonType):
                     steps_ok.append(step_name)
                 except Exception as err:
                     logging.warning("[AsyncService] step %s failed: %s", step_name, err)
-                    self.session.rollback()
+                    self._safe_rollback()
             need_sync_item_time = getattr(self, "_need_sync_item_time", False)
             logging.info("[AsyncService] table steps done: %s", ",".join(steps_ok))
         if self.session is not None:
+            # 两处兜底日志 + rollback 用 `_safe_rollback` 而不是裸 `self.session.*`：
+            # 一旦 session 本身不可用（参数没传、桩对象、已 remove 的 scoped session），
+            # 原来那句 `self.session.rollback()` 会抛出**第二个** AttributeError，
+            # 把真正的首错覆盖掉——线上日志里只剩
+            # `'str' object has no attribute 'rollback'`，看不出原本是「session 没接上」。
             try:
                 self.ensure_readings_indexes()
                 self.session.commit()
             except Exception as err:
                 logging.warning("Failed to ensure readings indexes: %s", err)
-                self.session.rollback()
+                self._safe_rollback()
             try:
                 self.adjust_messages_table()
                 self.session.commit()
             except Exception as err:
                 logging.warning("Failed to adjust messages table: %s", err)
-                self.session.rollback()
+                self._safe_rollback()
         # logging.info("<%s> setup: db=%s, session=%s", self, self.db, self.session)
         logging.info("AsyncService setup completed")
         return need_sync_item_time

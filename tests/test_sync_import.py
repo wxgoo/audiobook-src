@@ -13,6 +13,7 @@ there. `book_id=2` has only a TXT format, used for the no-epub-format path.
 import json
 
 from tests.test_main import TestWithUserLogin, setUpModule as init, main
+from webserver import models
 from webserver.services.sync_service import MyReaderSyncService
 
 EPUB_BOOK_ID = 1
@@ -32,6 +33,35 @@ class TestSyncImportHandler(TestWithUserLogin):
         main.CONF["ENABLE_DATA_SYNC"] = True
         MyReaderSyncService._locks.clear()
         MyReaderSyncService._buffer._pending.clear()
+        self._purge_imported_notes()
+
+    def _purge_imported_notes(self):
+        """每个用例前清掉 mock 用户（uid=1）已有的 `wxread-` 记录。
+
+        这一组用例共享同一个库文件和同一个 mock 用户，`commit` 会真的把
+        记录写进 `reading_records`；而 `clear` 实现的是**墓碑**（软删除），
+        不是物理删除。不清理的话用例之间就会互相串味，典型症状：
+
+        * `test_clear_tombstones_previously_imported_notes` 断言
+          `cleared == 2`，但前面用例提交的 1 条还没墓碑，`_load_existing_
+          by_source_id` 一并捞出来 → `cleared == 3`；
+        * `test_dry_run_default_does_not_write` 断言 `pulled["notes"] == []`，
+          同样被前面用例残留的记录顶掉。
+
+        只清本服务自己写的（`wxread-` 前缀）、只清 uid=1 的：其余数据是
+        夹具的一部分，动了会连累 test_main.py 的计数断言。
+        """
+        db = models.ReadingRecord._session()
+        try:
+            db.query(models.ReadingRecord).filter(
+                models.ReadingRecord.reader_id == 1,
+                models.ReadingRecord.kind == "notes",
+                models.ReadingRecord.record_id.like("wxread-%"),
+            ).delete(synchronize_session=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
     def post_import(self, **body):
         return self.json("/api/sync/import", method="POST", body=json.dumps(body))

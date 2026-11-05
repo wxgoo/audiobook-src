@@ -13,6 +13,7 @@ from webserver import models
 from webserver.models import BookVisit, Reader
 from webserver.services import book_visit_service
 from webserver.services.book_visit_service import BookVisitService
+from tests.session_isolation import restore_models_session
 
 
 class TestBookVisitService(unittest.TestCase):
@@ -20,6 +21,7 @@ class TestBookVisitService(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        self._shared_session = models.get_bound_session()
         models.bind_session(self.session)
         models.Base.metadata.create_all(engine)
         for rid in (1, 2):
@@ -33,6 +35,7 @@ class TestBookVisitService(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def tearDown(self):
+        restore_models_session(self._shared_session)
         BookVisitService._pending.clear()
         self.session.remove()
 

@@ -26,7 +26,11 @@ TOOL_GROUPS = {
         "get_books_count", "get_books", "search_books", "search_by_category", "categories", "list_folders",
         "search_by_folder", "list_authors", "get_author_books", "get_book",
     },
-    "metadata": {"query_book_metadata", "auto_fill_book_info", "book_fill"},
+    "metadata": {
+        "query_book_metadata", "auto_fill_book_info", "book_fill",
+        # 联网取候选 -> 应用某一条候选，是「补全信息」的两步
+        "book_refer_search", "book_refer_apply",
+    },
     "reading": {
         "reading_stats", "get_book_reading_stats", "update_book_reading_stats", "get_reading_time",
         "set_reading_time", "delete_reading_time", "reading", "list_reading", "read_done", "list_read_done",
@@ -38,7 +42,11 @@ TOOL_GROUPS = {
         "update_booklist", "delete_booklist", "booklist_add_books", "booklist_remove_book", "like_booklist",
         "get_book_booklists",
     },
-    "management": {"edit_book", "save_meta_to_file", "book_add_by_isbn", "set_folder", "rename_folder", "update_book_info"},
+    "management": {
+        "edit_book", "save_meta_to_file", "book_add_by_isbn", "set_folder", "rename_folder", "update_book_info",
+        # EPUB 结构修复：`epub_fix` 是异步任务，`epub_fix_progress` 查进度
+        "epub_fix", "epub_fix_progress",
+    },
     "delivery": {"mailto", "send_to_device", "download_book", "upload_book"},
     "tts": {
         "tts_save_config", "tts_test_connection", "tts_convert", "tts_progress", "tts_clone_list",
@@ -53,6 +61,7 @@ TOOL_GROUP_KEYWORDS = {
     ),
     "metadata": (
         "元数据", "豆瓣", "在线信息", "网上信息", "补全信息", "查资料", "出版信息", "出版社", "metadata", "douban",
+        "联网", "候选", "封面",
     ),
     "reading": (
         "阅读", "读完", "读了", "看完", "已读", "想读", "进度", "时长", "阅读时间", "分钟", "收藏", "喜欢", "wants", "favorite",
@@ -62,7 +71,7 @@ TOOL_GROUP_KEYWORDS = {
     "booklists": ("书单", "书架", "清单", "booklist", "reading list"),
     "management": (
         "修改", "改成", "编辑", "更新信息", "重命名", "改名", "添加书", "添加实体书", "设置分类", "设置标签",
-        "写入", "edit", "update", "rename",
+        "写入", "edit", "update", "rename", "修复", "epub 修复", "修一遍", "结构错误", "epub fix",
     ),
     "delivery": (
         "发送", "推送", "邮件", "邮箱", "下载", "上传", "设备", "kindle", "send", "email", "download", "device",

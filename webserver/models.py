@@ -2,6 +2,7 @@
 # -*- coding: UTF-8 -*-
 
 import datetime
+import sys
 import hashlib
 import logging
 import re
@@ -15,7 +16,7 @@ from webserver.i18n import _
 from social_sqlalchemy.storage import JSONType, SQLAlchemyMixin
 from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, or_
 from sqlalchemy.ext.mutable import Mutable
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.orm import relationship, declarative_base, object_session
 from webserver.constants import BOOK_TYPE_EBOOK
 
 
@@ -43,13 +44,124 @@ def mksalt():
 Base = declarative_base()
 
 
+# 当前绑定的 session 工厂（None = 还没绑）。
+#
+# 为什么存模块级变量、而不是只把闭包挂到 Base 上：
+# 有些测试文件会往 sys.modules 里塞假的 `webserver` 包，用完再 pop 掉；
+# 之后任何 `import webserver.models` 都会**重新执行本文件**，产出一套全新的
+# `Base` / `Reader` / `ScanFile` 类。旧的那套类上还挂着 bind_session 打进去的
+# `_session`，新的这套没有 —— 于是 `ScanFile._session()` 一路退到
+# `SQLAlchemyMixin` 的默认实现，报 `NotImplementedError: Implement in subclass`。
+#
+# 把绑定放在这里，`_session` 每次调用时都读一次当前值：即便模块被重新 import，
+# 只要重新执行时能从旧模块里把已有的 session 继承过来（见文件末尾的
+# `_inherit_session_from_previous_module`），绑定就不会丢。
+_BOUND_SESSION = None
+
+
+def get_bound_session():
+    """返回当前绑定的 session 工厂（未绑定时为 None）。"""
+    return _BOUND_SESSION
+
+
+def _session(cls):
+    """所有模型类的 `_session()` 最终都落到这里。
+
+    定义在模块级、只读 `_BOUND_SESSION`，而不是像早先那样写在 `bind_session`
+    里做闭包 —— 闭包版一旦需要「把同一个函数补到子类上」（见
+    `_patch_subclasses_session`）就得往外传，很容易漏一层作用域。
+    """
+    current = _BOUND_SESSION
+    if current is None:
+        # 没绑就明确报错，别返回 None 让调用方在别处莫名其妙地炸
+        raise RuntimeError(
+            "models._session() 未绑定：请先调用 webserver.models.bind_session()"
+        )
+    return current
+
+
+def _save_instance(cls, instance):
+    """保存实例：优先用**对象自己所属**的 session。
+
+    移植自 talebook 上游（对应他们 issue #782）：`sqlite_session` 是请求级的
+    scoped session，Tornado 在同一 ioloop 线程里并发处理多个请求。请求 A 收尾
+    时 `on_finish()` 里的 `ScopedSession.remove()` 会把注册表里的 session 摘掉，
+    于是请求 B 手里那个对象「所属的 session」和注册表当前给的 session 已经不是
+    同一个。这时如果还按注册表拿 session 去 `add()`，就会抛
+
+        Object '<ScanFile>' is already attached to session '718' (this is '719')
+
+    `tests/test_scan.py` 那 5 个 `InvalidRequestError` 就是这个形状。
+
+    所以：能查到对象所属 session 就用它（`object_session`），查不到（新对象、
+    还没进任何 session）才回落到注册表。commit 失败要 rollback，否则这个
+    可能是长生命周期的 session 会滞留在失败事务里，后面每次 flush 都连锁失败
+    —— 这正是之前 `PendingRollbackError` 的传播路径。
+    """
+    db = object_session(instance) or cls._session()
+    db.add(instance)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return instance
+
+
 def bind_session(session):
-    def _session(self):
-        return session
+    global _BOUND_SESSION
+    _BOUND_SESSION = session
 
     Base._session = classmethod(_session)
     SQLAlchemyMixin._session = classmethod(_session)
+    SQLAlchemyMixin._save_instance = classmethod(_save_instance)
+    _patch_subclasses_session(Base)
     logging.info("Bind modles._session()")
+
+
+def _patch_subclasses_session(base):
+    """把 `_session` 钉到本模块里**每一个**模型类上。
+
+    光给 `Base` / `SQLAlchemyMixin` 赋值不够。模型都是
+
+        class Reader(Base, SQLAlchemyMixin): ...
+
+    这种多继承，MRO 里 `Base` 在前 —— 听着没问题，但 `SQLAlchemyMixin` 才是
+    定义 `_query()` 的那个类，而 `_query()` 里写的是 `cls._session()`：
+    属性查找从 `cls` 开始沿 **它自己的 MRO** 走，`Reader.__mro__` 里
+    `Base` 也排在 `SQLAlchemyMixin` 前面，所以只有「绑定时 `Base` 上已经有
+    `_session`」才能查到。
+
+    真正的坑是**重新 import**：某个测试把 `webserver.models` 从 sys.modules
+    里摘掉再 import 一次，会产出**全新的** `Base` 与一套全新的模型类，而
+    `social_sqlalchemy.storage.SQLAlchemyMixin` 是第三方模块、不会重新执行，
+    上面被上一次 `bind_session` 打过补丁的 `_session` 还留着 —— 于是
+    `InstalledTool.get()` 这类方法通过 MRO 查到了那个**旧模块**里的 `_session`，
+    它闭包捕获的是旧模块的 `_BOUND_SESSION`，新模块这边压根没绑过，
+    表现成 `AttributeError: type object 'InstalledTool' has no attribute '_query'`
+    （`_session` 在新类上找不到，`_query` 于是也解析失败）。
+
+    直接在绑定时刻把 `_session` 写到每个类自己的 `__dict__` 里，MRO 就再也不会
+    跑到第三方基类上去，也就不可能拿到旧模块的绑定。
+    """
+    for klass in list(base.__subclasses__()):
+        klass._session = classmethod(_session)
+        _patch_subclasses_session(klass)
+
+
+def _inherit_session_from_previous_module(previous):
+    """模块被重新 import 时，继承上一个实例已经绑定的 session。
+
+    `sys.modules.pop("webserver.models")`（或 importlib.reload）之后再 import
+    时，旧的模块对象会被丢掉。如果它上面已经 bind 过 session，新模块理应接过来，
+    否则整个进程就丢了数据库连接（表现见 `_BOUND_SESSION` 上面的注释）。
+
+    调用方负责把旧模块对象传进来，因为到了这里 `sys.modules[__name__]` 已经
+    是新模块了。
+    """
+    inherited = getattr(previous, "_BOUND_SESSION", None) if previous is not None else None
+    if inherited is not None and _BOUND_SESSION is None:
+        bind_session(inherited)
 
 
 def to_dict(self):
@@ -1466,3 +1578,31 @@ _NEW_TABLES_AUTO_ENSURE = (ReadingRecord, BookReview, InstalledTool, BookReading
 
 def ensure_new_tables(engine):
     Base.metadata.create_all(engine, tables=[m.__table__ for m in _NEW_TABLES_AUTO_ENSURE], checkfirst=True)
+
+
+# 模块被重新 import 时把已绑定的 session 接过来。
+#
+# 触发场景：`tests/` 里有些文件为了不装 calibre 就往 sys.modules 塞假的
+# `webserver` 包，事后 pop 掉；下一次 `import webserver.models` 会重新执行本
+# 文件，得到一整套新的类。旧模块上的绑定若不继承，`ScanFile._session()` 之类
+# 会直接退到基类默认实现。见 `_BOUND_SESSION` 上方的注释。
+def _pick_up_previous_module():
+    import importlib.util
+
+    previous = None
+    for mod in list(sys.modules.values()):
+        if mod is None:
+            continue
+        if getattr(mod, "__file__", None) != __file__:
+            continue
+        if mod is sys.modules.get(__name__):
+            continue
+        if hasattr(mod, "_BOUND_SESSION"):
+            previous = mod
+    return previous
+
+
+try:
+    _inherit_session_from_previous_module(_pick_up_previous_module())
+except Exception:  # noqa: BLE001 - 继承失败不该阻止模块导入
+    logging.exception("models: failed to inherit bound session from previous module")

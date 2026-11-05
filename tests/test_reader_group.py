@@ -134,6 +134,11 @@ class TestReaderGroupService(unittest.TestCase):
         ReaderGroupService.save_group("低年级", "whitelist", "", "童话")
         user = make_reader(extra={"reader_group": "低年级"})
         h = BaseHandler.__new__(BaseHandler)
+        # is_book_visible 里会 `if self.is_admin(): return True`，而 is_admin()
+        # 读的是 self.admin_user（由 prepare/auth 装饰器在真实请求里设置）。
+        # 这里用 __new__ 绕过了初始化，没有这个属性 → AttributeError。
+        # 显式置 False（普通读者），被测的是读者组判定本身。
+        h.admin_user = False
         with mock.patch("webserver.handlers.base.CONF",
                         {ALLOW_READ_RANGE_SETTING: True}, create=True), \
                 mock.patch.object(BaseHandler, "current_user", user):
@@ -232,7 +237,12 @@ class TestReaderGroupOptionsEndpoint(unittest.TestCase):
         """没装 #category 自定义列时不能报错，只是没有候选值"""
         h = self._make_handler(field_metadata={}, tag_items=[])
         rsp = self._call_options(h)
-        self.assertEqual(rsp, {"err": "ok", "categories": [], "tags": []})
+        # usernames 是后来加的第三个候选（把用户划进组时用），
+        # 所以这里从「只要 categories/tags」放宽成「这三项都要在、且为空」。
+        self.assertEqual(rsp["err"], "ok")
+        self.assertEqual(rsp["categories"], [])
+        self.assertEqual(rsp["tags"], [])
+        self.assertEqual(rsp["usernames"], [])
 
     def test_db_error_degrades_gracefully(self):
         """数据库查询炸了也要返回 ok + 空列表，前端仍能自由输入"""

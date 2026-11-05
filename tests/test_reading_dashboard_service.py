@@ -13,6 +13,7 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 from webserver import loader, models, site_time
 from webserver.models import BookReadingStats, Reader, Reading, ReadingState
 from webserver.services import reading_dashboard_service as svc
+from tests.session_isolation import restore_models_session
 
 
 class TestReadingDashboardService(unittest.TestCase):
@@ -22,6 +23,9 @@ class TestReadingDashboardService(unittest.TestCase):
         self._orig_sync_path = self.conf.get("MYREADER_SYNC_PATH")
         self.conf["MYREADER_SYNC_PATH"] = self.tmp_dir
 
+        # models 的 session 是**进程级全局状态**，本类换成内存库后必须还原，
+        # 否则后续用例/服务拿到的还是这个已 remove 的内存 session，见 tests/session_isolation.py
+        self._shared_session = models.get_bound_session()
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
         models.bind_session(self.session)
@@ -53,6 +57,7 @@ class TestReadingDashboardService(unittest.TestCase):
 
     def tearDown(self):
         self.session.remove()
+        restore_models_session(self._shared_session)
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
         if self._orig_sync_path is None:
             self.conf.pop("MYREADER_SYNC_PATH", None)
@@ -468,6 +473,9 @@ class TestReadingLeaderboard(unittest.TestCase):
         self._orig_sync_path = self.conf.get("MYREADER_SYNC_PATH")
         self.conf["MYREADER_SYNC_PATH"] = self.tmp_dir
 
+        # models 的 session 是**进程级全局状态**，本类换成内存库后必须还原，
+        # 否则后续用例/服务拿到的还是这个已 remove 的内存 session，见 tests/session_isolation.py
+        self._shared_session = models.get_bound_session()
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
         models.bind_session(self.session)
@@ -490,6 +498,7 @@ class TestReadingLeaderboard(unittest.TestCase):
 
     def tearDown(self):
         self.session.remove()
+        restore_models_session(self._shared_session)
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
         if self._orig_sync_path is None:
             self.conf.pop("MYREADER_SYNC_PATH", None)

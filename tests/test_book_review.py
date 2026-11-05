@@ -142,6 +142,16 @@ class TestBookReviewHandler(TestWithUserLogin):
         main.CONF["ENABLE_BOOK_REVIEW"] = True
         main.CONF["REVIEW_REQUIRES_APPROVAL"] = False
         main.CONF["ENABLE_BOOK_RECOMMEND_TO_OTHERS"] = True
+        # 被封禁的状态必须每个用例前复位。`test_allow_review_false_blocks_post`
+        # 会把 reader 1 的 allow_review 改成 False 再「恢复」，但它恢复的是
+        # **它自己手里那个 ORM 对象**的字段；而 `finally` 里若 commit 前
+        # 对象已被 session 里的过期（expire_on_commit / 别的用例 commit），
+        # 真实库里就停在 0 上。之后按字母序跑到的
+        # `test_post_*` / `test_reviews_*` 全被 `review.banned` 挡掉。
+        # 这里显式清一次，不依赖用例间的执行顺序。
+        db = get_db()
+        db.query(Reader).filter(Reader.id == 1).update({"allow_review": True})
+        db.commit()
         BookReviewService.invalidate_stats(BID_EPUB)
 
     def test_get_own_review_before_any_submission(self):

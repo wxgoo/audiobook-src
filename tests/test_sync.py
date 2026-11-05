@@ -16,11 +16,31 @@ from tests.test_main import TestWithUserLogin, get_db, setUpModule as init, main
 from webserver import models
 from webserver.models import Reading, ReadingRecord
 from webserver.services.reader_cache import ReaderStatsCache
+from webserver.services.reading_stats_service import ReadingStatsService
 from webserver.services.sync_service import MyReaderSyncService
 
 
 def setUpModule():
     init()
+
+
+def flush_all_stats():
+    """把「同步缓冲」和「阅读统计缓冲」都刷到库里。
+
+    这两个是完全独立的缓冲，`MyReaderSyncService.flush_now()` 只负责
+    `reading_records` / `readings` 的同步记录；而 `push()` 里通过
+    `ReadingStatsService.report_duration()` 记的阅读时长先进
+    `ReadingStatsService._buffer._explicit`，要再调一次
+    `ReadingStatsService.flush_now()` 才会落成 `readings` 行。
+
+    以前 TestSyncServiceReadingSeconds 里只刷了前者就去查 `readings`，
+    断言「能查到行」自然查不到。之所以有时看着是过的，是因为默认的
+
+    字母序执行顺序里，同一进程内前面别的用例顺带调过 flush 把缓冲刷掉
+    了——换个执行顺序或单独跑就红，典型的隐式依赖。
+    """
+    MyReaderSyncService.flush_now()
+    ReadingStatsService.flush_now()
 
 
 class TestSyncServiceStorage(unittest.TestCase):
@@ -344,7 +364,7 @@ class TestSyncServiceReadingSeconds(unittest.TestCase):
                 "configs": [{"id": book_hash, "book_hash": book_hash, "updated_at": 1, "progress": [10, 100]}],
                 "reading_seconds": [{"book_hash": book_hash, "date": "2025-12-31", "seconds": 600}],
             })
-            MyReaderSyncService.flush_now()
+            flush_all_stats()
 
             row = self._reading_row(301, 90101)
             self.assertIsNotNone(row)
@@ -360,7 +380,7 @@ class TestSyncServiceReadingSeconds(unittest.TestCase):
             await MyReaderSyncService.push(302, {
                 "configs": [{"id": book_hash, "book_hash": book_hash, "updated_at": 1, "progress": [1, 100]}],
             })
-            MyReaderSyncService.flush_now()
+            flush_all_stats()
             first = self._reading_row(302, 90102)
             self.assertIsNotNone(first)
             self.assertEqual(first.duration, 0)  # 心跳首次落地，本身贡献 0 秒
@@ -368,7 +388,7 @@ class TestSyncServiceReadingSeconds(unittest.TestCase):
             await MyReaderSyncService.push(302, {
                 "configs": [{"id": book_hash, "book_hash": book_hash, "updated_at": 2, "progress": [2, 100]}],
             })
-            MyReaderSyncService.flush_now()
+            flush_all_stats()
             second = self._reading_row(302, 90102)
             self.assertGreaterEqual(second.duration, 0)  # 心跳路径正常工作，未受影响
 
@@ -383,13 +403,13 @@ class TestSyncServiceReadingSeconds(unittest.TestCase):
             await MyReaderSyncService.push(303, {
                 "configs": [{"id": book_hash, "book_hash": book_hash, "updated_at": 5, "progress": [3, 100]}],
             })
-            MyReaderSyncService.flush_now()
+            flush_all_stats()
 
             await MyReaderSyncService.push(303, {
                 "configs": [{"id": book_hash, "book_hash": book_hash, "updated_at": 5, "progress": [3, 100]}],
                 "reading_seconds": [{"book_hash": book_hash, "date": "2025-12-31", "seconds": 300}],
             })
-            MyReaderSyncService.flush_now()
+            flush_all_stats()
 
             rows = get_db().query(Reading).filter_by(reader_id=303, book_id=90103, action=Reading.ACTION_READ).all()
             backfilled = next(r for r in rows if r.date == datetime.date(2025, 12, 31))
@@ -409,7 +429,7 @@ class TestSyncServiceReadingSeconds(unittest.TestCase):
                     {"date": "2025-12-31", "seconds": 100},  # missing book_hash
                 ],
             })
-            MyReaderSyncService.flush_now()  # must not raise
+            flush_all_stats()  # must not raise
 
             row = self._reading_row(304, 90104)
             self.assertIsNotNone(row)  # 心跳路径仍然正常工作（没有一条合法的 reading_seconds）

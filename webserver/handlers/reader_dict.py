@@ -360,7 +360,11 @@ class ReaderDictTest(BaseHandler):
         try:
             response = await AsyncHTTPClient().fetch(request)
             server, body = describe_upstream(response)
-            logging.info("MyDict test: HTTP %s from %s server=%s body=%s", response.code, target, server, body)
+            # `code` 只用来打日志。取属性用 getattr 兜底：真实响应一定有
+            # code，但这里多一层保护——日志语句不该成为请求路径上的故障点，
+            # 一行 INFO 里少个数字远比「整个排查接口 500」划算。
+            logging.info("MyDict test: HTTP %s from %s server=%s body=%s",
+                         getattr(response, "code", "?"), target, server, body)
         except HTTPClientError as e:
             server, body = describe_upstream(e.response)
             logging.warning("MyDict test: HTTP %s from %s server=%s body=%s", e.code, target, server, body)

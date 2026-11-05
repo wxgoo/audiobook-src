@@ -50,7 +50,10 @@ class TestFolderHandlers(TestWithUserLogin):
         ids = lambda p: sorted(b["id"] for b in self.json("/api/folder/books?path=" + p)["books"])  # noqa: E731
         self.assertEqual(ids("文学"), [2])
         self.assertEqual(ids("文学.小说"), [1])
-        self.assertEqual(ids(""), [3, 4, 5])
+        # 根目录只列出「没有分配文件夹」的书。原来写死 [3, 4, 5]（只有 5 本书的
+        # 年代），夹具扩到 13 本后剩下的书也得在这里。这里表达的是
+        # 「BIDS 里除掉 1、2 那两本」，而不是某几个具体 id。
+        self.assertEqual(ids(""), [b for b in BIDS if b not in (1, 2)])
 
     def test_batch(self):
         d = self.post("/api/book/folder", {"ids": [1, 2, 3], "folder": "科技"})

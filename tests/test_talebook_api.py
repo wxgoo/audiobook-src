@@ -37,6 +37,9 @@ CASES_DIR  = os.path.join(SCRIPT_DIR, "cases")
 # Will be populated in setUpModule
 _book_id = TEST_BOOK_ID
 
+# 探活结果由 Base.setUp 首次执行时填入（基类定义在下面的 Base 里）
+_server_probe = {"ok": None, "note": None}
+
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -56,6 +59,29 @@ def call(tool: str, args: dict = None, timeout: int = 30) -> dict:
         return json.loads(raw)
     except json.JSONDecodeError:
         return {"_raw": raw, "_returncode": r.returncode}
+
+
+def _server_unreachable(resp: dict) -> bool:
+    """`mybooks_api.py` 这次调用是不是「根本没连上服务器」。
+
+    这个测试文件测的是**真起一台 mybooks 服务（默认 127.0.0.1:8082）时的
+    端到端行为**，它和 tests/ 下其它用例不一样：不建 app、不 mock、直接
+    `subprocess` 跑 CLI 脚本，脚本自己去 POST /api/user/sign_in。
+    没有服务在监听时，所有工具都会在登录这一步挂掉，返回
+    `{"status": "error", "message": "Login failed: HTTPConnectionPool(...) Connection refused"}`。
+
+    这种失败**不是被测代码的缺陷**，所以整组用例按「环境缺依赖」skip，
+    而不是报 32 个红。想跑它们：
+
+        python3 -m webserver.main --with-library <库> --port 8082 &
+        MYBOOKS_PASSWORD=<密码> ./scripts/test-integration.sh tests/test_talebook_api.py
+    """
+    message = str(resp.get("message") or resp.get("_raw") or "")
+    return resp.get("status") == "error" and (
+        "Connection refused" in message
+        or "Max retries exceeded" in message
+        or "Failed to establish a new connection" in message
+    )
 
 
 def setUpModule():
@@ -82,6 +108,21 @@ def setUpModule():
 # ---------------------------------------------------------------------------
 
 class Base(unittest.TestCase):
+    def setUp(self):
+        # 服务器不可达时整组跳过（见 `_server_unreachable`）。只能真的发一次
+        # 请求来探活：`mybooks_api.py` 是先 sign_in 再校验参数，没有「不登录
+        # 也能跑完」的工具。结果缓存在模块级字典里，避免每个用例都白等
+        # 一次连接超时。
+        if _server_probe["ok"] is None:
+            resp = call("get_book", {"book_id": 1})
+            _server_probe["ok"] = not _server_unreachable(resp)
+            _server_probe["note"] = resp
+        if not _server_probe["ok"]:
+            self.skipTest(
+                "mybooks 服务不可达（%s），跳过端到端用例：%s"
+                % (HOST, str(_server_probe["note"])[:200])
+            )
+
     def assertJson(self, resp, desc=""):
         self.assertNotIn("_raw", resp,
             f"{desc} -- script returned non-JSON: {str(resp.get('_raw',''))[:300]}")
@@ -259,6 +300,7 @@ class TestBookDetail(Base):
 
 class TestEditBook(Base):
     def setUp(self):
+        super().setUp()  # 先做服务器探活，不可达时整组 skip
         if not _book_id:
             self.skipTest("no usable book_id")
         self._book = call("get_book", {"book_id": _book_id})
@@ -291,6 +333,7 @@ class TestEditBook(Base):
 
 class TestReadingState(Base):
     def setUp(self):
+        super().setUp()  # 先做服务器探活，不可达时整组 skip
         if not _book_id:
             self.skipTest("no usable book_id")
         self._orig = (
@@ -329,6 +372,7 @@ class TestReadingState(Base):
 
 class TestWantsAndFavorites(Base):
     def setUp(self):
+        super().setUp()  # 先做服务器探活，不可达时整组 skip
         if not _book_id:
             self.skipTest("no usable book_id")
         state = (
