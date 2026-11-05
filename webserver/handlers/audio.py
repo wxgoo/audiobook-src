@@ -1465,6 +1465,12 @@ class AudioPurchase(BaseHandler):
             return {"err": "server.error", "msg": str(e)}
 
 
+def _now_ms():
+    """毫秒时间戳。多设备进度仲裁用整数比较，避免 ISO 字符串各自带时区/
+    精度差异（前端 Date.parse 再比，误差按毫秒算也不该由字符串格式决定）。"""
+    return int(time.time() * 1000)
+
+
 class AudioPlaybackProgress(BaseHandler):
     """有声书播放进度的服务端存取（4.6.0-19）。
 
@@ -1489,7 +1495,7 @@ class AudioPlaybackProgress(BaseHandler):
             .filter_by(reader_id=user.id, book_id=book_id)
             .first()
         )
-        return {"err": "ok", "data": row.format_dict() if row else None}
+        return {"err": "ok", "data": row.format_dict() if row else None, "ts": _now_ms()}
 
     @js
     @auth
@@ -1506,6 +1512,19 @@ class AudioPlaybackProgress(BaseHandler):
             data = tornado.escape.json_decode(self.request.body or b"{}")
         except Exception:
             return {"err": "params.invalid", "msg": _("参数错误")}
+
+        # §多设备仲裁§ 客户端带上「这次进度产生的时刻」client_ts（毫秒）。
+        # 两台设备交替播放时，晚到的请求不一定包含更新的位置（另一台可能
+        # 还停在旧位置又心跳了一次）。只接受严格更新的时间戳，旧的一律丢弃，
+        # 并把服务端当前值回给客户端，让它知道自己的值没被采纳。
+        try:
+            client_ts = int(float(data.get("client_ts") or 0))
+        except (TypeError, ValueError):
+            client_ts = 0
+        # 未来时间（设备时钟快/恶意）钳到当前时刻，否则这台设备会「永久」锁死
+        # 其他设备的所有写入。
+        if client_ts > _now_ms() + 60000:
+            client_ts = _now_ms()
         try:
             track_index = int(data.get("track_index") or 0)
             position = float(data.get("position") or 0)
@@ -1526,14 +1545,25 @@ class AudioPlaybackProgress(BaseHandler):
                 .first()
             )
             if row:
+                prev_ts = getattr(row, "client_ts", None) or 0
+                if client_ts and client_ts <= prev_ts:
+                    # 旧写入，丢弃但不报错（客户端心跳不必重试）
+                    logging.info(
+                        "[AUDIO] progress ignored (older client_ts %s <= %s) user=%s book=%s",
+                        client_ts, prev_ts, user.id, book_id,
+                    )
+                    return {"err": "ok", "data": row.format_dict(), "ts": _now_ms()}
                 row.track_index = track_index
                 row.position = position
                 row.duration = duration
                 row.updated_at = datetime.datetime.now()
-            else:
-                row = AudioPlayback(user.id, book_id, track_index, position, duration)
+                row.client_ts = client_ts or _now_ms()
+                row.save()
+                return {"err": "ok", "data": row.format_dict(), "ts": _now_ms()}
+            row = AudioPlayback(user.id, book_id, track_index, position, duration)
+            row.client_ts = client_ts or _now_ms()
             row.save()
-            return {"err": "ok"}
+            return {"err": "ok", "data": row.format_dict(), "ts": _now_ms()}
         except Exception as e:
             logging.error(f"Error saving audio playback progress: {e}")
             return {"err": "server.error", "msg": _("保存进度失败")}

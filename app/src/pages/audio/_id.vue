@@ -153,12 +153,13 @@
           <span>{{ formatTime(duration) }}</span>
         </div>
         <v-slider
+          ref="progressSlider"
           v-model="progress"
           :max="100"
           hide-details
           @change="seekTo"
-          @mousedown="isDragging = true"
-          @mouseup="isDragging = false"
+          @start="isDragging = true"
+          @end="isDragging = false"
           class="progress-slider"
         ></v-slider>
       </div>
@@ -480,6 +481,13 @@ export default {
   },
 
   mounted() {
+    // 非响应式内部状态（故意不放进 data，避免无谓重渲染）。
+    // _posGen：loadTrack 的代数，用来作废在飞的位置重试回调。
+    this._posGen = 0;
+    this._positionAppliedFor = -1;
+    this._wantPlay = false;
+    this._wdStuckTicks = 0;
+    this._wdReloads = 0;
     this.restoreSubtitlePreference();
     // 移动端没有封面视图，默认直接展示字幕整篇；用户手动关掉过的尊重用户选择
     if (this.$vuetify.breakpoint.smAndDown && process.client) {
@@ -512,7 +520,7 @@ export default {
 
   beforeDestroy() {
     this.savePlaybackPosition();
-    this.pushServerProgress(true);  // 离开页面前把进度推到服务端（fire-and-forget）
+    this.pushServerProgress(true, true);  // 离开页面：keepalive，别被文档卸载取消
     this.clearSleepTimer();
     this.stopProgressSaving();
     this._stopWatchdog();
@@ -549,6 +557,14 @@ export default {
       const player = this.$refs.audioPlayer;
       if (!player) return;
 
+      // §换集先杀旧的重试链§ applyPosition 的重试是 setTimeout 递归，最多
+      // 20×250ms=5s。旧代码只靠 `this.currentTrackIndex !== index` 守卫：
+      // 用户在这 5s 内又切回同一集（上一集/下一集来回点）时守卫失效，
+      // 旧链会把「上一轮的目标位置」写进新加载的媒体 → 定位错乱。
+      // 用代数（_posGen）作废所有在飞的回调，比逐个 clearTimeout 可靠。
+      this._posGen = (this._posGen || 0) + 1;
+      const gen = this._posGen;
+
       this.currentTrackIndex = index;
       const audio = this.audioFiles[index];
       this.loadSubtitle(audio.subtitle);
@@ -573,6 +589,7 @@ export default {
       // 现在改成带重试的版本：失败不吞掉，退避重试，并给一个硬上限。
       let tries = 0;
       const applyPosition = () => {
+        if (gen !== this._posGen) return;      // 已换集：本轮作废
         if (this.currentTrackIndex !== index) return;
         // 目标位置已经被别处设好了（用户已拖动过进度条），别再抢方向盘
         if (this._positionAppliedFor === index
@@ -728,11 +745,11 @@ export default {
         // 保存当前播放位置
         this.savePlaybackPosition();
 
-        this.loadTrack(this.currentTrackIndex - 1);
+        const prev = this.currentTrackIndex - 1;
+        this.loadTrack(prev);
         if (this.isPlaying) {
-          this.$nextTick(() => {
-            this.safePlay();
-          });
+          this._wantPlay = true;
+          this._playWhenReady(prev);
         }
       }
     },
@@ -742,11 +759,14 @@ export default {
         // 保存当前播放位置
         this.savePlaybackPosition();
 
-        this.loadTrack(this.currentTrackIndex + 1);
+        const next = this.currentTrackIndex + 1;
+        this.loadTrack(next);
         if (forcePlay || this.isPlaying) {
-          this.$nextTick(() => {
-            this.safePlay();
-          });
+          // §不要 $nextTick 后裸 play()§ 换源后 readyState 还是 0，此刻 play()
+          // 会被浏览器丢弃或挂起 pending，用户中途一点暂停就两边都不成立。
+          // 与 selectTrack 统一走「认意图 + 等 canplay」的路径。
+          this._wantPlay = true;
+          this._playWhenReady(next);
         }
       }
     },
@@ -758,8 +778,17 @@ export default {
         if (audio && audio.start_time !== undefined) {
           seekTime += audio.start_time;
         }
-        this.$refs.audioPlayer.currentTime = seekTime;
+        try {
+          this.$refs.audioPlayer.currentTime = seekTime;
+        } catch (e) { /* 元数据未就绪时赋值可能抛错，忽略 */ }
+        // §落地后立刻同步界面§ onTimeUpdate 在 isDragging 期间是关闭的
+        // （否则会和拖动抢 progress），松手后若等到下一次 timeupdate 才
+        // 回写，滑块会「弹回原处再跳过去」。这里直接对齐。
+        this.currentTime = (value / 100) * this.duration;
       }
+      // @end 在部分交互路径（键盘方向键/点轨道）不触发，这里兜底复位，
+      // 否则 isDragging 卡在 true，进度条从此不再跟随播放。
+      this.isDragging = false;
     },
 
     setPlaybackRate(rate) {
@@ -1275,21 +1304,37 @@ export default {
     // §服务端进度（4.6.0-19）§ 进度此前只存 localStorage：换设备/换浏览器/
     // 清缓存即丢。这里节流上报（15s 一次，配合 5s 心跳；暂停/切集/离开页面
     // 用 force 立即推）。未登录或离线时静默失败，不影响本地记忆。
-    async pushServerProgress(force = false) {
+    //
+    // §keepalive§ beforeDestroy 里的上报是「最后一个请求」：SPA 内跳转
+    // （flush 模式下同一文档内换路由）时，普通 fetch 会被浏览器在文档卸载
+    // 时取消，服务端收不到 → 跨设备续播偶尔失效。keepalive 让请求脱离文档
+    // 生命周期，规范限制请求体 < 64KB，这里的 payload 只有几十字节。
+    async pushServerProgress(force = false, keepalive = false) {
       if (!process.client || !this.bookId) return;
       const now = Date.now();
       if (!force && now - (this._lastServerPush || 0) < 15000) return;
       this._lastServerPush = now;
       try {
-        await this.$backend(`/audio/${this.bookId}/progress`, {
+        const rsp = await this.$backend(`/audio/${this.bookId}/progress`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             track_index: this.currentTrackIndex || 0,
             position: this.currentTime || 0,
             duration: this.duration || null,
+            // 这次进度产生的时刻。服务端据此只接受「更晚」的写入，
+            // 避免另一台设备后到的旧心跳把新进度盖掉。
+            client_ts: Date.now(),
           }),
+          keepalive,
         });
+        // §服务端进度比本地旧时不覆盖§ 上报带宽赛：设备 A 在 10:00 报过
+        // position=100，设备 B 在 10:05 报过 position=50；若 A 在 10:06 又
+        // 报一次（还是 100，因为 A 一直停在那儿），服务端就成了 100，B 那边
+        // 的进度被抹掉。服务端用 X-Client-Ts（上次收下的客户端时间戳）判断，
+        // 这里把它的值续下来，保证「时间上更晚的一次」才有写权。
+        const serverTs = rsp && rsp.data && rsp.data.client_ts;
+        if (serverTs) this._serverClientTs = serverTs;
       } catch (e) { /* 静默：进度上报失败不影响播放 */ }
     },
 
@@ -1303,6 +1348,8 @@ export default {
         if (!(track_index >= 0 && track_index < this.audioFiles.length && position >= 0)) return;
         const serverTs = updated_at ? Date.parse(updated_at) : 0;
         if (localRestored && serverTs <= (this._localProgressTs || 0)) return;
+        // 服务端存的是「该集内的相对秒数」，与 currentTime 同量纲；
+        // 但 loadTrack 内部还会叠 start_time（m4b 切片），这里直接传相对值。
         if (localRestored && track_index === this.currentTrackIndex
             && Math.abs(position - this.currentTime) < 5) {
           return;  // 和本地基本一致，不打断当前加载

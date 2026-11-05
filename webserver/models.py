@@ -832,6 +832,10 @@ class AudioPlayback(Base, SQLAlchemyMixin):
     position = Column(Float, default=0)
     duration = Column(Float)
     updated_at = Column(DateTime)
+    # 客户端「这次进度产生的时刻」（毫秒）。多设备交替播放时，服务端只接受
+    # 严格更新的写入，避免后到的旧心跳把新进度盖掉。老库没有这一列时由
+    # _ensure_audio_playback_columns() 启动补列，读不到就按 0（永不被拦）。
+    client_ts = Column(BigInteger, default=0)
 
     reader = relationship(Reader)
 
@@ -849,6 +853,7 @@ class AudioPlayback(Base, SQLAlchemyMixin):
             "track_index": self.track_index,
             "position": self.position,
             "duration": self.duration,
+            "client_ts": self.client_ts or 0,
             "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
         }
 

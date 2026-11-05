@@ -118,6 +118,8 @@ class AsyncService(metaclass=SingletonType):
                     self.adjust_readings_table()
                 with upgrade_step("db_booklists"):
                     self.adjust_booklist_table()
+                with upgrade_step("db_audio_playback"):
+                    self.adjust_audio_playback_table()
                 changed = changed or reader_changed or scanfile_changed or True  # readings index creation is idempotent but must always be committed
                 if changed:
                     self.session.commit()
@@ -180,6 +182,24 @@ class AsyncService(metaclass=SingletonType):
             """))
             changed = True
         return need_sync_item_time, changed
+
+    def adjust_audio_playback_table(self):
+        """audio_playback.client_ts：多设备进度仲裁用（4.6.0-19）。
+
+        表本身由 models.ensure_new_tables() 建（checkfirst=True 幂等），
+        这里只补「表已存在但缺列」的老库。缺列时 ORM 查询会直接报
+        no such column，所以必须在任何音频接口被访问前补上。
+        """
+        result = self.session.execute(text("""
+            PRAGMA table_info(audio_playback)
+        """)).fetchall()
+        if not result:
+            return  # 表还不存在，交给 ensure_new_tables
+        columns = [row[1] for row in result]
+        if "client_ts" not in columns:
+            self.session.execute(text("""
+                ALTER TABLE audio_playback ADD COLUMN client_ts INTEGER DEFAULT 0
+            """))
 
     def adjust_reader_table(self):
         result = self.session.execute(text("""
