@@ -679,7 +679,12 @@ export default {
         this.flushCurrentTrackProgress();
         this.savePlaybackPosition();
 
-        this.loadTrack(index);
+        // §恢复该集记忆§ 与弹窗同款：点有记忆的集，直接跳到上次位置继续。
+        // 记忆存的是绝对秒，loadTrack 的 initialTime 是相对秒，要减 start_time。
+        const savedAbs = this.trackResumeMap[index];
+        const base = (this.audioFiles[index] || {}).start_time || 0;
+        const seekTo = (typeof savedAbs === 'number' && savedAbs > 5) ? Math.max(0, savedAbs - base) : null;
+        this.loadTrack(index, seekTo);
         // §等元素真的能动再 play§ 换集后 src 刚赋值，$nextTick 时 readyState
         // 还是 0，此刻 play() 要么被浏览器判成 NotAllowedError/AbortError 直接
         // 丢弃，要么 pending 到数据来了才开始——但用户中途点一下暂停就把它打断，
@@ -1295,12 +1300,14 @@ export default {
         localStorage.setItem(this.getStorageKey(), JSON.stringify(progressData));
         this._localProgressTs = progressData.timestamp;
 
-        // §每集记忆§ 与弹窗同一套 key。注意 this.currentTime 是相对该文件
-        // 的秒（不含 start_time 偏移），与弹窗存的语义一致。听完（差 3 秒内）
-        // 清掉——下次从头听；不足 5 秒视为「没真听」，不记。
+        // §每集记忆§ 与弹窗同一套 key，且统一存「绝对秒」（元素 currentTime，
+        // 文件内位置）。弹窗存的就是绝对秒；这里若存相对秒（扣 start_time），
+        // 两边互读会错位——有分段偏移的书，弹窗显示的时间会与播放页对不上。
+        // 听完（差 3 秒内）清掉——下次从头听；不足 5 秒视为「没真听」，不记。
         // 切集途中（元素文件与 writeIdx 不符）不写，避免污染新集。
-        const d = this.duration;
-        const t = this.currentTime || 0;
+        const player = this.$refs.audioPlayer;
+        const d = player && isFinite(player.duration) ? player.duration : (this.duration > 0 ? this.duration + ((this.audioFiles[writeIdx] || {}).start_time || 0) : 0);
+        const t = player ? (player.currentTime || 0) : (this.currentTime || 0);
         if (d && isFinite(d) && realIdx === writeIdx) {
           const key = this._trackKeyOf(writeIdx);
           try {
@@ -1375,9 +1382,9 @@ export default {
             this.trackResumeMap = map;
           }
         } else if (t > 5) {
-          const rel = Math.max(0, t - ((this.audioFiles[realIdx] || {}).start_time || 0));
-          localStorage.setItem(key, JSON.stringify({ t: rel }));
-          this.trackResumeMap = { ...this.trackResumeMap, [realIdx]: rel };
+          // 存绝对秒（与弹窗一致）：t 本来就是元素 currentTime
+          localStorage.setItem(key, JSON.stringify({ t: t }));
+          this.trackResumeMap = { ...this.trackResumeMap, [realIdx]: t };
         }
       } catch (e) { /* 忽略 */ }
     },
