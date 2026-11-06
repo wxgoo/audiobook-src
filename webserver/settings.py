@@ -24,6 +24,10 @@ settings = {
     # 扫描导入 Phase1 哈希并行的线程数：1=串行（NAS 机械盘兜底），默认 4。
     # 仅存于此清单（不进设置页白名单），手工部署可写进 auto.py 调整。
     "scan_hash_workers"  : 4,
+    # 扫描导入的写事务攒批窗口（书数）。Phase1 是 READY 行的短写事务，
+    # Phase2 是行 + Item 链接的短写事务；越大 fsync 越少、失控风险越大。
+    "import_phase1_batch_size"  : 500,
+    "import_phase2_batch_size"  : 20,
     # 「有音频的书」缓存兜底全库扫描间隔（秒）。默认 6 小时；导入/转码/删除
     # 都会走事件增量更新，这里只兜底手工往书库塞音频的情况。0 = 关闭兜底扫描。
     "AUDIO_CACHE_REFRESH_SECONDS": 6 * 3600,
