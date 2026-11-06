@@ -490,7 +490,11 @@ class BookDetail(BaseHandler):
             "kindle_sender": CONF["smtp_username"],
             "guest_access": None if self.current_user else BookAccessService.guest_read_source(self, book_id),
             "book": formated_book,
-            "audios": AudioUtils.get_audios(bid, self.current_user.id if self.current_user else None),
+            "audios": AudioUtils.get_audios(
+                bid,
+                self.current_user.id if self.current_user else None,
+                db=self.calibre_db_cache,
+            ),
         }
 
 
