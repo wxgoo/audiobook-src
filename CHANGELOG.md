@@ -1,35 +1,41 @@
 # 变更日志（CHANGELOG）
 
-本项目的版本号规则：**`<上游 mybooks tag>-<自建序号>`**，当前版本 **`4.6.0-20`**。
-上游 tag 无 `v` 前缀；自己改代码序号 +1，上游正式发新 tag 后按主题合入再整体改号。
+本项目的版本号规则：**`<上游 mybooks tag>-build.<自建构建号>`**，当前版本 **`4.6.0-build.20`**。
+上游 tag 无 `v` 前缀；自己改代码构建号 +1，上游正式发新 tag 后按主题合入再整体改号。
 
 ### 号段重置说明（必读）
 
 本版起**运行期版本与交付标签合为一个值**，不再有「界面显示 v4.8.0、包名写 4.6.0-20」的双口径。
-`v4.7.1 ~ v4.8.x` 号段全部**封存**：与 `4.6.0-20` **没有任何版本先后关系**，是纯号段重置
+`v4.7.1 ~ v4.8.x` 号段全部**封存**：与 `4.6.0-build.20` **没有任何版本先后关系**，是纯号段重置
 （「新程序」的第一版要从上游已发布 tag 起算，而不是继续自造主版本线）。
 
 | 项 | 取值 | 说明 |
 |---|---|---|
-| **运行期版本**（唯一权威） | `4.6.0-20` | 写 `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` / `package-lock.json`、`Makefile` 的 `VERSION_LOCK` |
+| **运行期版本**（唯一权威） | `4.6.0-build.20` | 写 `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` / `package-lock.json`、`Makefile` 的 `VERSION_LOCK` |
 | 上游基线 | mybooks tag `4.6.0`（2026-10-25，commit `3c5947c`） | 本源码事实上的来源版本 |
-| 交付标签 / 包名 | 与运行期版本相同：`4.6.0-20` | 出包文件名带它，便于区分 |
-| 上游未发布分支 | mybooks `develop` 上是 `4.6.1`（**无 tag、无 Release**） | **不跟号**：等上游正式发 tag 后按主题合入，届时再升 `4.6.1-20` |
+| 交付标签 / 包名 | 与运行期版本相同：`4.6.0-build.20` | 出包文件名带它，便于区分 |
+| 上游未发布分支 | mybooks `develop` 上是 `4.6.1`（**无 tag、无 Release**） | **不跟号**：等上游正式发 tag 后按主题合入，届时再升 `4.6.1-build.20` |
 
 旧号 → 新号对照（便于翻旧记录）：
 
 | 旧编号 | 新编号 | 备注 |
 |---|---|---|
-| `v4.7.1`、`v4.8.0`、`v4.8.1` | （无对应发布号） | 首次定制线早期版本，早于 `4.6.0-1` |
-| `v4.8.2` / `v4.8.3` | `4.6.0-1` | 移植版第一个正式基线 |
-| `4.6.0-2` ~ `4.6.0-20` | 不变 | 序号连续，无需换算 |
+| `v4.7.1`、`v4.8.0`、`v4.8.1` | （无对应编号） | 首次定制线早期版本，早于 `4.6.0-build.1` |
+| `v4.8.2` / `v4.8.3` | `4.6.0-build.1` | 移植版第一个正式基线 |
+| `4.6.0-N`（N=2…20） | `4.6.0-build.N` | 同序号直接映射，历史条目保留旧写法 |
 
-> **不要拿 `4.6.0-20` 去和 `4.6.0` 比大小。** `-20` 是 semver 的预发布后缀（prerelease），
-> 排序**低于** `4.6.0`；本程序不发布 npm 包、`app/package.json` 无 `engines` 校验，
+> **不要拿 `4.6.0-build.20` 去和 `4.6.0` 比大小。** `-build.20` 是 semver 的预发布标记（prerelease），
+> 整串排序**低于** `4.6.0`；本程序不发布 npm 包、`app/package.json` 无 `engines` 校验，
 > 所以这个排序差异没有实际影响，这么写只是为了让「建在上游哪个 tag 上」一眼可见。
 
+> **版本号不参与任何升级门控（重要约束）。** 全仓库的版本比较只有「整串相等」这一种用法
+> （`main.py` 的 `VERSION == "v0.0.1"`、`handlers/admin.py` 的 `last_revsion != VERSION`、
+> `services/book_barn.py` 的 `latest_version != VERSION`）；表结构检查 `should_check_db_structure()`
+> **恒返回 True**，刻意不用版本号判断。**不要**把版本号引入升级/迁移/缓存失效的排序判断：
+> 同一上游基线的两次本地构建之间，只有 `build.N` 能区分新旧，`>` 比较整串会漏判。
+
 > **防反弹：** 上表取值由 `scripts/check-version-lock.py`（可独立执行）、`tests/test_version_lock.py`
-> （9 个负向用例）、`scripts/pack.sh`（打包前强制检查）三处锁定；Dockerfile 对空 `GIT_VERSION`
+> （9 个用例：1 个正向 + 8 个负向）、`scripts/pack.sh`（打包前强制检查）三处锁定；Dockerfile 对空 `GIT_VERSION`
 > 直接 `exit 1`，Makefile 对不一致的 `VER` 直接 `$(error)`。任何一处被写回 `v4.8.x`、写成裸
 > `4.6.0`、留空、或删掉守卫，都会**构建/测试失败**，而不是静默通过。
 
@@ -54,7 +60,7 @@
 
 ---
 
-## 4.6.0-20（当前）
+## 4.6.0-build.20（当前）
 
 > 优化专项落地版：P0 备份闭环、P1 安全/性能、中文检索、游标分页、导入攒批、任务易用性，
 > 外加一套不依赖 git 的 NAS 交付与镜像自检脚本。逐项说明与回滚方式见
@@ -99,6 +105,20 @@
 ### 六、测试
 
 - 新增 `tests/test_audio_books_cache.py` 等用例；`pytest` 全绿（14 条专项用例）
+
+### 七、版本号与交付口径
+
+- 运行期版本与交付标签统一为 `4.6.0-build.20`（上游已发布 tag `4.6.0` + 第 20 次本地构建），
+  `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` /
+  `package-lock.json`、`Makefile` 的 `VERSION_LOCK` 全部同值；旧 `4.8.x` 号段封存
+  （对照表见文首「号段重置说明」）
+- 新增版本锁：`scripts/check-version-lock.py`（可独立执行）、`tests/test_version_lock.py`（9 例：1 正向 + 8 负向）、
+  `scripts/pack.sh` 打包前强制检查；Dockerfile 遇空 `GIT_VERSION` 直接 `exit 1`，
+  Makefile 的 `VER` 不一致即 `$(error)` 退出（不再用分支名顶掉版本）
+- `4.6.0-build.20` 为 semver 预发布标记，整串排序低于 `4.6.0`；**本程序不使用版本号做升级门控**
+  （比较逻辑只有整串相等），详见 README「四条不要搞错的事」
+- 相对旧部署包 `4.6.0-19-r13` 的完整变更报告：
+  [`docs/变更报告-4.6.0-build.20.md`](docs/变更报告-4.6.0-build.20.md)
 
 ## 4.6.0-19
 

@@ -3,7 +3,7 @@
 基于 [PoxenStudio/mybooks](https://github.com/PoxenStudio/mybooks) 的私人图书服务器定制版。
 在 Calibre 书库之上提供 Web 阅读、听书、权限分级、元数据刮削、格式转换等能力。
 
-> **当前版本：`4.6.0-20`**（基于上游 tag `4.6.0` 的第 20 版定制；P0/P1 稳健性与性能专项已合入）
+> **当前版本：`4.6.0-build.20`**（上游 tag `4.6.0` + 第 20 次本地构建；P0/P1 稳健性与性能专项已合入）
 
 ---
 
@@ -108,32 +108,37 @@ cd app && npm run build-spa
 
 ## 版本号规则
 
-当前版本 **`4.6.0-20`**，语义是「上游 mybooks 已发布 tag `4.6.0` + 第 20 次本地发布」。
-上游 tag 无 `v` 前缀；自己改代码序号 +1，上游正式发新 tag 后按主题合入再整体改号。
+当前版本 **`4.6.0-build.20`**，语义是「上游 mybooks 已发布 tag `4.6.0` + 第 20 次本地构建」。
+上游 tag 无 `v` 前缀；自己改代码构建号 +1，上游正式发新 tag 后按主题合入再整体改号。
 
 | 标识 | 取值 | 写在哪 / 谁读它 |
 |---|---|---|
-| **运行期版本**（唯一权威） | `4.6.0-20` | `webserver/version.py`（界面与日志显示它）；`docker-compose.yml` 的 `GIT_VERSION`（构建时 Dockerfile 用它覆写 `version.py`）；`app/package.json` / `app/package-lock.json`；`Makefile` 的 `VERSION_LOCK` |
+| **运行期版本**（唯一权威） | `4.6.0-build.20` | `webserver/version.py`（界面与日志显示它）；`docker-compose.yml` 的 `GIT_VERSION`（构建时 Dockerfile 用它覆写 `version.py`）；`app/package.json` / `app/package-lock.json`；`Makefile` 的 `VERSION_LOCK` |
 | **上游基线** | mybooks tag `4.6.0`（2026-10-25，commit `3c5947c`） | 只记在本文与 CHANGELOG，用来判断「我们建在哪个上游版本上」 |
-| **交付标签 / 包名** | 与运行期版本相同：`4.6.0-20` | 包文件名、README、CHANGELOG |
+| **交付标签 / 包名** | 与运行期版本相同：`4.6.0-build.20` | 包文件名、README、CHANGELOG |
 
-- 只改本地代码 → 序号 +1（`4.6.0-21`），上游段不动；
-- 上游**正式发布 tag** 后按主题合入 → 整体改号（如 `4.6.1-20`），序号仍从 20 起；
+- 只改本地代码 → 构建号 +1（`4.6.0-build.21`），上游段不动；
+- 上游**正式发布 tag** 后按主题合入 → 整体改号（如 `4.6.1-build.20`），构建号仍从 20 起；
 - 上游 `develop` 上虽已是 `4.6.1`，但**没有 tag、没有 Release 就不跟号**，避免与上游未来正式发布的内容脱节。
 
 ### 旧 `4.8.x` 号段已封存
 
-`v4.7.1 ~ v4.8.x` 全部封存，与 `4.6.0-20` **没有任何版本先后关系**——这是**号段重置**，
+`v4.7.1 ~ v4.8.x` 全部封存，与 `4.6.0-build.20` **没有任何版本先后关系**——这是**号段重置**，
 因为「新程序」的第一版要从上游已发布 tag 起算。旧 `v4.8.2` / `v4.8.3` 对应 `4.6.0-1`，
-`4.6.0-2` 之后序号连续、无需换算；完整对照表见 [CHANGELOG 开头的「号段重置说明」](CHANGELOG.md)。
+`4.6.0-2` 之后构建号连续、无需换算；完整对照表见 [CHANGELOG 开头的「号段重置说明」](CHANGELOG.md)。
 
-### 两件不要搞错的事
+### 四条不要搞错的事
 
-1. **`4.6.0-20` 不能拿去和 `4.6.0` 比大小。** `-20` 是 semver 的预发布后缀（prerelease），
-   排序**低于** `4.6.0`。本程序不发布 npm 包、`app/package.json` 无 `engines` 校验，
-   所以这个排序差异没有实际影响；这么写只是为了让「建在上游哪个 tag 上」一眼可见。
-2. **版本号是锁死的，不是随手改的字符串。** `scripts/check-version-lock.py` 可独立执行
-   （`python3 scripts/check-version-lock.py`），`tests/test_version_lock.py` 有 9 个负向用例，
+1. **整串排序低于 `4.6.0`，不能拿来和 `4.6.0` 比大小。** `-build.20` 是 semver 的预发布标记
+   （prerelease），`4.6.0-build.20 < 4.6.0`。本程序不发布 npm 包、`app/package.json` 无 `engines`
+   校验，所以这个排序差异没有实际影响；这么写是为了让「建在上游哪个 tag 上」一眼可见。
+2. **同一上游基线的本地构建之间，只能靠 `build.N` 区分。** `>` 比较整体版本会漏判
+   （`4.6.0-build.21` 与 `4.6.0-build.20` 的主版本段相同），要比较就单独取出 `build.N` 数值段。
+   本仓库现有的版本展示/比对都是一次性字符串比较（`main.py`、`handlers/admin.py`），没有排序比较逻辑。
+3. **该写法同时是合法 Docker tag**（字符集 `[A-Za-z0-9_.-]`），可以直接用进镜像 tag，
+   不需要为 `+` 或其它字符做转义。
+4. **版本号是锁死的，不是随手改的字符串。** `scripts/check-version-lock.py` 可独立执行
+   （`python3 scripts/check-version-lock.py`），`tests/test_version_lock.py` 有 9 个用例（1 个正向 + 8 个负向），
    `scripts/pack.sh` 打包前也会强制跑一遍；Dockerfile 遇到空 `GIT_VERSION` 直接 `exit 1`，
    Makefile 遇到不一致的 `VER` 直接 `$(error)`。写回 `v4.8.x`、写成裸 `4.6.0`、留空、
    删掉任意一处守卫，都会**构建/测试失败**（这是防版本回退 / 防被交付标签覆盖的保护，

@@ -172,7 +172,7 @@ fi
 # ---------- 确定版本号 ----------
 VER="${1:-}"
 if [ -z "$VER" ]; then
-    VER=$(grep -m1 -oE '^## [0-9]+\.[0-9]+\.[0-9]+-[0-9]+' CHANGELOG.md | sed 's/^## //')
+    VER=$(grep -m1 -oE '^## [0-9]+\.[0-9]+\.[0-9]+-(build\.)?[0-9]+' CHANGELOG.md | sed 's/^## //')
     [ -n "$VER" ] || { echo "!! 无法从 CHANGELOG.md 取版本号，请手动指定"; exit 2; }
     echo "==> 版本号（取自 CHANGELOG）: $VER"
 else

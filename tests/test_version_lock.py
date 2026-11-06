@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """版本锁（防反弹）回归测试。
 
-背景：本 fork 自本版起把运行期版本统一为 `4.6.0-20`（上游已发布 tag 4.6.0
-+ 第 20 次本地发布），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
+背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.20`（上游已发布 tag 4.6.0
++ 第 20 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
 回退（写回 4.8.x、写回裸 4.6.0）、被构建参数顶成空串、Dockerfile/Makefile
 守卫被删除，都必须失败。
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKER = ROOT / "scripts" / "check-version-lock.py"
-LOCK = "4.6.0-20"
+LOCK = "4.6.0-build.20"
 FILES = [
     "webserver/version.py",
     "docker-compose.yml",
@@ -67,7 +67,7 @@ def test_version_py_rollback_to_4_8_is_rejected(tmp_path):
 
 
 def test_version_py_bare_upstream_tag_is_rejected(tmp_path):
-    """写成不带 -20 的裸 4.6.0 也必须被拦住（那是上游 tag，不是我们的发布号）。"""
+    """写成不带 -build.20 的裸 4.6.0 也必须被拦住（那是上游 tag，不是我们的构建号）。"""
     root = make_fixture(tmp_path)
     mutate(root, "webserver/version.py", 'VERSION = "%s"' % LOCK, 'VERSION = "4.6.0"')
     r = run(root)
