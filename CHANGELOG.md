@@ -5,6 +5,11 @@
 
 旧编号 `v4.8.x` 已废弃，对应关系见文末「旧编号时期发布说明」。
 
+> **两套标识不要混：** 上面这条规则只管**交付标签**（CHANGELOG / README / 包名）。
+> 运行期版本字段 `webserver/version.py` 的 `VERSION = "v4.8.0"` 是 zcode / workbuddy 写入并配套断言的
+> 自定义主版本线，十几轮迭代刻意未改，**不得改成交付标签**；`docker-compose.yml` 的 `GIT_VERSION`
+> 也必须传 `v4.8.0`，否则 Dockerfile 构建时会把 `version.py` 覆写掉。
+
 > 想查某个改动为什么这么做：搜版本号，或看 [`docs/`](docs/) 下的专题记录。
 
 ---

@@ -118,6 +118,12 @@ cd app && npm run build-spa
 
 旧编号 `v4.8.x` 已废弃，`v4.8.2` 等价于 `4.6.0-1`，历史说明见 CHANGELOG 文末。
 
+> **注意：上面说的「交付标签」不用于运行期版本字段。**
+> `webserver/version.py` 的 `VERSION = "v4.8.0"` 是本 fork 由 zcode / workbuddy 写入并配套断言的自定义
+> 主版本线，十几轮迭代刻意未改，**不要把它改成交付标签**；`docker-compose.yml` 的 `GIT_VERSION`
+> 也必须保持 `v4.8.0`（Dockerfile 会用它在构建时覆写 `version.py`）。两者含义不同：
+> 界面/日志显示的是运行期版本（`v4.8.0`），CHANGELOG/包名用的是交付标签（如 `4.6.0-20`）。
+
 ---
 
 ## 发布流程
