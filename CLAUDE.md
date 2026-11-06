@@ -11,6 +11,30 @@ MyBooks (formerly Talebook) is a personal Calibre-based ebook management webserv
 
 Other top-level directories: `tests/` (backend unit tests), `tools/` (standalone scripts: spiders, converters, metadata scrapers), `conf/` (nginx/supervisor config templates), `docker/` (image entrypoints and prebuilt library), `extensions/` and `third-party/epub.js` (git submodules), `webserver/epub_to_audio` (git submodule for EPUB→audiobook conversion).
 
+## ⚠️ 生产部署必读（每次都看，踩过多次）
+
+生产环境：群晖 NAS `RS2416P`，容器 `audiobook-mybooks-1`，代码在容器内 `/var/www/mybooks`（镜像内置，无源码挂载），数据在 `/volume1/docker/audiobook-data`。宿主机**没有 python3.12 / npm**，相关命令必须在容器内跑。
+
+```bash
+# supervisor 程序名必须带 mybooks: 组前缀（写 mybooks / tornado 都报 no such process）
+docker exec audiobook-mybooks-1 supervisorctl restart mybooks:tornado
+# 查全部状态时不要带程序名
+docker exec audiobook-mybooks-1 supervisorctl status
+```
+程序名只有四个：`mybooks:tornado`、`mybooks:nginx`、`mybooks:logrotate`、`mybooks:myreader`。
+**只改前端不需要重启** —— `_nuxt/*.js` 由 nginx 直接发，浏览器 Ctrl+Shift+R 即可。
+
+```bash
+# 前端热更不要用 docker cp src/. 目标/（容器里 dist/avatar 是文件，宿主是目录 → 类型冲突）
+tar c -C /tmp/audiobook/app dist | docker exec -i audiobook-mybooks-1 tar x -C /var/www/mybooks/app
+# 验证：列出新构建的哈希 chunk 才算成功
+docker exec audiobook-mybooks-1 ls /var/www/mybooks/app/dist/_nuxt/ | grep <chunk前7位>
+```
+
+给用户的命令**一律单行、编号列出、一次一条**——NAS 终端粘贴多行会把 `\` 续行吃掉。
+
+更多踩坑记录见 [`.claude/memory/MEMORY.md`](.claude/memory/MEMORY.md)（calibre `custom_columns` 没有 `colnum`、实体书双写、上传权限口径、上游分支陷阱等）。
+
 ## Common commands
 
 ### Backend (Python / webserver)
