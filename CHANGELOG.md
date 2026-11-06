@@ -209,6 +209,45 @@ m4b 章节偏移还要各算一遍。任何一侧改一点另一侧就偏一点�
 
 ---
 
+### 九、第五轮（同版本补充）：`srt-tool` 升级到 v1.2.0（含图形界面）
+
+> 附属工具更新，**不影响服务端运行**——`srt-tool/` 只在 PC 上跑，产物是 `.srt` 文件。
+
+仓库里原来那版是 v1.0（`srt_core.py` 167 行），本次整包替换为上游 v1.2.0（301 行），
+文件数 3 → 9。
+
+**v1.2.0 新增**
+
+- `make_srt_gui.py`（534 行）+ 打包出 `make_srt_gui.exe`：选目录/选文件、选模型、
+  选语言、勾选项全部在窗口里点，进度条 + 实时日志，可随时「停止」；
+  上次的路径与参数会记住；文件夹可直接拖到 exe 图标上
+- `srt_core.transcribe_audio` 新增 `should_stop` 回调：返回 True 时当前小段识别完
+  即中断（GUI 停止按钮用），默认 `None` 不影响命令行行为
+- `build.py` 一次产出两个 exe（`make_srt.exe` 命令行 + `make_srt_gui.exe` 图形），
+  共用 `dist/make_srt/`
+
+**v1.1 带来的质量变化**（原先那版没有）
+
+- `condition_on_previous_text` 默认关闭 —— 把已识别文本喂回模型是有声书幻觉复读的
+  最大来源；要旧行为显式传 `--condition-previous`
+- 碎段合并默认开启（`--no-merge` 关闭，`--merge-gap` / `--max-chars` 可调）：
+  VAD 切碎的相邻小段合并成可读字幕，不再是「一条字幕几个字」
+- `--ext MP3` 大小写不敏感（原先一个文件都扫不到）
+- Windows GBK 控制台遇生僻字文件名不再崩（stdout 兜 UTF-8）
+- 缓存写盘原子化；缓存键纳入 beam / 条件上下文参数（改参数不再命中旧结果）
+- `--beam-size`、`--cache-dir` 可调
+
+**验证**
+
+- `python3 -m pytest tests/ -q` → **42 passed, 1 skipped**（不需要装 faster-whisper）
+- `python3 make_srt.py --help` → 参数向后兼容，旧命令行的写法全部照旧可用
+- 六个 `.py` 全部通过 `ast.parse`
+
+**文档同步**：`docs/字幕生成与播放.md` 补 GUI 操作步骤、v1.1 两个默认值变化、
+6 条新增常见问题；`srt-tool/README.md` 随包替换为 v1.2.0 原版。
+
+---
+
 ## 4.6.0-18
 
 > **只改元数据，不动业务流程**。6 个文件，可热更，不必重建镜像。
