@@ -56,7 +56,7 @@ if [ "${1:-}" = "--check" ]; then
         # 不该有的东西：归档、开发侧杂物
         # 注意：app/node_modules 是要的 —— Dockerfile 里 COPY app/ /build/ 靠它走「已有产物」快路，
         # 少了它镜像里没有 next，阅读器起不来。别当成杂物排掉。
-        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git skills .claude; do
+        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git skills .claude tests; do
             [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
         done
 
@@ -230,7 +230,9 @@ done
 # 归档目录不进部署包：它们是历史记录（v9 那趟的一次性脚本、旧版操作手册、
 # 设计稿截图），NAS 上用不到，只会让包变大、让人分不清哪个脚本该跑。
 # 仓库里保留，随时可查。
-for junk in scripts/archive docs/archive docs/settings-redesign; do
+# tests/ 同理：根 tests/ 是 pytest 夹具（calibre 库结构 + epub 样本，5.6M / 263 条），
+# 只有本地跑测试才有用。webserver/epub_to_audio/tests/ 是子目录，不受影响。
+for junk in scripts/archive docs/archive docs/settings-redesign tests; do
     [ -e "$STAGE/audiobook/$junk" ] && rm -rf "$STAGE/audiobook/$junk"
 done
 

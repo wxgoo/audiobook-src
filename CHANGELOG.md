@@ -365,6 +365,16 @@ spider 还会往外发请求。前端能带进包的这套东西，等于把一�
 > **仓库 ≠ 部署包**：仓库里 `tools/` 一个没删（只删了上表 3 个垃圾），要爬虫在 PC 上跑。
 > 两条线别混：仓库是开发完整版，包是运行最小集。
 
+**根 `tests/` 也不再进包（5.6M / 263 条）**
+
+`tests/` 一直是整目录进包的：`tests/cases/`（epub 样本）、`tests/library/`（calibre 库结构夹具）
+加起来 3.8M，还有一堆 `test_*.py`。部署机没有 pytest，也没有跑测试的场景，纯粹占地方。
+`pack.sh` 加进排除列表，`--check` 同步断言。注意 `webserver/epub_to_audio/tests/`
+是上游包自带的子目录，断言只看顶层 `tests/`，不受影响。
+
+顺带删掉 `tests/tmpr5l3i8ph`、`tests/tmpvw0bstuv` 两个空目录——`tempfile.mkdtemp()`
+留下的，git 不跟踪空目录所以 `git status` 一直没提示，但打包时会一起带上。
+
 **顺带清掉的**
 
 - `/workspace` 下散的 `上游跟进清单.md`：与 `docs/上游跟进清单.md` 逐字节相同，是导出时的副本
