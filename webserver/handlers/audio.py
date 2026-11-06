@@ -251,8 +251,12 @@ class AudioUtils:
         return sum(1 for worker in ConversionWorkerMap.values() if worker.is_running())
 
     @staticmethod
-    def get_audios(bid, uid=None):
-        """Get audio files for a book."""
+    def get_audios(bid, uid=None, db=None):
+        """Get audio files for a book.
+
+        db 传入 calibre 元数据缓存时走 resolve_audio_dir（O(1)），不再全库扫描；
+        未传（旧调用方）时才回退扫描兜底。
+        """
         if uid is None:
             return {"status": "unavailable", "msg": _("登录后才能查看音频"), "count": 0}
 
@@ -260,12 +264,12 @@ class AudioUtils:
             AudioUtils.site_url = BaseHandler.get_site_url()
 
         book_id = int(bid)
-        # 静态方法没有 db 实例，靠扫描 library 反查（4.6.0-14 起只此一处布局）
         audio_dir = None
         try:
-            audio_dir = find_audios_by_scanning_library().get(book_id)
+            dirs = AudioUtils.audio_dirs_of(book_id, db)
+            audio_dir = dirs[0] if dirs else None
         except Exception as err:
-            logging.debug("[AUDIO] scan library failed: %s", err)
+            logging.debug("[AUDIO] resolve audio dir failed: %s", err)
         if not audio_dir or not os.path.exists(audio_dir):
             return {
                 "status": "unavailable",
