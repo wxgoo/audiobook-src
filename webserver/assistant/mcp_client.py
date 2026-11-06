@@ -18,11 +18,17 @@ class MCPStreamClient:
     """
 
     def __init__(self, base_url: str, token: str, cookies: Optional[Dict] = None):
-        self.base_url = f'{base_url}?token={token}' if token is not None else base_url
+        # 安全：token 一律走 Authorization 请求头，不再拼进 URL。
+        # URL（含 query）会进 nginx/Tornado 的 access log，token 一旦入日志就无法回收。
+        self.base_url = base_url
+        self.token = token or ""
+        self.auth_headers = (
+            {"Authorization": "Bearer %s" % self.token} if self.token else {}
+        )
         self.session: Optional["aiohttp.ClientSession"] = None
         self.tools_cache: Optional[List[Dict]] = None
         self.cookies = cookies
-        print(f"MCP Tool: {self.base_url}")
+        logging.debug("MCP client initialized: %s", base_url)
 
     async def connect(self):
         """连接到MCP服务器"""
@@ -53,13 +59,14 @@ class MCPStreamClient:
             response = await self._send_request(init_request)
             return response
         except Exception as e:
-            print(f"MCP初始化失败: {e}")
+            logging.warning("MCP 初始化失败: %s", e)
             return None
 
     async def _send_request(self, request_data: Dict) -> Dict:
         """发送请求到MCP服务器（支持流式和普通响应）"""
         try:
             headers = {"Content-Type": "application/json"}
+            headers.update(self.auth_headers)
             kwargs = {
                 "json": request_data,
                 "headers": headers
@@ -80,7 +87,7 @@ class MCPStreamClient:
                     return await response.json()
 
         except Exception as e:
-            print(f"请求MCP服务器失败: {e}")
+            logging.warning("请求 MCP 服务器失败: %s", e)
             raise
 
     async def _read_stream_response(self, response) -> Dict:
@@ -146,24 +153,23 @@ class MCPStreamClient:
                 }
             }
 
-            print(f"调用MCP工具: {tool_name}")
-            if arguments:
-                print(f"   参数: {arguments}")
+            # 只记录工具名：参数里可能含用户搜索词、笔记正文等隐私信息
+            logging.debug("调用 MCP 工具: %s", tool_name)
 
             response = await self._send_request(call_request)
 
             if "result" in response:
                 result = response["result"]
-                print("工具调用成功")
+                logging.debug("MCP 工具调用成功: %s", tool_name)
                 return result
             else:
                 error = response.get("error", {})
                 error_msg = error.get("message", "未知错误")
-                print(f"工具调用失败: {error_msg}")
+                logging.warning("MCP 工具调用失败: %s (%s)", tool_name, error_msg)
                 return {"error": error_msg}
 
         except Exception as e:
-            print(f"调用工具异常: {e}")
+            logging.warning("MCP 工具调用异常: %s (%s)", tool_name, e)
             return {
                 "error": f"Failed to call the tool: {tool_name}",
                 "message": str(e)

@@ -224,7 +224,9 @@ class MCPService:
             # 生成新token
             token = self._generate_token_with_user_info(user)
 
-            logging.info(f"Generated new token for user {username}: {token}, total tokens: {len(self.authenticated_tokens)}")
+            # 安全：token 本身不写日志（只记录用户名与数量）
+            logging.info("Generated new MCP token for user %s, total tokens: %s",
+                         username, len(self.authenticated_tokens))
 
             result = {
                 "status": "success",
