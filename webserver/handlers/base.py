@@ -33,6 +33,7 @@ from webserver.services.resource_service import ResourceService
 from webserver.services.perf_monitor import PerfMonitor
 from webserver.services.book_access_service import BookAccessService
 from webserver.services.book_share_service import BookShareService
+from webserver.services.search_index import get_search_index
 from webserver.models import Item, Message, Reader
 from webserver import constants
 from webserver.version import VERSION
@@ -1758,7 +1759,12 @@ class BaseHandler(web.RequestHandler):
         cache = self.search_cache()
         ids = cache.get(query, version)
         if ids is None:
-            ids = tuple(self.calibre_db_cache.search(query) or ())
+            # 先用独立的中文 FTS5 索引；索引不可用或查询含 calibre 高级语法时回退
+            ids = get_search_index().search(query)
+            if ids is None:
+                ids = tuple(self.calibre_db_cache.search(query) or ())
+            else:
+                ids = tuple(ids)
             cache.put(query, version, ids)
         return list(ids)
 
@@ -1767,7 +1773,11 @@ class BaseHandler(web.RequestHandler):
         cache = self.search_cache()
         ids = cache.get(query, version)
         if ids is None:
-            ids = tuple(await self.run_calibre_read_async(self.calibre_db_cache.search, query) or ())
+            ids = get_search_index().search(query)
+            if ids is None:
+                ids = tuple(await self.run_calibre_read_async(self.calibre_db_cache.search, query) or ())
+            else:
+                ids = tuple(ids)
             cache.put(query, version, ids)
         return list(ids)
 
