@@ -1723,7 +1723,19 @@
     "deleteFailed": "刪除失敗，請稍後重試",
     "showLyrics": "看字幕",
     "showCover": "看封面",
-    "playError": "第 {n} 集播放失敗：檔案可能還在產生或已損毀。"
+    "playError": "第 {n} 集播放失敗：檔案可能還在產生或已損毀。",
+    "audioCancelGen": "取消生成",
+    "audioRegenerate": "重新產生有聲書",
+    "cancelGenDescription": "確定要取消《{title}》正在進行的音訊轉換嗎？",
+    "cancelGenSuccess": "已取消轉換",
+    "cancelGenFailed": "取消失敗，請稍後重試",
+    "regenerateDescription": "將用語音「{voice}」為《{title}》重新產生有聲書，現有音訊會被覆蓋。",
+    "regenerateSuccess": "已開始產生，請稍後重新整理頁面查看",
+    "regenerateFailed": "產生失敗，請稍後重試",
+    "regenerateNoEbook": "這本書沒有可用的電子書檔案（EPUB/TXT），無法產生音訊",
+    "voiceLabel": "選擇語音",
+    "convertProgress": "產生中 {percent}%",
+    "convertStage": "目前階段：{stage}"
   },
   "syslog": {
     "title": "系統日誌",

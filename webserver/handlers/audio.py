@@ -417,8 +417,14 @@ class AudioDetail(BaseHandler):
                         if sub_file:
                             audio_item["subtitle"] = f"/api/audio/{book_id}/{sub_file}"
                         file_urls.append(audio_item)
+                    # 播放页要靠 status 决定显示「取消生成 / 重新生成」还是「删除」。
+                    # 正在转换时 worker 还没产出文件，file_urls 可能为空，
+                    # 这里必须把 processing/failed 透出去，否则前端只能看到 unavailable。
+                    _worker = ConversionWorkerMap.get(book_id)
+                    _status = _worker.get_status() if _worker else "converted"
                     return {
                         "err": "ok",
+                        "status": _status,
                         "audio_dir": audio_dir,
                         "audios": file_urls,
                         "total_files": len(audio_files),

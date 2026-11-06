@@ -273,8 +273,35 @@
             </v-list>
           </v-menu>
         </div>
-        <div>
-          <v-btn color="error" @click="openDeleteDialog" class="delete-btn" style="margin-top: 10px;">
+        <div class="action-buttons">
+          <!-- 生成中：取消生成。后端 /cancel 与 /conversion 都带 @is_admin，
+               非管理员点了只会拿到 permission.not_admin，所以干脆不显示。 -->
+          <v-btn
+            v-if="isAdmin && audioStatus === 'processing'"
+            color="orange darken-2"
+            @click="openCancelDialog"
+            class="action-btn"
+          >
+            <v-icon>mdi-stop-circle-outline</v-icon>{{ $t('audio.audioCancelGen') }}
+            <span v-if="convertPercent > 0" class="ml-2">{{ convertPercent }}%</span>
+          </v-btn>
+
+          <!-- 没有音频 / 生成失败：重新生成 -->
+          <v-btn
+            v-else-if="isAdmin && canRegenerate"
+            color="primary"
+            @click="openRegenerateDialog"
+            class="action-btn"
+          >
+            <v-icon>mdi-auto-fix</v-icon>{{ $t('audio.audioRegenerate') }}
+          </v-btn>
+
+          <v-btn
+            v-if="audioFiles.length > 0"
+            color="error"
+            @click="openDeleteDialog"
+            class="delete-btn"
+          >
             <v-icon>mdi-delete</v-icon>{{ $t('audio.audioDelete') }}
           </v-btn>
         </div>
@@ -340,6 +367,54 @@
     >
       <p>{{ $t('audio.deleteDescription', { title: book.title }) }}</p>
     </AppDialog>
+
+    <!-- 取消生成确认（从详情页弹窗移植过来：弹窗整体废弃后，生成/取消都归到播放页） -->
+    <AppDialog
+      v-model="showCancelDialog"
+      :persistent="false"
+      type="confirm"
+      :title="$t('audio.audioCancelGen')"
+      color="orange darken-2"
+      confirm-dark
+      max-width="400px"
+      :confirm-text="$t('audio.audioCancelGen')"
+      :confirm-loading="cancelLoading"
+      @confirm="cancelConversion"
+    >
+      <p>{{ $t('audio.cancelGenDescription', { title: book.title }) }}</p>
+    </AppDialog>
+
+    <!-- 重新生成：语音选择 + 确认 -->
+    <AppDialog
+      v-model="showRegenerateDialog"
+      :persistent="false"
+      type="confirm"
+      :title="$t('audio.audioRegenerate')"
+      max-width="520px"
+      :confirm-text="$t('audio.audioRegenerate')"
+      :confirm-loading="regenerateLoading"
+      @confirm="regenerateAudio"
+    >
+      <p class="mb-4">{{ $t('audio.regenerateDescription', { title: book.title, voice: voiceDisplay }) }}</p>
+      <v-select
+        v-model="voiceName"
+        :items="voiceOptions"
+        item-text="display_name"
+        item-value="voice_name"
+        :label="$t('audio.voiceLabel')"
+        outlined
+        dense
+        hide-details
+        class="voice-select"
+      >
+        <template v-slot:item="{ item }">
+          <v-list-item-content>
+            <v-list-item-title>{{ item.display_name }}</v-list-item-title>
+          </v-list-item-content>
+          <v-list-item-action-text class="caption grey--text">{{ item.gender }}</v-list-item-action-text>
+        </template>
+      </v-select>
+    </AppDialog>
   </div>
 </template>
 
@@ -357,11 +432,19 @@ export default {
 
       // 获取音频文件列表
       const audioResponse = await app.$backend(`/audio/${bookId}`);
+      // 是否有可用来「生成」的电子书（EPUB/TXT）——决定要不要显示「重新生成」按钮。
+      // 纯音频导入的书（calibre 里没有 epub 记录）不该看到这个按钮。
+      const files = (bookResponse.book && bookResponse.book.files) || [];
+      const hasEBooks = files.some(
+        f => ['epub', 'txt'].indexOf(String(f.format || '').toLowerCase()) >= 0
+      );
 
       return {
         book: bookResponse.book,
         audioFiles: audioResponse.audios || [],
         audioStatus: audioResponse.status || 'unavailable',
+        hasEBooks,
+        audioProgressData: audioResponse.progress || null,
         bookId: bookId,
         isPaid: audioResponse.is_paid || false
       };
@@ -371,6 +454,8 @@ export default {
         book: {},
         audioFiles: [],
         audioStatus: 'unavailable',
+        hasEBooks: false,
+        audioProgressData: null,
         bookId: params.id,
         isPaid: false
       };
@@ -444,11 +529,66 @@ export default {
 
       // 删除相关
       deleteLoading: false,
-      showDeleteDialog: false
+      showDeleteDialog: false,
+
+      // 生成 / 取消生成相关（原详情页 AudioListDialog 的能力，弹窗废弃后搬来这里）
+      hasEBooks: false,
+      audioProgressData: null,
+      showCancelDialog: false,
+      cancelLoading: false,
+      showRegenerateDialog: false,
+      regenerateLoading: false,
+      voiceName: 'zh-CN-XiaoxiaoNeural',
+      audioPollTimer: null
     };
   },
 
   computed: {
+    // 「重新生成」只在两种情况下出现：没有音频，或上次生成失败。
+    // 另外必须要有 EPUB/TXT，否则后端无从转换。
+    isAdmin() {
+      return !!this.$store.state.user && this.$store.state.user.is_admin === true;
+    },
+
+    canRegenerate() {
+      if (!this.hasEBooks) return false;
+      return this.audioStatus === 'unavailable' || this.audioStatus === 'failed';
+    },
+
+    // 生成进度（processing 时轮询 /audio/<id>/conversion 拿到的 data）
+    convertPercent() {
+      const d = this.audioProgressData || {};
+      const p = d.progress;
+      if (typeof p === 'number') {
+        return Math.max(0, Math.min(100, Math.round(p <= 1 ? p * 100 : p)));
+      }
+      return 0;
+    },
+
+    voiceDisplay() {
+      const v = this.voiceOptions.find(x => x.voice_name === this.voiceName);
+      return v ? v.display_name : this.voiceName;
+    },
+
+    // 与详情页原来那份保持一致（含试听文件名，便于后续想加试听时直接复用）
+    voiceOptions() {
+      return [
+        { voice_name: 'zh-CN-liaoning-XiaobeiNeural', display_name: this.$t('voice.xiaobei'), gender: 'female' },
+        { voice_name: 'zh-CN-XiaoxiaoNeural', display_name: this.$t('voice.xiaoxiao'), gender: 'female' },
+        { voice_name: 'zh-CN-XiaoyiNeural', display_name: this.$t('voice.xiaoyi'), gender: 'female' },
+        { voice_name: 'zh-HK-HiuGaaiNeural', display_name: this.$t('voice.xiaojia'), gender: 'female' },
+        { voice_name: 'zh-CN-YunjianNeural', display_name: this.$t('voice.yunjian'), gender: 'male' },
+        { voice_name: 'zh-CN-YunxiNeural', display_name: this.$t('voice.yunxi'), gender: 'male' },
+        { voice_name: 'zh-CN-YunyangNeural', display_name: this.$t('voice.yunyang'), gender: 'male' },
+        { voice_name: 'zh-HK-WanLungNeural', display_name: this.$t('voice.yunlong'), gender: 'male' },
+        { voice_name: 'en-US-AndrewNeural', display_name: this.$t('voice.andrew'), gender: 'male', lang: 'en-US' },
+        { voice_name: 'en-GB-RyanNeural', display_name: this.$t('voice.ray'), gender: 'male', lang: 'en-US' },
+        { voice_name: 'en-GB-SoniaNeural', display_name: this.$t('voice.sonia'), gender: 'female', lang: 'en-GB' },
+        { voice_name: 'en-US-AnaNeural', display_name: this.$t('voice.ana'), gender: 'female', lang: 'en-US' },
+        { voice_name: 'en-US-EmmaNeural', display_name: this.$t('voice.emma'), gender: 'female', lang: 'en-US' }
+      ];
+    },
+
     currentAudio() {
       return this.audioFiles[this.currentTrackIndex];
     },
@@ -529,6 +669,18 @@ export default {
     };
     window.addEventListener('keyup', this.escKeyListener);
     this._startWatchdog();
+    // 上次用过的语音（原详情页弹窗写在 localStorage，这里沿用同一个 key，
+    // 老用户的选择不会丢）
+    if (process.client) {
+      try {
+        const lastUsed = localStorage.getItem('last_used_voice_name');
+        if (lastUsed) this.voiceName = lastUsed;
+      } catch (e) { /* 隐私模式下 localStorage 可能抛错 */ }
+    }
+    // 正在生成的书：进来就开轮询，生成完自动刷新列表
+    if (this.audioStatus === 'processing') {
+      this.startAudioPolling();
+    }
   },
 
   beforeDestroy() {
@@ -537,6 +689,7 @@ export default {
     this.clearSleepTimer();
     this.stopProgressSaving();
     this._stopWatchdog();
+    this.stopAudioPolling();
     this._wantPlay = false;
     if (this.$refs.audioPlayer) {
       // §顺序：先清 src 再 load()§ 只调 pause() 的话，进行中的媒体拉取不会
@@ -1658,6 +1811,119 @@ export default {
       }
     },
 
+    // ===== 取消生成 / 重新生成 =====
+    // 详情页那个 AudioListDialog 已整体下线（它与播放页各存一套进度、口径还对不上，
+    // 反复修都在互相打架）。生成、取消、删除三种操作统一收到播放页这一处。
+    openCancelDialog() {
+      this.showCancelDialog = true;
+    },
+
+    openRegenerateDialog() {
+      if (!this.hasEBooks) {
+        this.$alert('error', this.$t('audio.regenerateNoEbook'));
+        return;
+      }
+      this.showRegenerateDialog = true;
+    },
+
+    async cancelConversion() {
+      if (!this.bookId) return;
+      this.cancelLoading = true;
+      try {
+        const response = await this.$backend(`/audio/${this.bookId}/cancel`, { method: 'POST' });
+        if (response.err === 'ok') {
+          this.showCancelDialog = false;
+          this.$alert('success', this.$t('audio.cancelGenSuccess'));
+          this.stopAudioPolling();
+          this.audioStatus = 'unavailable';
+        } else {
+          this.$alert('error', response.msg || this.$t('audio.cancelGenFailed'));
+        }
+      } catch (error) {
+        console.error('Cancel conversion error:', error);
+        this.$alert('error', this.$t('audio.cancelGenFailed'));
+      } finally {
+        this.cancelLoading = false;
+      }
+    },
+
+    async regenerateAudio() {
+      if (!this.bookId) return;
+      if (!this.hasEBooks) {
+        this.$alert('error', this.$t('audio.regenerateNoEbook'));
+        return;
+      }
+      this.regenerateLoading = true;
+      try {
+        if (process.client) {
+          try {
+            localStorage.setItem('last_used_voice_name', this.voiceName);
+          } catch (e) { /* 忽略 */ }
+        }
+        const selected = this.voiceOptions.find(v => v.voice_name === this.voiceName);
+        const language = (selected && selected.lang) || 'zh-CN';
+        const response = await this.$backend(`/audio/${this.bookId}/conversion`, {
+          method: 'POST',
+          body: JSON.stringify({ voice: this.voiceName, language })
+        });
+        if (response.err === 'ok') {
+          this.showRegenerateDialog = false;
+          this.audioStatus = 'processing';
+          this.audioProgressData = null;
+          this.$alert('success', this.$t('audio.regenerateSuccess'));
+          this.startAudioPolling();
+        } else {
+          this.$alert('error', response.msg || this.$t('audio.regenerateFailed'));
+        }
+      } catch (error) {
+        console.error('Regenerate audio error:', error);
+        this.$alert('error', this.$t('audio.regenerateFailed'));
+      } finally {
+        this.regenerateLoading = false;
+      }
+    },
+
+    // 生成进度轮询：processing 时每 5 秒问一次 /audio/<id>/conversion。
+    // 完成后重新拉一次音频列表，用户不用手动刷新就能开听。
+    startAudioPolling() {
+      this.stopAudioPolling();
+      this.audioPollTimer = setInterval(async () => {
+        try {
+          const rsp = await this.$backend(`/audio/${this.bookId}/conversion`);
+          const data = (rsp && rsp.data) || null;
+          if (data) {
+            this.audioProgressData = data;
+            if (data.status === 'processing') {
+              this.audioStatus = 'processing';
+              return;
+            }
+          }
+          // 转换结束（成功或失败）都停轮询；成功则刷新列表
+          this.stopAudioPolling();
+          const refreshed = await this.$backend(`/audio/${this.bookId}`);
+          if (refreshed && refreshed.err === 'ok') {
+            this.audioFiles = refreshed.audios || [];
+            this.audioStatus = refreshed.status || 'converted';
+            if (this.audioFiles.length > 0) {
+              this.currentTrackIndex = 0;
+              this.loadTrack(0);
+            }
+          } else {
+            this.audioStatus = 'failed';
+          }
+        } catch (error) {
+          console.error('Audio conversion polling error:', error);
+        }
+      }, 5000);
+    },
+
+    stopAudioPolling() {
+      if (this.audioPollTimer) {
+        clearInterval(this.audioPollTimer);
+        this.audioPollTimer = null;
+      }
+    },
+
     async showPurchaseDialogWithVipInfo() {
       try {
         // 获取用户VIP信息
@@ -1907,6 +2173,23 @@ export default {
   flex-shrink: 0;
 }
 
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+
+.action-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.voice-select {
+  max-width: 100%;
+}
+
 .delete-btn {
   background: linear-gradient(135deg, #e53935 0%, #c62828 100%) !important;
   color: white !important;
@@ -1915,7 +2198,6 @@ export default {
   white-space: nowrap;
   flex-shrink: 0;
   transition: all 0.3s ease;
-  margin-left: 8px;
 }
 
 .delete-btn:hover {

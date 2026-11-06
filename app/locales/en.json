@@ -1731,7 +1731,19 @@
     "deleteFailed": "Delete failed, please try again later",
     "showLyrics": "Subtitles",
     "showCover": "Cover",
-    "playError": "Failed to play track {n}: the file may still be generating or be corrupted."
+    "playError": "Failed to play track {n}: the file may still be generating or be corrupted.",
+    "audioCancelGen": "Cancel generation",
+    "audioRegenerate": "Regenerate audio book",
+    "cancelGenDescription": "Cancel the running audio conversion for <{title}>?",
+    "cancelGenSuccess": "Conversion cancelled",
+    "cancelGenFailed": "Cancel failed, please try again later",
+    "regenerateDescription": "Regenerate the audio book for <{title}> with voice \"{voice}\"? Existing audio will be overwritten.",
+    "regenerateSuccess": "Generation started. Refresh the page shortly to see it.",
+    "regenerateFailed": "Generation failed, please try again later",
+    "regenerateNoEbook": "No ebook file (EPUB/TXT) available for this book, cannot generate audio",
+    "voiceLabel": "Choose a voice",
+    "convertProgress": "Generating {percent}%",
+    "convertStage": "Stage: {stage}"
   },
   "syslog": {
     "title": "System Log",

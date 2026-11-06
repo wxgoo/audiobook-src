@@ -1733,7 +1733,19 @@
     "deleteFailed": "删除失败，请稍后重试",
     "showLyrics": "看字幕",
     "showCover": "看封面",
-    "playError": "第 {n} 集播放失败：文件可能还在生成或已损坏。"
+    "playError": "第 {n} 集播放失败：文件可能还在生成或已损坏。",
+    "audioCancelGen": "取消生成",
+    "audioRegenerate": "重新生成有声书",
+    "cancelGenDescription": "确定要取消《{title}》正在进行的音频转换吗？",
+    "cancelGenSuccess": "已取消转换",
+    "cancelGenFailed": "取消失败，请稍后重试",
+    "regenerateDescription": "将用语音「{voice}」为《{title}》重新生成有声书，已有音频会被覆盖。",
+    "regenerateSuccess": "已开始生成，请稍后刷新页面查看",
+    "regenerateFailed": "生成失败，请稍后重试",
+    "regenerateNoEbook": "这本书没有可用的电子书文件（EPUB/TXT），无法生成音频",
+    "voiceLabel": "选择语音",
+    "convertProgress": "生成中 {percent}%",
+    "convertStage": "当前阶段：{stage}"
   },
   "syslog": {
     "title": "系统日志",

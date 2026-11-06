@@ -61,16 +61,6 @@
                 </v-select>
             </AppDialog>
 
-            <AudioListDialog
-                :open.sync="dialog_audiolist"
-                :audios="audios"
-                :audio-status="AUDIO_STATUS"
-                :book-id="book && book.id"
-                :can-generate="hasEBooks"
-                @stop-sample-audio="stopCurrentAudio"
-                @clear-conversion="clearConversion"
-                @generate-audio="generateAudio"
-            />
 
             <AppDialog
                 v-model="dialog_download"
@@ -1252,7 +1242,6 @@
 import BookCards from "~/components/BookCards.vue";
 import MyNexusMarkdown from "~/components/MyNexusMarkdown.vue";
 import MyNexusChatDialog from "~/components/MyNexusChatDialog.vue";
-import AudioListDialog from "~/components/AudioListDialog.vue";
 import SendToDeviceDialog from "~/components/SendToDeviceDialog.vue";
 import SendToEmailDialog from "~/components/SendToEmailDialog.vue";
 import BookSocialInfo from "~/components/BookSocialInfo.vue";
@@ -1269,7 +1258,6 @@ export default {
         BookCards,
         MyNexusMarkdown,
         MyNexusChatDialog,
-        AudioListDialog,
         SendToDeviceDialog,
         SendToEmailDialog,
         BookSocialInfo,
@@ -2244,35 +2232,14 @@ export default {
                 return;
             }
 
-            // §两个入口的分工（按用户要求定死）§
-            // 顶部按钮（switchToAudioPlayer）：跳 /audio/<id> 全功能播放页。
-            // 详情页下方「有声书」卡片（这里）：打开内嵌弹窗，就地试听/看列表，
-            // 不离开详情页。之前一度把两条入口统一跳播放页，用户明确反馈：
-            // 「下方这个应该弹窗，不是跟顶部一样打开一个页面」。
-            // 弹窗的播放卡死问题已在 AudioListDialog 内部修（teardown 中止
-            // 拉取 + _retryPlay 守卫 + 看门狗同款进展制恢复），见 cb64c08/
-            // c7c0811/8ca8ba5。
-            if (this.hasAudio) {
-                this.dialog_audiolist = !this.dialog_audiolist;
-                if (this.dialog_audiolist && this.audios.status === this.AUDIO_STATUS.PROCESSING) {
-                    this.startAudioProgressPolling();
-                } else {
-                    this.stopAudioProgressPolling();
-                }
-                return;
-            }
-
-            if (this.audios.status === this.AUDIO_STATUS.UNAVAILABLE || this.audios.status === this.AUDIO_STATUS.FAILED) {
-                this.dialog_epub2audio = !this.dialog_epub2audio
-            } else {
-                this.dialog_audiolist = !this.dialog_audiolist
-                // Start progress polling when opening audio list dialog
-                if (this.dialog_audiolist && this.audios.status === this.AUDIO_STATUS.PROCESSING) {
-                    this.startAudioProgressPolling();
-                } else {
-                    this.stopAudioProgressPolling();
-                }
-            }
+            // §入口统一（用户拍板：彻底取消弹窗）§
+            // 弹窗与播放页是两套独立播放器、两套进度逻辑，进度粒度/时间语义
+            // 修了多少轮仍有细枝末节对不上（见 docs/上游跟进清单.md #C9）。
+            // 根治办法只有一个：只留播放页这一套。弹窗原有的「清除音频 /
+            // 恢复生成」已移到播放页（与「删除当前有声书」并列）。
+            // 所以这里不再分状态：不管有没有音频、转换中还是失败，一律进
+            // 播放页——没有音频时播放页会显示「重新生成」和语音选择。
+            this.$router.push('/audio/' + this.book.id);
         },
         truncateText(value, maxLength = 14) {
             if (value === null || value === undefined) return '';
