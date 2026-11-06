@@ -9,6 +9,23 @@
 
 ---
 
+## 组件存废索引
+
+> 历史条目按**当时的事实**记录，不回改——`4.6.0-16` 那条说"改过 `AudioListDialog.vue`"
+> 在当时是真的，改写它只会让历史自相矛盾。
+>
+> 但这样一来，顺着旧记录去找文件的人会扑空。所以：**哪个文件后来被删了，记在这里。**
+> 新增或下线组件时请同步维护本表。
+
+| 文件 | 状态 | 处置版本 | 能力去向 |
+|---|---|---|---|
+| `app/src/components/AudioListDialog.vue` | **已删除** | 4.6.0-19 | 删除 / 取消生成 / 重新生成 → 播放页 `app/src/pages/audio/_id.vue`（见下方 4.6.0-19「八、第四轮」） |
+
+已下线的组件在历史条目里仍会原样出现（4.6.0-8 一处、-14 一处、-16 两处），
+凡带「已于 4.6.0-19 下线」字样的即是。
+
+---
+
 ## 4.6.0-19（当前）
 
 > **性能与稳健性专项**：修掉一批「同步 handler 阻塞事件循环冻住全站」的重 IO
@@ -508,6 +525,8 @@ if fmt in ["txt", "pdf"]:
 `_` 开头是 Vue 2 保留键，触发 `vue/no-reserved-keys`，**前端构建直接失败**。
 改为在 `created` 里挂到实例上（与 `_el` 一致）。
 
+> 该组件已于 4.6.0-19 下线，见文首「组件存废索引」。
+
 ### 补充：远程缺失的 epub 阅读器模板
 
 `webserver/resources/book/epubjs.html` 在远程分支里不存在，但
@@ -545,7 +564,7 @@ tools/upgrade_from_upstream.sh →  tools/upgrade-from-upstream-manual.sh
 | `webserver/handlers/book.py` | 新增 4 个 helper + 5 处调用点收口 |
 | `webserver/services/autofill.py` | 限流等待取整方式 |
 | `app/src/components/Upload.vue` | 上传结果提示带上「更新了哪些字段」 |
-| `app/src/components/AudioListDialog.vue` | 保留键改为实例字段 |
+| `app/src/components/AudioListDialog.vue`（已于 4.6.0-19 下线，见文首索引） | 保留键改为实例字段 |
 | `app/locales/{zh,zh-TW,en}.json` | 新增 `uploadSuccessMerged` + `metaField.*` |
 | `webserver/resources/book/epubjs.html` | 补回缺失模板 |
 | `myreader-dist` | 删除 8 个悬空符号链接，`pack.sh` 收紧为断链必须为 0 |
@@ -674,8 +693,9 @@ AAC 码率可选 64k/96k/128k。
   会把顶部裁进不可滚动区，属 flexbox 已知坑）。改动在
   `app/src/pages/audio/_id.vue`，**需重建前端**后生效。
 - **确认上游已内置「播放时显示字幕」**：`pages/audio/_id.vue`（正式播放器）与
-  `AudioListDialog`（试听弹窗）都会取音频同目录同名 `.srt/.vtt`，随播放滚动高亮、
-  点击字幕跳进度、可开关。后端 `AudioDetail` 接口同样会附 `subtitle` URL。
+  `AudioListDialog`（试听弹窗，已于 4.6.0-19 下线，见文首索引）都会取音频同目录
+  同名 `.srt/.vtt`，随播放滚动高亮、点击字幕跳进度、可开关。
+  后端 `AudioDetail` 接口同样会附 `subtitle` URL。
   **无需改代码，只差 `.srt` 文件本身**。
 - 交付独立工具 [`srt-tool/`](../srt-tool/)（faster-whisper，PC 上跑，生成同目录同名
   `.srt`），识别策略借鉴 v6.22：中文引导语、VAD 过滤、幻觉清洗、结果缓存。
@@ -1722,7 +1742,7 @@ chunk、caller 副本 2 处，全部修补，`node --check` 全过）：
 
 | 功能 | 文件 | 说明 |
 |---|---|---|
-| 详情页有声书弹窗加进度记忆 | `app/src/components/AudioListDialog.vue` | 试听中途关掉弹窗，重新打开自动回到上次位置，章节行右侧显示「上次听到 12:34」 |
+| 详情页有声书弹窗加进度记忆 | `app/src/components/AudioListDialog.vue`（已于 4.6.0-19 下线，见文首索引） | 试听中途关掉弹窗，重新打开自动回到上次位置，章节行右侧显示「上次听到 12:34」 |
 | 弹窗内进度条 | 同上 | `v-slider` 可拖动定位，下方显示 `当前 / 总长`；原来只能听不能拖 |
 
 实现要点：
