@@ -89,12 +89,19 @@ def resolve_audio_dir_or_404(db, book_id):
 
 
 class AudioBooksCache:
-    """音频书籍目录缓存工具类"""
+    """音频书籍目录缓存工具类。
+
+    刷新只允许发生在后台线程：请求线程里的 get_audio_book_ids()/has_audio()
+    只做 O(1) 的过期判断并触发一次后台刷新，然后立即返回当前缓存。
+    10 万册库的 listdir 全库遍历不再阻塞任何 API 请求。
+    """
 
     _book_ids = set()
     _last_update_time = 0
     _update_lock = threading.Lock()
     _need_update = True
+    _refreshing = False
+    _pending_refresh = False
 
     @classmethod
     def _scan_audio_directory(cls):
@@ -130,58 +137,75 @@ class AudioBooksCache:
 
     @classmethod
     def get_audio_book_ids(cls):
-        """获取有音频的书籍ID列表"""
-        if cls._should_update():
-            cls._update_cache()
+        """获取有音频的书籍ID列表（请求路径上永不扫盘）。"""
+        cls._ensure_background_refresh()
         return cls._book_ids.copy()
 
     @classmethod
     def _update_cache(cls):
-        """更新缓存（同步方法）"""
-        with cls._update_lock:
-            # 再次检查是否需要更新，避免重复更新
-            if not cls._should_update():
-                return
-
+        """扫描全库并替换缓存。只允许在后台线程调用。"""
+        try:
             book_ids = cls._scan_audio_directory()
             cls._book_ids = book_ids
             cls._last_update_time = time.time()
             cls._need_update = False
-            logging.info(f"Audio cache updated with {len(book_ids)} books")
+            logging.info("Audio cache updated with %d books", len(book_ids))
+        except Exception:
+            # 扫描失败保留旧缓存，避免把「有音频」误降级成「没有音频」
+            logging.exception("Error updating audio cache")
 
     @classmethod
     def mark_need_update(cls):
-        """标记需要更新缓存"""
+        """标记需要更新缓存（下一次后台刷新会重新扫盘）"""
         cls._need_update = True
         logging.info("Audio cache marked for update")
 
     @classmethod
+    def _ensure_background_refresh(cls):
+        """过期时触发一次后台刷新，然后立即返回。
+
+        请求线程只做布尔判断；_refreshing 保证全库扫描同一时刻最多一个，
+        并发请求不会各自起一个扫描线程。
+        """
+        if not cls._should_update() or cls._refreshing:
+            return
+        cls.async_update()
+
+    @classmethod
     def async_update(cls):
-        """异步更新缓存"""
+        """异步更新缓存（单飞：同一时刻最多一个扫描线程）。"""
+        with cls._update_lock:
+            if cls._refreshing:
+                # 正在扫的那一轮结束后再补扫一次，保证事件都能被看见
+                cls._pending_refresh = True
+                return
+            cls._refreshing = True
 
-        def update_task():
-            try:
-                cls._update_cache()
-            except Exception as e:
-                logging.error(f"Error in async audio cache update: {e}")
-
-        thread = threading.Thread(target=update_task)
-        thread.daemon = True
+        thread = threading.Thread(
+            target=cls._refresh_loop, name="audio-cache-refresh", daemon=True)
         thread.start()
-        logging.info("Async audio cache update started")
+
+    @classmethod
+    def _refresh_loop(cls):
+        while True:
+            cls._update_cache()
+            with cls._update_lock:
+                if cls._pending_refresh:
+                    cls._pending_refresh = False
+                    continue
+                cls._refreshing = False
+                return
 
     @classmethod
     def get_audio_book_ids_set(cls):
-        """获取有音频的书籍ID集合（用于批量查询）"""
-        if cls._should_update():
-            cls._update_cache()
+        """获取有音频的书籍ID集合（用于批量查询）。"""
+        cls._ensure_background_refresh()
         return cls._book_ids
 
     @classmethod
     def has_audio(cls, book_id):
-        """查询指定book_id是否有音频"""
-        if cls._should_update():
-            cls._update_cache()
+        """查询指定book_id是否有音频。"""
+        cls._ensure_background_refresh()
         return int(book_id) in cls._book_ids
 
 
