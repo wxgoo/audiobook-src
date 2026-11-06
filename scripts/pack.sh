@@ -135,6 +135,20 @@ if [ "${1:-}" = "--check" ]; then
             fail=1
         fi
 
+        # tools/ 同理只该留运维脚本 —— 抓取/开发工具混进来说明裁剪没生效
+        tk_junk=""
+        for f in $(ls "$D/tools" 2>/dev/null); do
+            case " category_backfill.py fix_broken_fonts.py migrate_from_upstream.sh upgrade-from-upstream-manual.sh hotfix-from-src.sh " in
+                *" $f "*) ;;
+                *) tk_junk="$tk_junk $f" ;;
+            esac
+        done
+        if [ -n "$tk_junk" ]; then
+            echo "  !! tools/ 混入部署机用不到的开发工具:$tk_junk"
+            echo "     （包内只该留 5 个运维脚本，见 docs/部署包说明.md）"
+            fail=1
+        fi
+
         [ "$fail" = "0" ] && echo "  ✅ 校验通过" || { echo "  ❌ 校验失败"; exit 1; }
     }
 
@@ -229,6 +243,24 @@ for f in build.bat build.py make_srt.spec; do
     rm -f "$STAGE/audiobook/srt-tool/$f"
 done
 rm -rf "$STAGE/audiobook/srt-tool/tests"
+
+# tools/ 是上游带的一整套书源抓取与开发工具（豆瓣/kgbook 爬虫、OPDS、DjVu 元数据、
+# EPUB 解析、网盘下载、推荐引擎合成基准…），NAS 上既不跑也用不到，spider 还会往外发请求。
+# 只留部署机上真会执行的 5 个：
+#   category_backfill.py           读者组 #category 分类回填（deploy.sh 校验 + 部署后手动跑）
+#   fix_broken_fonts.py            坏字体批量清扫（webserver/services/epub_font_fix.py 指向它）
+#   migrate_from_upstream.sh       上游三方合并迁移
+#   upgrade-from-upstream-manual.sh / hotfix-from-src.sh   手动升级与源码侧热更
+# 要完整的去 gitee 仓库取，仓库里一个没删。
+KEEP_TOOLS=" category_backfill.py fix_broken_fonts.py migrate_from_upstream.sh upgrade-from-upstream-manual.sh hotfix-from-src.sh "
+for f in "$STAGE/audiobook/tools"/* "$STAGE/audiobook/tools"/.[!.]*; do
+    [ -e "$f" ] || continue
+    case "$KEEP_TOOLS" in
+        *" $(basename "$f") "*) continue ;;
+    esac
+    rm -rf "$f"
+done
+echo "  tools/ 只留运维脚本: $(ls "$STAGE/audiobook/tools" | tr '\n' ' ')"
 
 # __pycache__ 同理：开发时跑过脚本就会留下，5MB 左右，NAS 上纯占地方。
 # 镜像构建本来就从 .dockerignore 排掉它，部署包里更不该有。

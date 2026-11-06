@@ -296,11 +296,11 @@ m4b 章节偏移还要各算一遍。任何一侧改一点另一侧就偏一点�
 | `tools/fix_broken_fonts.py` | 3 | 保留 | `webserver/services/epub_font_fix.py` 提到它 |
 | `tools/upgrade-from-upstream-manual.sh` | 12 | 保留 | 手工跟上游 |
 | `tools/migrate_from_upstream.sh` | 6 | 保留 | `INSTALL_GUIDE.md` 有专章 |
-| `tools/recommend_benchmark.py` | 1 | 保留（存疑） | 推荐引擎合成基准，仅 CHANGELOG 历史提及 |
-| `tools/repro_r11_birth_year.py` | **0** | 保留（存疑） | r10→r11 birth_year 列的一次性复现，无任何引用 |
+| `tools/recommend_benchmark.py` | 1 | 包外 | 推荐引擎合成基准，仅 CHANGELOG 历史提及；仓库保留、部署包不带（见第十一节） |
+| `tools/repro_r11_birth_year.py` | **0** | **已删** | r10→r11 birth_year 列的一次性复现，无任何引用（见第十一节） |
 
-> 最后两个没有引用，但一个是性能基准、一个是升级路径回归验证，删了不影响运行也
-> 不影响出包（都不进部署包关键路径），暂时留着。要清可以单独说一句。
+> 最后两个当时都判"存疑"没动。第七轮按「无关的清理干净」处置：一个删掉、
+> 一个只留在仓库不进包，理由见下节。
 
 **顺手清掉的两处真垃圾**
 
@@ -324,6 +324,59 @@ m4b 章节偏移还要各算一遍。任何一侧改一点另一侧就偏一点�
 - `sh scripts/pack.sh --check <包>` → ✅ 校验通过（此前必定 ❌）
 - 新加的 srt-tool 断言实测有效：故意让包内残留 `build.bat` 会报错
 - `sh -n` 检查两个恢复的脚本与改后的 `pack.sh`
+
+### 十一、第七轮（同版本补充）：无关文件清干净，`tools/` 只在包里留运维脚本
+
+> 上节表格里两个"存疑"的，这次给了结论；顺带把 `tools/` 整套抓取工具的打包口径定死。
+
+**删掉的三个文件**
+
+| 文件 | 依据 |
+|---|---|
+| `tools/repro_r11_birth_year.py` | 上轮判存疑的那个。r10→r11 补 `birth_year` 列的一次性复现脚本，r11 已上线跑过，全仓库 0 引用 |
+| `tools/meta_source/douban_search_debug.html` | 12KB 抓取快照，豆瓣搜索页的调试转储，不是代码也不是数据 |
+| `tools/meta_source/test_cover_download.py` | 手工试验「两种封面下载策略哪个能用」的脚本，无引用，运行会在当前目录写 `out/` |
+
+`tools/recommend_benchmark.py`（推荐引擎合成基准，4.8KB）**没删**：它是上游文件，
+删了会让下次 `migrate_from_upstream.sh` 三方合并时冒出 "deleted by us" 冲突，
+留着不碍事——问题只是它不该进部署包，见下条。
+
+**`tools/` 的打包口径：白名单，只留 5 个**
+
+`tools/` 下 40 个文件里，除上面点名的运维脚本，其余都是上游带的书源抓取与开发辅助
+（`downloader/` 网盘、`meta_source/` 豆瓣爬虫、`kgbook.com/`、`epub/`、`pdf/`、
+`djvu/`、`audios/`、`opds/`、`perf/`、`i18n/`、`others/`）。NAS 上既不跑也用不到，
+spider 还会往外发请求。前端能带进包的这套东西，等于把一个爬虫工具箱塞进生产镜像。
+
+`pack.sh` 改为打包时按白名单裁剪，包内只留：
+
+| 保留 | 部署机上谁在用 |
+|---|---|
+| `category_backfill.py` | `deploy.sh` 硬校验它存在；部署后手动跑分类回填 |
+| `fix_broken_fonts.py` | `webserver/services/epub_font_fix.py` 的文档指向它 |
+| `migrate_from_upstream.sh` | 上游三方合并迁移 |
+| `upgrade-from-upstream-manual.sh` | 手工跟上游 |
+| `hotfix-from-src.sh` | 源码侧热更 |
+
+验包侧加对称断言：`tools/` 里出现白名单外的名字就判 ❌，防止以后裁剪漏改。
+注意 `scripts/hotfix.sh` 是**整目录替换**容器内 `tools/`，所以精简后容器里也只会有
+这 5 个——本来就不该在 NAS 上跑爬虫，符合预期。
+
+> **仓库 ≠ 部署包**：仓库里 `tools/` 一个没删（只删了上表 3 个垃圾），要爬虫在 PC 上跑。
+> 两条线别混：仓库是开发完整版，包是运行最小集。
+
+**顺带清掉的**
+
+- `/workspace` 下散的 `上游跟进清单.md`：与 `docs/上游跟进清单.md` 逐字节相同，是导出时的副本
+- 打包中间产物与临时目录（不进版本库，仅释放磁盘）
+
+**验证**
+
+- `sh -n scripts/pack.sh` 通过；`--check` 对新包 ✅，且我故意往 `tools/` 塞回
+  `meta_source/` 时会报 `!! tools/ 混入部署机用不到的开发工具: meta_source`
+- 包内 `tools/` 实测只剩 5 个文件，总大小从 372K 降到 44K
+- 全仓库 `grep` 复查：`tools/repro_r11_birth_year`、`test_cover_download`、
+  `douban_search_debug` 已无任何引用
 
 ---
 
