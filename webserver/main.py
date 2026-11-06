@@ -726,6 +726,15 @@ def main():
     else:
         http_server.listen(options.port, options.host)
     tornado.ioloop.PeriodicCallback(lambda: models.Message.cleanup_old_messages(), 24 * 3600 * 1000).start()
+
+    # 预热「有音频的书」缓存：后台线程扫一遍库，首个列表请求就不用等全库 listdir。
+    # 扫描失败不影响启动（缓存保持空集，后续事件会再触发刷新）。
+    try:
+        from webserver.handlers.audio import AudioBooksCache
+        AudioBooksCache.async_update()
+    except Exception:
+        logging.warning("Audio cache prewarm failed", exc_info=True)
+
     switch_ms = float(CONF.get("GIL_SWITCH_INTERVAL_MS", 0) or 0)
     if switch_ms > 0:
         sys.setswitchinterval(switch_ms / 1000.0)
