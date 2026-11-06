@@ -107,30 +107,7 @@ audiobook./../../../node_modules/.pnpm/...     ← 全废，127 个链接全断
 **停容器 → 备份库 → 旧目录改名 → 全新目录解压 → 校验 → 构建 → 启动 → 验证 4 个进程**，
 任何一步失败都能退回。详见 [`docs/部署包说明.md`](../docs/部署包说明.md)。
 
-## archive/ —— 已归档，别再新建同类
-
-> **这一节只对源码仓库有效。`scripts/archive/` 不随部署包下发**，
-> NAS 上的 `audiobook/scripts/` 里只有上面那 6 个脚本。
-> 打包时由 `pack.sh` 排除，`--check` 也会验这一条。
-
-这九个都是**一次性脚本**：使命已完成，不修、不跟版本更新。留着的价值是"当时是怎么解决的"。
-
-| 脚本 | 干什么的 | 为什么归档 |
-|---|---|---|
-| [`archive/merge-4.6.0-9.sh`](archive/merge-4.6.0-9.sh) | v9 那趟合并（23 个文件） | 依赖的补丁包与 v8 基准包都已不在，跑不起来 |
-| [`archive/build-v3.sh`](archive/build-v3.sh) | 组装 4.6.0-9 v3 成品包 | v9 最终就是它出的，v10 起改出完整包 |
-| [`archive/build-v2.sh`](archive/build-v2.sh) | 组装 4.6.0-9 v2 包 | 已被 build-v3 取代（当时产物残缺需拼凑） |
-| [`archive/make-base-4.6.0-8.sh`](archive/make-base-4.6.0-8.sh) | 从 -9 包反推 -8 基准包 | 只为喂给 merge-4.6.0-9.sh，同批归档 |
-| [`archive/rescue-from-248.sh`](archive/rescue-from-248.sh) | 从 248M 的 v8 包里挖完整产物 | 一次性救火，产物早已进仓库 |
-| [`archive/export-myreader.sh`](archive/export-myreader.sh) | 从容器里导出 `myreader-dist` | 产物重建过一次之后没再用过 |
-| [`archive/find-myreader.sh`](archive/find-myreader.sh) | 翻 NAS 找完整产物在哪 | 功能被 export-myreader 覆盖 |
-| [`archive/rollback-to-8.sh`](archive/rollback-to-8.sh) | 退回 4.6.0-8 | 现役 4.6.0-10，跑它等于丢掉全部新功能 |
-| [`archive/push-to-gitee.sh`](archive/push-to-gitee.sh) | 推 v9 改动到 Gitee | 现在直接 `git push` |
-
-需要类似能力时**新写一个**放 `scripts/` 根，别在这些文件上打补丁 —— 它们记录的是当时的状态，
-改了就不再是"当时的解法"，反而误导人。
-
-## 只改 Python？用 hotfix.sh，别等镜像
+# 只改 Python？用 hotfix.sh，别等镜像
 
 `upgrade.sh` 是「全量重解压 + 重建镜像 + 重启」，NAS 上一次十几分钟。但项目里
 **绝大多数修复只动了 `webserver/` 下的 .py**——这部分在 Dockerfile 里就是

@@ -17,12 +17,11 @@
 | 把服务装起来 / 换机器重装 / 排查部署问题 | [`INSTALL_GUIDE.md`](INSTALL_GUIDE.md) |
 | 查某个版本改了什么、为什么改 | [`CHANGELOG.md`](CHANGELOG.md) |
 | 跟着上游升级、搞清两个操作环境、日常运维套路 | [`docs/操作总纲.md`](docs/操作总纲.md) |
-| 相对上游改了哪些文件（升级时判断哪里会冲突） | [`docs/移植改动清单.md`](docs/移植改动清单.md) |
 | 部署包含什么、目录怎么摆 | [`docs/部署包说明.md`](docs/部署包说明.md) |
 | 改代码（代码结构、测试命令，给人和 AI 看） | [`CLAUDE.md`](CLAUDE.md) |
 | 安全问题怎么报 | [`SECURITY.md`](SECURITY.md) |
 
-历史归档（只查不改，**仅在源码仓库，不随部署包下发**）：`docs/archive/`、`scripts/archive/`
+相对上游的全部代码改动统一记录在 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
