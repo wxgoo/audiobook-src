@@ -56,14 +56,20 @@ if [ "${1:-}" = "--check" ]; then
         # 不该有的东西：归档、开发侧杂物
         # 注意：app/node_modules 是要的 —— Dockerfile 里 COPY app/ /build/ 靠它走「已有产物」快路，
         # 少了它镜像里没有 next，阅读器起不来。别当成杂物排掉。
-        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git .pytest_cache; do
+        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git; do
             [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
         done
 
-        # __pycache__：允许零星几个（比如解压后又跑过脚本），但不该整片带进来
+        # __pycache__ / .pytest_cache：允许零星几个（比如解压后又跑过脚本），但不该整片带进来
         npc=$(find "$D" -name '__pycache__' -type d 2>/dev/null | wc -l)
         if [ "$npc" -gt 5 ]; then
             echo "  !! 包里有 $npc 个 __pycache__ 目录（应为 0）—— 打包时漏了清理"
+            fail=1
+        fi
+        pc=$(find "$D" -name '.pytest_cache' -type d 2>/dev/null | wc -l)
+        if [ "$pc" -gt 0 ]; then
+            echo "  !! 包里有 $pc 个 .pytest_cache 目录（应为 0）"
+            find "$D" -name '.pytest_cache' -type d 2>/dev/null | head -5 | sed 's/^/     /'
             fail=1
         fi
 
@@ -226,8 +232,11 @@ rm -rf "$STAGE/audiobook/srt-tool/tests"
 # 注意 .gitignore 里也有 __pycache__/，所以这些文件不在版本库里，
 # 清掉不影响任何东西（下次跑脚本会自己重建）。
 find "$STAGE/audiobook" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null
+# .pytest_cache 会在任意跑过 pytest 的目录里冒出来（仓库根、srt-tool/、webserver/epub_to_audio/），
+# 只排顶层不够，必须全局扫
+find "$STAGE/audiobook" -name '.pytest_cache' -type d -prune -exec rm -rf {} + 2>/dev/null
 find "$STAGE/audiobook" \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null
-echo "  已清掉 __pycache__ / *.pyc（5MB 左右的开发残留）"
+echo "  已清掉 __pycache__ / .pytest_cache / *.pyc（开发残留）"
 
 mkdir -p "$OUTDIR"
 ( cd "$STAGE" && tar $TAR_OPTS -cf - audiobook | gzip -n > "$OUT" )
