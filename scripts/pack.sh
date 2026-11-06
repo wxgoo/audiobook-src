@@ -56,7 +56,7 @@ if [ "${1:-}" = "--check" ]; then
         # 不该有的东西：归档、开发侧杂物
         # 注意：app/node_modules 是要的 —— Dockerfile 里 COPY app/ /build/ 靠它走「已有产物」快路，
         # 少了它镜像里没有 next，阅读器起不来。别当成杂物排掉。
-        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git; do
+        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git skills .claude; do
             [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
         done
 
@@ -202,6 +202,9 @@ for item in $(ls -A); do
     case "$item" in
         # 版本库与开发侧杂物
         .git|.claude|node_modules|cache|sync|books|data|__pycache__|logs) continue ;;
+        # skills/ 是给 AI 客户端（clawdbot / openclaw）加载的 skill 包，走 HTTP API
+        # 操作书库，不是服务端依赖。NAS 上用不到，要用的在 PC 上装。
+        skills) continue ;;
         # pytest 缓存在仓库根也会生成（在 srt-tool/ 里跑测试时 rootdir 会往上找到仓库根）
         .pytest_cache) continue ;;
         # 误提交的嵌套仓库条目（历史上 clone 自己的残留），空目录，无内容

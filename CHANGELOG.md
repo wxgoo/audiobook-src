@@ -302,6 +302,16 @@ m4b 章节偏移还要各算一遍。任何一侧改一点另一侧就偏一点�
 > 最后两个没有引用，但一个是性能基准、一个是升级路径回归验证，删了不影响运行也
 > 不影响出包（都不进部署包关键路径），暂时留着。要清可以单独说一句。
 
+**顺手清掉的两处真垃圾**
+
+- `build/patch-files-v3.txt`：-9 时代的补丁白名单（"用 -9 覆盖 4.6.0-8 全量包"），
+  早随版本推进失效，`build/` 目录一并移除
+- `skills/mybooks/` 下的 `__pycache__` 与 `.pyc`（含一个 py3.12 的）：
+  跑测试留下的，`.gitignore` 挡了提交但打进了包
+- `skills/` 整体不进部署包：它是给 AI 客户端（clawdbot / openclaw）加载的 skill 包，
+  走 HTTP API 操作书库，不是服务端依赖（`webserver/mcp/api_tools.py` 只在注释里提到它）
+- `.pytest_cache` 改为全局清理（仓库根、`srt-tool/`、`webserver/epub_to_audio/` 各有一个）
+
 **核过的文档（本轮确认无需改）**
 
 - `docs/目录功能说明.md`：讲 `ENABLE_FOLDER_BROWSE` 与 `#folder` 自定义列，
