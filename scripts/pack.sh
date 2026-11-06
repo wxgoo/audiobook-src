@@ -149,6 +149,18 @@ if [ "${1:-}" = "--check" ]; then
             fail=1
         fi
 
+        # 版本锁：运行期版本 4.6.0-20 不得被回退（写回 4.8.x）、写成裸 4.6.0、
+        # 或被交付标签/构建参数覆盖（防反弹保护；失败信息由脚本自己打印，说明补救方法）
+        if [ -f "$D/scripts/check-version-lock.py" ]; then
+            if command -v python3 >/dev/null 2>&1; then
+                python3 "$D/scripts/check-version-lock.py" --root "$D" || fail=1
+            else
+                echo "  !! 没有 python3，跳过版本锁检查（请在构建机或服务器上补跑）"
+            fi
+        else
+            echo "  !! 缺 scripts/check-version-lock.py（版本锁检查不完整）"; fail=1
+        fi
+
         [ "$fail" = "0" ] && echo "  ✅ 校验通过" || { echo "  ❌ 校验失败"; exit 1; }
     }
 

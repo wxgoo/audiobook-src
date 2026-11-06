@@ -1,7 +1,14 @@
 .PHONY: all build push test plugin
 
-VER := $(shell git branch --show-current 2>/dev/null || echo local)
-VER := $(if $(VER),$(VER),local)
+# 运行期版本锁：统一为「上游已发布 tag 4.6.0 + 第 20 次本地发布」。
+# 理由：以前用分支名当显示版本，会把 webserver/version.py 顶成 opt/p0-p1 之类，
+# 既不可追溯也会让“是否真的生效”无法判断。这里改为不匹配即报错退出（fail-fast），
+# 比“静默忽略用户传入的 VER”更容易发现口径错误。
+VERSION_LOCK := 4.6.0-20
+VER := $(VERSION_LOCK)
+ifneq ($(strip $(VER)),$(VERSION_LOCK))
+$(error 版本锁: VER=$(VER) 与运行期版本 $(VERSION_LOCK) 不一致。这是防版本回退/被交付标签覆盖的保护，不是普通构建失败；请去掉 VER 覆盖，或先同步修改 webserver/version.py 与 scripts/check-version-lock.py)
+endif
 IMAGE := poxenstudio/mybooks:$(VER)
 REPO1 := poxenstudio/mybooks:latest
 TAG1 := poxenstudio/mybooks:server-side-render

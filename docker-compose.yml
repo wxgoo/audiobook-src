@@ -14,9 +14,9 @@ services:
         # 不想要转写功能就把这行改成 "0"，或整行删掉（默认 1）
         WITH_WHISPER: "1"
         # 运行期版本号：Dockerfile 会写进 webserver/version.py，容器内界面/日志显示的是它。
-        # 必须与源码里的自定义主版本线一致（v4.8.0）。**不要填交付标签**（如 4.6.0-20）：
-        # 交付标签只用于 CHANGELOG / README / 发布包文件名，两者的含义不同。
-        GIT_VERSION: "v4.8.0"
+        # 与源码、app/package.json 保持一致（4.6.0-20）；由 scripts/check-version-lock.py 锁定，
+        # 留空会让构建直接失败（Dockerfile 有守卫），不会写成空串。
+        GIT_VERSION: "4.6.0-20"
       # 只构建生产阶段，跳过 test 阶段（省一次完整 pip install）
       target: production
       # 复用上一次构建的镜像层：改代码后重建只重跑变化的层
