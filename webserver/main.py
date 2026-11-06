@@ -494,12 +494,12 @@ def make_app():
     # WebDAV must come before files.routes() because files has a catch-all (r"/(.*)")
     # We need to get routes from handlers module without files, add webdav, then add files
     import importlib
-    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "reader_group", "transcribe", "book_dedup", "author_norm"]
+    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "reader_group", "transcribe", "book_dedup", "author_norm", "search_index"]
     mods = {}
     for name in names:
         with substep("import_handler:" + name):
             mods[name] = importlib.import_module("webserver.handlers." + name)
-    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, reader_group, transcribe, book_dedup, author_norm = (mods[n] for n in names)
+    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, reader_group, transcribe, book_dedup, author_norm, search_index = (mods[n] for n in names)
 
     app_routes = []
     app_routes += social_routes.SOCIAL_AUTH_ROUTES
@@ -528,6 +528,8 @@ def make_app():
     app_routes += book_dedup.routes()
     # 4.6.0-9 作者归一化管理接口（体检/别名表/预览/锁定）
     app_routes += author_norm.routes()
+    # 中文检索索引：状态查询 + 手动重建（搜索接口本身保持不变）
+    app_routes += search_index.routes()
     app_routes += koreader.routes()
 
     # Podcast routes are always registered; each handler calls check_podcast_enabled()
@@ -734,6 +736,13 @@ def main():
         AudioBooksCache.async_update()
     except Exception:
         logging.warning("Audio cache prewarm failed", exc_info=True)
+
+    # 检索索引：缺失/过期时后台重建；之后每 5 分钟检查一次版本
+    try:
+        from webserver.services.search_index import get_search_index
+        get_search_index().start_background_refresh()
+    except Exception:
+        logging.warning("Search index warmup failed", exc_info=True)
 
     switch_ms = float(CONF.get("GIL_SWITCH_INTERVAL_MS", 0) or 0)
     if switch_ms > 0:

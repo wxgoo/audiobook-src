@@ -27,6 +27,11 @@ settings = {
     # 「有音频的书」缓存兜底全库扫描间隔（秒）。默认 6 小时；导入/转码/删除
     # 都会走事件增量更新，这里只兜底手工往书库塞音频的情况。0 = 关闭兜底扫描。
     "AUDIO_CACHE_REFRESH_SECONDS": 6 * 3600,
+    # 中文检索索引（SQLite FTS5）。关闭后搜索自动回退到 calibre 原生 search。
+    "SEARCH_INDEX_ENABLED": True,
+    "SEARCH_INDEX_PATH": "/data/books/search_index.db",
+    "SEARCH_INDEX_REFRESH_SECONDS": 300,     # 检查 metadata.db 版本变化的间隔
+    "SEARCH_INDEX_MAX_RESULTS": 20000,       # 单次查询最多返回的候选 id 数
     "extract_path"  : "/data/books/extract/",
     "with_library"  : "/data/books/library/",
     "cookie_secret" : "cookie_secret",
