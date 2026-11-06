@@ -248,6 +248,75 @@ m4b 章节偏移还要各算一遍。任何一侧改一点另一侧就偏一点�
 
 ---
 
+### 十、第六轮（同版本补充）：scripts/tools 逐个核实，修掉上一轮清理留下的断链
+
+> 起因：`pack.sh --check` 对一个完全正常的包报「❌ 校验失败」。
+> 顺着查下去，发现上一轮"文档瘦身"删文件时没有回头检查引用。
+
+**三个真实故障**
+
+| # | 现象 | 根因 |
+|---|---|---|
+| 1 | `pack.sh --check` 永远失败，退出码 1 | 验包逻辑硬校验 `docs/upstream-baseline.json` 存在，而该文件上一轮被当过程文档删了 |
+| 2 | 三份文档教人跑一个不存在的脚本 | `scripts/hotfix.sh` 与 `tools/hotfix-from-src.sh` 被连带删除，但 `README.md`、`INSTALL_GUIDE.md`、`scripts/README.md` 仍在引用（共 15 处） |
+| 3 | `README.md` 指向已删文档 | 引用 `docs/移植改动清单.md`，该文件上一轮已删，替代品是 `docs/上游跟进清单.md` |
+
+**处置**
+
+1. **恢复两个热更脚本**（`git show` 从删除前的提交取回）：它们不是过程文档，是长期运维工具——
+   `scripts/hotfix.sh` 面向拿到部署包的运维（从包取 .py 覆盖容器，省十几分钟镜像重建），
+   `tools/hotfix-from-src.sh` 面向改源码的开发者。删掉的代价是三份文档同时失效。
+2. **`pack.sh` 的 baseline 校验改为可选**。`docs/upstream-baseline.json` 是**运行状态**
+   （记录上次盯到哪个提交），首次 `--baseline` 时自动生成，不该作为打包硬性要求——
+   否则清一次状态文件就永久出不了包。改为有则显示日期、无则提示会自动生成。
+3. **把包内容口径写进 `pack.sh`**：打包时删掉 `srt-tool/build.bat`、`build.py`、
+   `make_srt.spec`、`tests/`，并在验包时断言它们不该出现。之前这个口径只存在于
+   我手工打包的流程里，`pack.sh` 打出来的包会带着它们——又一个"只清一个地方"。
+4. **`README.md`** 的移植清单改指 `docs/上游跟进清单.md`；运维工具一行补上"热更"。
+5. **`scripts/README.md`** 补上漏登记的 `test-integration.sh`（它负责搭 calibre +
+   python3.12 环境，没有它 `tests/test_main.py` 那 63 个用例在任何新机器上都是红的）。
+
+**逐个核实结论（`scripts/` 11 个 + `tools/` 关键脚本）**
+
+| 脚本 | 引用数 | 判定 | 依据 |
+|---|---|---|---|
+| `upgrade.sh` | 71 | 保留 | 升级唯一入口 |
+| `deploy.sh` | 30 | 保留 | 首次装机 |
+| `pack.sh` | 25 | 保留 | 出包 + 验包 |
+| `protect-custom.sh` | 25 | 保留 | `upgrade-upstream.sh` 调用它存/校验自定义内容 |
+| `upgrade-upstream.sh` | 22 | 保留 | 跟随上游一条龙 |
+| `watch-upstream.py` | 11 | 保留 | 盯上游增量，不等发版 |
+| `migrate-audio-dirs.py` | 10 | 保留 | `upgrade.sh` 会调它；音频布局迁移 |
+| `check-reader.sh` | 8 | 保留 | 阅读器排障唯一入口（只读） |
+| `hotfix.sh` | 15 | **恢复** | 部署辅助，三份文档引用 |
+| `test-audio-dirs.py` | 5 | 保留 | 音频路径自测 47 项 |
+| `test-integration.sh` | 1 | 保留 | 63 个真起站点用例的环境搭建，引用少是因为它是入口而非被调 |
+| `tools/hotfix-from-src.sh` | — | **恢复** | 源码侧热更，README 对照表引用 |
+| `tools/category_backfill.py` | 18 | 保留 | 目录字段自动推导 |
+| `tools/fix_broken_fonts.py` | 3 | 保留 | `webserver/services/epub_font_fix.py` 提到它 |
+| `tools/upgrade-from-upstream-manual.sh` | 12 | 保留 | 手工跟上游 |
+| `tools/migrate_from_upstream.sh` | 6 | 保留 | `INSTALL_GUIDE.md` 有专章 |
+| `tools/recommend_benchmark.py` | 1 | 保留（存疑） | 推荐引擎合成基准，仅 CHANGELOG 历史提及 |
+| `tools/repro_r11_birth_year.py` | **0** | 保留（存疑） | r10→r11 birth_year 列的一次性复现，无任何引用 |
+
+> 最后两个没有引用，但一个是性能基准、一个是升级路径回归验证，删了不影响运行也
+> 不影响出包（都不进部署包关键路径），暂时留着。要清可以单独说一句。
+
+**核过的文档（本轮确认无需改）**
+
+- `docs/目录功能说明.md`：讲 `ENABLE_FOLDER_BROWSE` 与 `#folder` 自定义列，
+  与本次改动无关，引用的 `tools/category_backfill.py` 存在，结论仍准确
+- `docs/操作总纲.md`、`docs/上游跟进清单.md`、`docs/VMM迁移手册.md`：无失效引用
+- `docs/部署包说明.md`：裁剪表格里原本把 `hotfix*` 列为"有意排除"，已随脚本恢复同步修正
+
+**验证**
+
+- `sh scripts/pack.sh --check <包>` → ✅ 校验通过（此前必定 ❌）
+- 新加的 srt-tool 断言实测有效：故意让包内残留 `build.bat` 会报错
+- `sh -n` 检查两个恢复的脚本与改后的 `pack.sh`
+
+---
+
 ## 4.6.0-18
 
 > **只改元数据，不动业务流程**。6 个文件，可热更，不必重建镜像。

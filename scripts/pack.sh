@@ -49,7 +49,7 @@ if [ "${1:-}" = "--check" ]; then
         for f in Dockerfile docker-compose.yml myreader-dist/app/server.js \
                  conf/supervisor/mybooks.conf conf/nginx/mybooks.conf \
                  scripts/upgrade.sh scripts/deploy.sh scripts/check-reader.sh \
-                 scripts/pack.sh tools/category_backfill.py; do
+                 scripts/pack.sh scripts/hotfix.sh tools/category_backfill.py; do
             [ -e "$D/$f" ] || { echo "  !! 缺 $f"; fail=1; }
         done
 
@@ -105,9 +105,29 @@ if [ "${1:-}" = "--check" ]; then
         echo "  文档: $(cd "$D/docs" 2>/dev/null && ls *.md 2>/dev/null | tr '\n' ' ')"
 
         # 盯上游的工具必须能在部署机上跑（只用标准库，不需要装依赖）
-        for f in scripts/watch-upstream.py docs/upstream-baseline.json; do
-            [ -e "$D/$f" ] || { echo "  !! 缺 $f（盯上游的工具不完整）"; fail=1; }
+        [ -e "$D/scripts/watch-upstream.py" ] || {
+            echo "  !! 缺 scripts/watch-upstream.py（盯上游的工具不完整）"; fail=1; }
+
+        # 基线文件是**运行状态**（记录上次盯到哪个提交），首次 `--baseline` 时
+        # 自动生成。不能当打包硬性要求 —— 否则清一次状态文件就出不了包。
+        if [ -e "$D/docs/upstream-baseline.json" ]; then
+            echo "  基线: docs/upstream-baseline.json（$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('date','?'))" "$D/docs/upstream-baseline.json" 2>/dev/null || echo '?')）"
+        else
+            echo "  基线: 无（首次跑 watch-upstream.py --baseline 时自动生成，不影响使用）"
+        fi
+
+        # srt-tool 只该留运行必需的 4 个文件 —— 打包脚本漏排会立刻在这里暴露
+        # 注意：不能用 `var=$(...)` 收集，set -e 下 ls 找不到文件会让整个脚本静默退出
+        st_junk=""
+        for f in build.bat build.py make_srt.spec; do
+            if [ -e "$D/srt-tool/$f" ]; then st_junk="$st_junk $f"; fi
         done
+        if [ -d "$D/srt-tool/tests" ]; then st_junk="$st_junk tests"; fi
+        if [ -n "$st_junk" ]; then
+            echo "  !! srt-tool 混入开发侧文件:$st_junk"
+            echo "     （包内只该留 README.md / make_srt.py / srt_core.py / make_srt_gui.py）"
+            fail=1
+        fi
 
         [ "$fail" = "0" ] && echo "  ✅ 校验通过" || { echo "  ❌ 校验失败"; exit 1; }
     }
@@ -188,6 +208,16 @@ done
 for junk in scripts/archive docs/archive docs/settings-redesign; do
     [ -e "$STAGE/audiobook/$junk" ] && rm -rf "$STAGE/audiobook/$junk"
 done
+
+# srt-tool 是 PC 上的辅助工具，NAS 上既跑不了也不该跑。包内只留能直接运行的
+# 4 个文件（README / make_srt.py / srt_core.py / make_srt_gui.py）：
+#   - build.bat / build.py / make_srt.spec：在 Windows 上建 venv + PyInstaller 打 exe 用
+#   - tests/：pytest 用例，部署环境没有 pytest
+# 要完整的去 gitee 仓库或 srt-tool-v1.2.0.zip 取。
+for f in build.bat build.py make_srt.spec; do
+    rm -f "$STAGE/audiobook/srt-tool/$f"
+done
+rm -rf "$STAGE/audiobook/srt-tool/tests"
 
 # __pycache__ 同理：开发时跑过脚本就会留下，5MB 左右，NAS 上纯占地方。
 # 镜像构建本来就从 .dockerignore 排掉它，部署包里更不该有。
