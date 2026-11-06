@@ -1424,6 +1424,15 @@ class AdminRunningTasks(BaseHandler):
         ]
 
         rsp = {"err": "ok", "tasks": running_tasks}
+        # include=recent：把最近结束（含失败）的任务一起返回，失败项带
+        # error_message / can_retry / retry_action，供任务面板展示并重试。
+        if self.get_argument("include", "") == "recent":
+            try:
+                within_hours = max(1, min(24 * 7, int(self.get_argument("hours", 24))))
+            except (TypeError, ValueError):
+                within_hours = 24
+            recent = BackgroundService().get_recent_tasks(within_hours=within_hours)
+            rsp["recent"] = [t for t in recent if t["status"] != BackgroundTask.STATUS_RUNNING]
         if self.get_argument("with_messages", "0") == "1":
             rows, _total = Message.unread_page(self.sqlite_session, self.current_user.id)
             rsp["messages"] = [m.to_brief() for m in rows]
