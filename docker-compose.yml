@@ -13,6 +13,8 @@ services:
         # 1 = 安装 faster-whisper（音频转写功能），0 = 不装（镜像小约 250MB）
         # 不想要转写功能就把这行改成 "0"，或整行删掉（默认 1）
         WITH_WHISPER: "1"
+        # 产品版本号：Dockerfile 会写进 webserver/version.py，容器内界面/日志显示的是它
+        GIT_VERSION: "4.6.0-20"
       # 只构建生产阶段，跳过 test 阶段（省一次完整 pip install）
       target: production
       # 复用上一次构建的镜像层：改代码后重建只重跑变化的层

@@ -1,0 +1,218 @@
+From 3c91d90a372d536daa7e74b9a368cedd903ca7e6 Mon Sep 17 00:00:00 2001
+From: wxgoo <wxgoo@gitee.com>
+Date: Fri, 6 Nov 2026 20:51:23 +0800
+Subject: [PATCH 10/14] =?UTF-8?q?feat(tasks):=20=E5=A4=B1=E8=B4=A5?=
+ =?UTF-8?q?=E4=BB=BB=E5=8A=A1=E5=8F=AF=E9=87=8D=E8=AF=95=E6=8F=90=E7=A4=BA?=
+ =?UTF-8?q?=E4=B8=8E=E5=8F=AF=E8=AF=BB=E9=94=99=E8=AF=AF=E4=BF=A1=E6=81=AF?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+后台任务新增 can_retry/retry_action（scan → 重导 invalid 记录，audio → 原转码接口），重试复用原接口、由服务端互斥锁保证幂等；错误信息统一做单行化、常见异常映射（库忙/磁盘满/无权限等）和 300 字截断；/api/admin/running_tasks?include=recent&hours=24 返回最近结束的失败任务，旧参数与默认行为不变。
+---
+ tests/test_background_tasks.py           | 37 +++++++++++
+ webserver/handlers/admin.py              |  9 +++
+ webserver/services/background_service.py | 83 ++++++++++++++++++++++--
+ 3 files changed, 125 insertions(+), 4 deletions(-)
+ create mode 100644 tests/test_background_tasks.py
+
+diff --git a/tests/test_background_tasks.py b/tests/test_background_tasks.py
+new file mode 100644
+index 0000000..89eda44
+--- /dev/null
++++ b/tests/test_background_tasks.py
+@@ -0,0 +1,37 @@
++"""后台任务可读错误与重试提示的回归。"""
++
++from webserver.services.background_service import BackgroundTask, humanize_error
++
++
++def test_humanize_error_is_single_line_and_bounded():
++    raw = "Traceback:\n  line1\n  line2\n" + "x" * 400
++    msg = humanize_error(raw)
++    assert "\n" not in msg
++    assert len(msg) <= 300
++
++
++def test_humanize_error_maps_common_failures():
++    assert "数据库忙" in humanize_error("sqlite3.OperationalError: database is locked")
++    assert "磁盘空间不足" in humanize_error("OSError: No space left on device")
++    assert "没有权限" in humanize_error("PermissionError: [Errno 13] Permission denied")
++
++
++def test_failed_scan_task_exposes_retry_action():
++    task = BackgroundTask(BackgroundTask.SERVICE_TYPE_SCAN, "scan")
++    task.status = BackgroundTask.STATUS_FAILED
++    action = task.to_dict()["retry_action"]
++    assert action["api"] == "/api/admin/import/run"
++    assert action["body"] == {"filelist": {"filter": "invalid"}}
++
++
++def test_failed_audio_task_points_to_conversion_api():
++    task = BackgroundTask(BackgroundTask.SERVICE_TYPE_AUDIO, "book", book_id=42)
++    task.status = BackgroundTask.STATUS_FAILED
++    assert task.to_dict()["retry_action"]["api"] == "/api/audio/42/conversion"
++
++
++def test_running_or_completed_task_has_no_retry_action():
++    task = BackgroundTask(BackgroundTask.SERVICE_TYPE_SCAN, "scan")
++    assert task.to_dict()["can_retry"] is False
++    task.status = BackgroundTask.STATUS_COMPLETED
++    assert task.to_dict()["retry_action"] is None
+diff --git a/webserver/handlers/admin.py b/webserver/handlers/admin.py
+index 38fbe43..30a4c94 100644
+--- a/webserver/handlers/admin.py
++++ b/webserver/handlers/admin.py
+@@ -1424,6 +1424,15 @@ class AdminRunningTasks(BaseHandler):
+         ]
+ 
+         rsp = {"err": "ok", "tasks": running_tasks}
++        # include=recent：把最近结束（含失败）的任务一起返回，失败项带
++        # error_message / can_retry / retry_action，供任务面板展示并重试。
++        if self.get_argument("include", "") == "recent":
++            try:
++                within_hours = max(1, min(24 * 7, int(self.get_argument("hours", 24))))
++            except (TypeError, ValueError):
++                within_hours = 24
++            recent = BackgroundService().get_recent_tasks(within_hours=within_hours)
++            rsp["recent"] = [t for t in recent if t["status"] != BackgroundTask.STATUS_RUNNING]
+         if self.get_argument("with_messages", "0") == "1":
+             rows, _total = Message.unread_page(self.sqlite_session, self.current_user.id)
+             rsp["messages"] = [m.to_brief() for m in rows]
+diff --git a/webserver/services/background_service.py b/webserver/services/background_service.py
+index f446b14..6e9f70a 100644
+--- a/webserver/services/background_service.py
++++ b/webserver/services/background_service.py
+@@ -6,6 +6,40 @@ import logging
+ import threading
+ from typing import Optional, List, Dict
+ 
++from webserver.i18n import _
++
++
++# 常见底层异常 -> 用户能看懂的一句话。命中后原文仍保留在括号里，便于排障。
++_ERROR_HINTS = (
++    ("database is locked", "数据库忙，请稍后重试"),
++    ("database or disk is full", "磁盘空间不足"),
++    ("no space left", "磁盘空间不足"),
++    ("permission denied", "没有权限访问文件或目录"),
++    ("no such file or directory", "文件或目录不存在"),
++    ("connection refused", "连接被拒绝，请检查目标服务"),
++    ("timed out", "操作超时，请稍后重试"),
++    ("too many open files", "打开的文件过多，请稍后重试"),
++)
++
++
++def humanize_error(err, max_len: int = 300) -> Optional[str]:
++    """把异常变成单行、有长度上限、可读的提示。
++
++    UI 只展示这一条，不把 traceback / 原始 SQL 直接弹给用户；完整堆栈仍在日志里。
++    """
++    if err is None:
++        return None
++    text = str(err).strip() or err.__class__.__name__
++    lowered = text.lower()
++    for needle, hint in _ERROR_HINTS:
++        if needle in lowered:
++            text = "%s（%s）" % (_(hint), text)
++            break
++    text = " ".join(text.split())
++    if len(text) > max_len:
++        text = text[: max_len - 1] + "…"
++    return text
++
+ 
+ class BackgroundTask:
+     """后台任务记录模型"""
+@@ -48,7 +82,22 @@ class BackgroundTask:
+         self.error_message = None
+         self.service_book_id = book_id  # 关联的图书ID（有声书转换时）
+ 
++    def _retry_action(self):
++        """失败任务怎么重试：只给出「调哪个已有接口、带什么参数」，不在这里直接重跑。
++
++        重试一律复用用户手动触发的原接口，服务端互斥锁（is_importing / 转码在跑）
++        本身就充当幂等守卫，不会因为连点两次跑出两轮任务。
++        """
++        if self.status != self.STATUS_FAILED:
++            return None
++        if self.service_type == self.SERVICE_TYPE_SCAN:
++            return {"api": "/api/admin/import/run", "body": {"filelist": {"filter": "invalid"}}}
++        if self.service_type == self.SERVICE_TYPE_AUDIO and self.service_book_id:
++            return {"api": "/api/audio/%d/conversion" % self.service_book_id, "body": {}}
++        return None
++
+     def to_dict(self):
++        retry_action = self._retry_action()
+         return {
+             "id": self.id,
+             "service_type": self.service_type,
+@@ -59,7 +108,9 @@ class BackgroundTask:
+             "progress_data": self.progress_data,
+             "create_time": self.create_time.isoformat() if self.create_time else None,
+             "update_time": self.update_time.isoformat() if self.update_time else None,
+-            "error_message": self.error_message
++            "error_message": self.error_message,
++            "can_retry": retry_action is not None,
++            "retry_action": retry_action,
+         }
+ 
+ 
+@@ -143,7 +194,7 @@ class BackgroundService:
+             )
+ 
+             if error_message:
+-                task.error_message = error_message
++                task.error_message = humanize_error(error_message)
+                 task.status = BackgroundTask.STATUS_FAILED
+ 
+             self._tasks[task.id] = task
+@@ -184,7 +235,7 @@ class BackgroundService:
+                 task.progress_data = progress_data
+ 
+             if error_message:
+-                task.error_message = error_message
++                task.error_message = humanize_error(error_message)
+                 task.status = BackgroundTask.STATUS_FAILED
+ 
+             logging.debug(f"Updated task {task_id} progress to {progress}%")
+@@ -214,7 +265,7 @@ class BackgroundService:
+             task.update_time = datetime.datetime.now()
+ 
+             if error_message:
+-                task.error_message = error_message
++                task.error_message = humanize_error(error_message)
+                 task.status = BackgroundTask.STATUS_FAILED
+ 
+             logging.info(f"Completed task {task_id}: {task.service_type} - {task.service_item}")
+@@ -274,6 +325,30 @@ class BackgroundService:
+             tasks = running_tasks[:limit]
+             return [task.to_dict() for task in tasks]
+ 
++    def get_recent_tasks(self, limit: int = 50, within_hours: int = 24) -> List[Dict]:
++        """运行中 + 最近结束（完成/失败/取消）的任务，按更新时间倒序。
++
++        失败任务带 error_message、can_retry / retry_action，任务面板据此展示
++        失败原因并给出「重试」入口；运行中任务的进度复用 get_running_tasks 的逻辑。
++        """
++        from webserver.handlers.audio import AudioConversion
++        threshold = datetime.datetime.now() - datetime.timedelta(hours=within_hours)
++        with self._tasks_lock:
++            all_tasks = list(self._tasks.values())
++            recent = [
++                task for task in all_tasks
++                if task.status == BackgroundTask.STATUS_RUNNING or task.update_time >= threshold
++            ]
++            for task in recent:
++                if task.service_type == BackgroundTask.SERVICE_TYPE_AUDIO and task.service_book_id > 0:
++                    progress = AudioConversion.get_progress(task.service_book_id)
++                    if progress and "converted_chapters" in progress and "total_chapters" in progress:
++                        total_chapters = int(progress["total_chapters"])
++                        task.progress = 0 if total_chapters == 0 else (
++                            int(progress["converted_chapters"]) * 100 / total_chapters)
++            recent.sort(key=lambda t: t.update_time, reverse=True)
++            return [task.to_dict() for task in recent[:limit]]
++
+     def get_task(self, task_id: int) -> Optional[Dict]:
+         """
+         获取指定任务的详细信息

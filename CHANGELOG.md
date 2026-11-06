@@ -26,7 +26,53 @@
 
 ---
 
-## 4.6.0-19（当前）
+## 4.6.0-20（当前）
+
+> 优化专项落地版：P0 备份闭环、P1 安全/性能、中文检索、游标分页、导入攒批、任务易用性，
+> 外加一套不依赖 git 的 NAS 交付与镜像自检脚本。逐项说明与回滚方式见
+> [`docs/优化实施与决策记录.md`](docs/优化实施与决策记录.md)，方案背景见
+> [`docs/评估与优化方案.md`](docs/评估与优化方案.md)。
+
+### 一、备份（P0）
+
+- 新增 `scripts/backup.sh`（单入口）与 `scripts/backup_run.py`（标准库实现）：
+  SQLite 在线备份 API、文件硬链接快照、日/周/月三层保留、manifest + sha256 + `integrity_check`、退出码 0/2/3
+- 新增 [`docs/备份与恢复演练.md`](docs/备份与恢复演练.md)：参数表、演练步骤、恢复判定
+- 备份脚本只新增文件，不改运行时代码；`scripts/README.md` 说明两类用法
+
+### 二、安全与性能（P1）
+
+- `handlers/mcp.py` 等：MCP token 只走 `Authorization: Bearer`，URL 带 token 默认 403（`ALLOW_MCP_TOKEN_IN_URL` 可临时兼容），日志递归脱敏
+- `handlers/assistant.py`：AI WebSocket 的 `check_origin` 改为同源校验（`is_same_host_origin`），防 CSWSH
+- `handlers/audio.py`：音频缓存移出请求线程（单飞后台刷新 + 兜底周期 + 启动预热）；Range 读盘改异步分块 + 背压；音频标志事件驱动增量更新
+- `webserver/handlers/book.py`、`services/audios_import.py`：详情页音频目录改由 calibre 解析，避免全库扫描
+
+### 三、检索与分页
+
+- 新增 `webserver/services/search_index.py`、`webserver/handlers/search_index.py`、`scripts/search_index.py`：
+  中文书目 FTS5 索引，支持重建与增量更新，接口见 `handlers/search_index.py`
+- 新增 `webserver/base/pagination.py`：书目/有声书游标分页，避免大库深分页全表扫描
+
+### 四、导入与任务易用性
+
+- `webserver/services/audios_import.py`：Phase2 攒批窗口可配置，缩短大批量导入耗时
+- `webserver/handlers/mcp.py`、`webserver/main.py`：失败任务给出可读错误与重试提示
+
+### 五、上游跟进与交付
+
+- 新增 `docs/上游跟进/`（A/B/C/D 主题包 + `README.md`）与 `scripts/upstream/patch_tool.py`
+- 新增 `delivery/`：NAS 运维脚本（`nas/00`–`90`、`paths.conf`、`README-NAS.md`）、
+  无 git 文件覆盖包（`overlay/`，34 个改动文件 + 基线 sha256 清单）、补丁包（`patches/`）与自包含发布包
+  `delivery/audiobook-nas-release.tar.gz`
+  - `nas/60-apply-overlay.sh`：非 git 环境按基线校验后覆盖，自动备份与回滚，按 compose 形态打印构建/重启命令
+  - `nas/70-check-image.sh`：只读核对镜像/容器内源码是否与覆盖包一致，识别「构建了但没重启」
+- 新增 [`docs/交付/交付索引.md`](docs/交付/交付索引.md)、[`docs/交付/应用与回滚.md`](docs/交付/应用与回滚.md)、[`docs/交付/NAS备份演练清单.md`](docs/交付/NAS备份演练清单.md)
+
+### 六、测试
+
+- 新增 `tests/test_audio_books_cache.py` 等用例；`pytest` 全绿（14 条专项用例）
+
+## 4.6.0-19
 
 > **性能与稳健性专项**：修掉一批「同步 handler 阻塞事件循环冻住全站」的重 IO
 > 调用、两个前端时序死锁、一个并发序列化崩溃，并给音频批量转码补上取消能力。

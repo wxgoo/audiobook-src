@@ -1,0 +1,221 @@
+From 6385c9a6adbcaf462349726ba7a6ebec770850bb Mon Sep 17 00:00:00 2001
+From: wxgoo <wxgoo@gitee.com>
+Date: Fri, 6 Nov 2026 20:57:24 +0800
+Subject: [PATCH 12/14] =?UTF-8?q?docs:=20=E4=BC=98=E5=8C=96=E5=AE=9E?=
+ =?UTF-8?q?=E6=96=BD=E4=B8=8E=E5=86=B3=E7=AD=96=E8=AE=B0=E5=BD=95=EF=BC=88?=
+ =?UTF-8?q?=E9=80=90=E9=A1=B9=E5=8F=98=E6=9B=B4=E3=80=81=E5=8F=91=E5=B8=83?=
+ =?UTF-8?q?=E8=AF=B4=E6=98=8E=E3=80=81=E5=B7=B2=E4=BB=A3=E9=80=89=E5=86=B3?=
+ =?UTF-8?q?=E5=AE=9A=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+汇总 P0 备份、P1 四项、检索索引、游标分页、导入批窗口、任务易用性、上游主题包：每项列出改动文件、diff 摘要、影响面、回滚方式；附上线步骤、验收命令、已知限制和 DEC-01..12 已代选决定表。
+---
+ ...63\347\255\226\350\256\260\345\275\225.md" | 197 ++++++++++++++++++
+ 1 file changed, 197 insertions(+)
+ create mode 100644 "docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md"
+
+diff --git "a/docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md" "b/docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md"
+new file mode 100644
+index 0000000..d5e3ba3
+--- /dev/null
++++ "b/docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md"
+@@ -0,0 +1,197 @@
++# 优化实施与决策记录
++
++实施分支：`opt/p0-p1`（基于 Gitee `wxgoo/audiobook-src` master `32bc1d4`）。
++master 未改动，全部改动在本分支，可用 `git diff master..opt/p0-p1` 一次看完，也可逐条 revert。
++
++## 0. 交付概览
++
++| 项 | 内容 |
++|---|---|
++| 分支 | `opt/p0-p1`，11 个独立提交（含本文档） |
++| 规模 | 30+ 个文件（代码 + 脚本 + 文档），可用 `git diff --stat master..HEAD` 查看精确数 |
++| 备份 | `scripts/backup.sh` + `scripts/backup_run.py` + [备份与恢复演练](备份与恢复演练.md) |
++| 检索 | `webserver/services/search_index.py` + 管理接口 + `scripts/search_index.py` |
++| 上游 | `docs/上游跟进/`（A/B/C/D）+ `scripts/upstream/patch_tool.py` |
++| 原始部署包 | **未改动**（只读参照） |
++
++提交顺序（`git log master..HEAD`，旧→新）：
++
++1. `bf9db11` feat(backup) P0 备份与恢复闭环
++2. `6b49fa0` fix(mcp) token 走 Authorization 头、日志脱敏（P1-1）
++3. `8f0d1c8` fix(assistant) WS Origin 校验（P1-2）
++4. `84db6dc` perf(audio) 音频缓存移出请求线程（P1-3）
++5. `2cfb297` perf(audio) Range 读盘线程池 + 背压（P1-4）
++6. `faa40f5` perf(audio) 音频标志事件驱动增量更新
++7. `5e6c13c` feat(search) 中文书目 FTS5 索引
++8. `15f8f46` perf(pagination) 书目/有声书游标分页
++9. `0dba099` perf(import) Phase2 攒批窗口可配置
++10. `3c91d90` feat(tasks) 失败任务重试提示与可读错误
++11. `0e9d87d` docs(upstream) A/B/C/D 主题包与导出工具
++
++
++## 1. 逐项变更清单
++
++### 1.1 P0 备份与恢复（`bf9db11`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `scripts/backup.sh`（新增）、`scripts/backup_run.py`（新增）、`docs/备份与恢复演练.md`（新增）、`scripts/README.md` |
++| diff 摘要 | 单入口 shell + 标准库 Python；SQLite 在线备份 API；文件硬链接快照（未变文件 `os.link` 复用）；日/周/月三层保留；manifest + sha256 + `integrity_check`；退出码 0/2/3 |
++| 影响面 | 只新增脚本与文档，不改运行时代码；备份目录必须位于数据目录之外；docker 运行器为一次性容器 `--network none` |
++| 回滚 | 停掉 cron / DSM 任务计划并删除 `BACKUP_ROOT` 即可，业务无影响 |
++| 可调参数 | `DATA_DIR`、`BACKUP_ROOT`、`KEEP_DAILY/WEEKLY/MONTHLY`、`MIN_FREE_GB`、`LOCK_WAIT`、`EXCLUDE_*`、`RUNNER`（见演练文档参数表） |
++
++### 1.2 P1-1 MCP token 与日志（`6b49fa0`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `handlers/mcp.py`、`assistant/mcp_client.py`、`mcp/mcp_service.py`、`settings.py`、`tests/test_ai_assistant_agent.py` |
++| diff 摘要 | token 只走 `Authorization: Bearer`；URL 带 token 默认 403（`ALLOW_MCP_TOKEN_IN_URL` 可临时兼容）；新增递归 `redact()`，日志不落 token/敏感字段；去掉 `print` |
++| 影响面 | 旧客户端若在 URL 传 token 会失败 → 需改 Header；服务端互操作方（AI agent）同步使用 Header |
++| 回滚 | 设 `ALLOW_MCP_TOKEN_IN_URL=True` 即可恢复旧行为；或 revert 该提交 |
++
++### 1.3 P1-2 AI WebSocket Origin（`8f0d1c8`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `handlers/assistant.py`、`tests/test_ai_assistant_agent.py` |
++| diff 摘要 | `check_origin` 改为 `is_same_host_origin(origin, host)`：仅接受 http(s) 且 `netloc` 与 Host 相同；无 Origin（非浏览器客户端）放行 |
++| 影响面 | 浏览器跨站页面无法再连 WS；同源前端无影响 |
++| 回滚 | revert 该提交；回滚后 CSWSH 风险回归 |
++
++### 1.4 P1-3 音频缓存移出请求线程（`84db6dc`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `handlers/audio.py`、`services/audios_import.py`、`toolbox/mimo_tts.py`、`main.py`、`settings.py`、`tests/test_audio_books_cache.py` |
++| diff 摘要 | 请求路径只读旧缓存并触发单飞后台刷新；新增 `_state_lock/_refreshing/_pending_refresh`；`AUDIO_CACHE_REFRESH_SECONDS` 兜底；启动预热 |
++| 影响面 | 「有音频」标志最多滞后一个兜底周期或事件未覆盖的路径；列表不阻塞 |
++| 回滚 | revert 该提交；或把 `AUDIO_CACHE_REFRESH_SECONDS` 调小 |
++
++### 1.5 P1-4 Range 读盘异步（`2cfb297`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `handlers/audio.py` |
++| diff 摘要 | `AudioFile.get` 改 async；128KB 分块 `run_in_executor` 读盘；每块 `await flush()` 背压；`StreamClosedError` 静默返回 |
++| 影响面 | 大文件拖动进度不再阻塞 ioloop；顺序读吞吐受分块与背压影响（可调 `STREAM_CHUNK_SIZE`） |
++| 回滚 | 单独 revert `2cfb297`，其它音频优化不受影响 |
++
++### 1.6 音频标志增量更新（`faa40f5`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `handlers/audio.py`、`services/audios_import.py`、`toolbox/mimo_tts.py` |
++| diff 摘要 | 新增 `mark_has_audio/mark_no_audio`；转码成功、导入成功、删除/清空音频时事件更新集合，不再原地改共享 set |
++| 影响面 | 事件漏报时由 6h 兜底扫描修正 |
++| 回滚 | revert 后回到周期全量扫描 |
++
++### 1.7 中文检索索引（`5e6c13c`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `services/search_index.py`（新增）、`handlers/search_index.py`（新增）、`handlers/base.py`、`main.py`、`settings.py`、`scripts/search_index.py`（新增）、`tests/test_search_index.py`（新增） |
++| diff 摘要 | SQLite FTS5（`unicode61`）；汉字逐字分词 + 整段 `doc_text` 精确过滤；拉丁前缀匹配；`ORDER BY rank`；metadata.db 版本（mtime_ns+size）变化才重建；tmp + `os.replace` 原子替换；单飞重建；FTS5 不可用自动回退 |
++| 影响面 | `cached_search/cached_search_async` 优先走索引，未命中回退 calibre；管理接口 `GET /api/admin/search_index/status`、`POST /api/admin/search_index/rebuild`；CLI `python3 scripts/search_index.py status|rebuild|search` |
++| 回滚 | `SEARCH_INDEX_ENABLED=False` 立即回退 calibre；索引文件可随时删，下次自动重建 |
++| 已知限制 | 高级语法（字段、布尔组合）直接回退 calibre；索引体积约为纯文本 1.5–2 倍 |
++
++### 1.8 游标分页（`15f8f46`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `base/pagination.py`（新增）、`handlers/base.py`、`handlers/audio.py`、`tests/test_pagination.py`（新增） |
++| diff 摘要 | `after`/`cursor` 不透明游标（base64 JSON）；书目 id 排序走降序键集，title 排序用 `(排序键, id)` 二分定位；有声书列表改用 `AudioBooksCache` 的 ID 集合，只对当前页 `listdir` 计数；响应新增 `next_cursor` |
++| 影响面 | 不传游标时 `start/size` 行为不变（id 分支现在先整体降序再切页，修正旧代码「页内排序」的乱序）；跨页数据一致性依赖排序键稳定 |
++| 回滚 | 前端去掉 `after` 参数即回到 offset；或 revert 该提交 |
++
++### 1.9 导入 Phase2 批窗口（`0dba099`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `services/scan_service.py`、`settings.py` |
++| diff 摘要 | Phase1/Phase2 批大小从硬编码改为 `import_phase1_batch_size`（500）/`import_phase2_batch_size`（20），带区间夹取；代码注释写明一致性保障 |
++| 影响面 | 只影响写事务频率，不改状态机；**未引入并发写**（calibre `metadata.db` 单写者、判重索引单线程） |
++| 回滚 | 改回默认值或 revert |
++
++### 1.10 任务易用性（`3c91d90`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `services/background_service.py`、`handlers/admin.py`、`tests/test_background_tasks.py`（新增） |
++| diff 摘要 | 错误信息单行化 + 常见异常映射（库忙/磁盘满/无权限/文件不存在/超时）+ 300 字截断；失败任务带 `can_retry`/`retry_action`（scan → 重导 invalid；audio → 原转码接口）；`/api/admin/running_tasks?include=recent&hours=24` 返回最近失败任务 |
++| 影响面 | 仅追加字段与新查询参数，旧调用不变；重试复用原接口 + 服务端互斥锁，幂等 |
++| 回滚 | 忽略新字段即可；或 revert |
++
++### 1.11 上游跟进主题包（`0e9d87d`）
++
++| 项 | 内容 |
++|---|---|
++| 改动文件 | `docs/上游跟进/README.md` + A/B/C/D 四份、`scripts/upstream/patch_tool.py`、`scripts/README.md` |
++| diff 摘要 | 每条给出上游处置、本仓库落点、补丁要点、验证、回滚；`patch_tool.py` 支持 `list/export/status`，标准库生成 `.patch` |
++| 影响面 | 只读工具，不影响运行时 |
++| 回滚 | 删除目录即可 |
++
++## 2. 发布说明
++
++### 2.1 上线步骤（保守路径）
++
++1. 合并/检出 `opt/p0-p1`，在构建机上重建镜像（`scripts/deploy.sh`）。
++2. 备份先行：按 [备份与恢复演练](备份与恢复演练.md) 跑一次全量 `scripts/backup.sh --db-only` 与 `--files-only`。
++3. 配置项按需写进 `auto.py`（defaults 已给出保守值）：
++   - `ALLOW_MCP_TOKEN_IN_URL=False`
++   - `AUDIO_CACHE_REFRESH_SECONDS=21600`
++   - `SEARCH_INDEX_ENABLED=True`、`SEARCH_INDEX_PATH=/data/books/search_index.db`
++   - `import_phase1_batch_size=500`、`import_phase2_batch_size=20`
++4. 首次启动后看日志：`AudioBooksCache` 预热、`search index` 后台重建完成。
++5. 冒烟：书目列表（offset 与 `after` 两种）、有声书列表、音频拖动、MCP 调用（Header token）、AI WS。
++
++### 2.2 验收命令
++
++```sh
++# 检索
++python3 scripts/search_index.py status
++python3 scripts/search_index.py search 三体
++
++# 备份
++./scripts/backup.sh --list
++./scripts/backup.sh --dry-run
++
++# 单测（需要完整依赖环境）
++python -m pytest tests/test_pagination.py tests/test_search_index.py \
++                 tests/test_background_tasks.py tests/test_audio_books_cache.py -q
++
++# 上游补丁
++python3 scripts/upstream/patch_tool.py list
++```
++
++### 2.3 已知限制 / 未完成
++
++| 项 | 说明 |
++|---|---|
++| Windows 本机 pytest | 缺 calibre 等依赖，`tests/test_main.py` 级用例需在容器/CI 跑；纯逻辑用例（分页/检索/任务）本机可跑 |
++| `backup.sh` | 只在 Windows 临时目录用 `RUNNER=local` 实测；docker 路径需在 NAS 上验证一次 |
++| 导入并发 | 刻意未做（见 DEC-10），需要产品/存储决策才动 |
++| 深分页前端 | 后端已兼容两种分页，前端何时切换未做（`myreader-dist` 为构建产物） |
++| 上游 patch | 需要上游检出目录才能生成，仓库内不预置 `.patch` 文件 |
++
++## 3. 已代选的决定（可调整）
++
++与方案文档第 9/10 章一致，摘要如下：
++
++| 编号 | 决定 | 调整入口 |
++|---|---|---|
++| DEC-01 | 持久目录 + `opt/p0-p1` 分支，master 不动 | 分支名 |
++| DEC-02 | 在线备份 + 硬链接快照，保留 7/4/6 | `KEEP_DAILY/WEEKLY/MONTHLY` |
++| DEC-03 | 备份 `RUNNER=auto`（docker→local） | `RUNNER` |
++| DEC-04 | MCP token 只走 Header | `ALLOW_MCP_TOKEN_IN_URL` |
++| DEC-05 | WS Origin 同源校验 | 代码级（安全默认） |
++| DEC-06 | 音频标志事件驱动 + 6h 兜底 | `AUDIO_CACHE_REFRESH_SECONDS` |
++| DEC-07 | Range 128KB 分块 + 线程池 | `STREAM_CHUNK_SIZE` |
++| DEC-08 | 中文 FTS5 独立索引 | `SEARCH_INDEX_*` |
++| DEC-09 | 游标分页兼容 offset | 请求参数 |
++| DEC-10 | Phase2 单写者 + 可调批窗口 | `import_phase*_batch_size` |
++| DEC-11 | 任务错误可读 + 重试提示 | 新查询参数，可忽略 |
++| DEC-12 | 上游按 A/B/C/D 主题拆包 | `patch_tool.py` |
++
++> 以上均为「已代选，可调整」。本轮未触发需要用户拍板的三类（数据不可逆丢失、生产凭据、对外契约变更）。

@@ -1,0 +1,801 @@
+From 5e6c13cfe736597e2d1e50a950c2ec3d3210a8e3 Mon Sep 17 00:00:00 2001
+From: wxgoo <wxgoo@gitee.com>
+Date: Fri, 6 Nov 2026 20:41:32 +0800
+Subject: [PATCH 07/14] =?UTF-8?q?feat(search):=20=E6=96=B0=E5=A2=9E?=
+ =?UTF-8?q?=E4=B8=AD=E6=96=87=E4=B9=A6=E7=9B=AE=E6=A3=80=E7=B4=A2=E7=B4=A2?=
+ =?UTF-8?q?=E5=BC=95=EF=BC=88FTS5=EF=BC=8C=E7=8B=AC=E7=AB=8B=E5=BA=93?=
+ =?UTF-8?q?=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- webserver/services/search_index.py：汉字逐字索引 + 原文精确过滤，英文支持前缀；独立 search_index.db，整库重建后原子替换
+
+- cached_search/cached_search_async 优先走新索引，索引不可用或含 calibre 高级语法时无损回退
+
+- 启动后台检查版本并重建；每 5 分钟按 metadata.db stat 版本判断是否需要重建
+
+- 管理接口 GET /api/admin/search_index/status、POST /api/admin/search_index/rebuild；CLI scripts/search_index.py 提供重建入口
+
+- 新增 5 条回归用例（分词/高级语法回退/重建与检索）
+---
+ scripts/search_index.py            |  57 ++++
+ tests/test_search_index.py         |  91 ++++++
+ webserver/handlers/base.py         |  14 +-
+ webserver/handlers/search_index.py |  51 ++++
+ webserver/main.py                  |  13 +-
+ webserver/services/search_index.py | 447 +++++++++++++++++++++++++++++
+ webserver/settings.py              |   5 +
+ 7 files changed, 674 insertions(+), 4 deletions(-)
+ create mode 100644 scripts/search_index.py
+ create mode 100644 tests/test_search_index.py
+ create mode 100644 webserver/handlers/search_index.py
+ create mode 100644 webserver/services/search_index.py
+
+diff --git a/scripts/search_index.py b/scripts/search_index.py
+new file mode 100644
+index 0000000..c3fe66b
+--- /dev/null
++++ b/scripts/search_index.py
+@@ -0,0 +1,57 @@
++#!/usr/bin/env python3
++# -*- coding: UTF-8 -*-
++"""中文检索索引的命令行入口（不依赖 Web 服务）。
++
++用法（在容器内或源码根目录执行）：
++
++    python3 scripts/search_index.py status      # 查看索引状态
++    python3 scripts/search_index.py rebuild     # 强制全量重建
++    python3 scripts/search_index.py search 三体  # 调试：打印命中的 book_id
++
++容器里推荐：
++
++    docker exec -u 0 audiobook-mybooks-1 python3 scripts/search_index.py rebuild
++
++重建是原子替换：构建期间线上搜索继续用旧索引，完成后一次性切换。
++"""
++
++import json
++import os
++import sys
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from webserver.services.search_index import get_search_index  # noqa: E402
++
++
++def main(argv):
++    service = get_search_index()
++    cmd = argv[1] if len(argv) > 1 else "status"
++
++    if cmd == "status":
++        print(json.dumps(service.status(), ensure_ascii=False, indent=2))
++        return 0
++
++    if cmd == "rebuild":
++        result = service.rebuild(force=True)
++        print(json.dumps(result, ensure_ascii=False, indent=2))
++        return 0 if result.get("ok") else 1
++
++    if cmd == "search":
++        if len(argv) < 3:
++            print("用法: python3 scripts/search_index.py search <关键词>")
++            return 1
++        ids = service.search(" ".join(argv[2:]))
++        if ids is None:
++            print("该查询会走 calibre 原生 search（高级语法或索引不可用）")
++            return 0
++        print(json.dumps({"count": len(ids), "book_ids": ids[:200]},
++                         ensure_ascii=False, indent=2))
++        return 0
++
++    print(__doc__)
++    return 1
++
++
++if __name__ == "__main__":
++    sys.exit(main(sys.argv))
+diff --git a/tests/test_search_index.py b/tests/test_search_index.py
+new file mode 100644
+index 0000000..26776c6
+--- /dev/null
++++ b/tests/test_search_index.py
+@@ -0,0 +1,91 @@
++"""独立中文检索索引的回归：
++
++- 汉字逐字进索引、整段做精确过滤，保证 1~2 字查询能命中；
++- calibre 高级语法（author:xxx、#tag:）仍交给原生 search；
++- 从 metadata.db 建索引后，能够按中文/英文检索，并支持重建。
++"""
++
++import sqlite3
++
++import pytest
++
++from webserver.services.search_index import (
++    SearchIndexService,
++    build_match_expression,
++    build_search_tokens,
++    looks_like_advanced_query,
++    tokenize_text,
++)
++
++
++def test_chinese_is_tokenized_per_char():
++    terms, parts = tokenize_text("三体")
++    assert terms == ["三", "体"]
++    assert parts == ["三体"]
++
++
++def test_match_expression_uses_and_and_prefix_for_latin():
++    expr = build_match_expression(["三", "体", "harry"])
++    assert expr == '"三" AND "体" AND "harry"*'
++
++
++def test_advanced_calibre_syntax_falls_back():
++    assert looks_like_advanced_query('author:"刘慈欣"')
++    assert looks_like_advanced_query("#tag:科幻")
++    assert looks_like_advanced_query("三体 AND 刘慈欣")
++    assert not looks_like_advanced_query("三体")
++    assert not looks_like_advanced_query("harry potter")
++
++
++def test_build_tokens_splits_cjk_only():
++    tokens = build_search_tokens("三体", "刘慈欣")
++    assert tokens == "三 体 刘 慈 欣"
++
++
++@pytest.fixture()
++def library(tmp_path):
++    """最小的 calibre metadata.db 结构。"""
++    library_dir = tmp_path / "library"
++    library_dir.mkdir()
++    db = sqlite3.connect(str(library_dir / "metadata.db"))
++    db.executescript(
++        """
++        CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, sort TEXT,
++                            publisher INTEGER, series INTEGER);
++        CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT);
++        CREATE TABLE books_authors_link (book INTEGER, author INTEGER);
++        CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT);
++        CREATE TABLE books_tags_link (book INTEGER, tag INTEGER);
++        CREATE TABLE publishers (id INTEGER PRIMARY KEY, name TEXT);
++        CREATE TABLE series (id INTEGER PRIMARY KEY, name TEXT);
++        CREATE TABLE comments (book INTEGER, text TEXT);
++        """
++    )
++    db.execute("INSERT INTO authors VALUES (1, '刘慈欣')")
++    db.execute("INSERT INTO books VALUES (1, '三体（全集）', 'san ti', NULL, NULL)")
++    db.execute("INSERT INTO books VALUES (2, 'Harry Potter and the Philosopher', 'harry', NULL, NULL)")
++    db.execute("INSERT INTO books_authors_link VALUES (1, 1)")
++    db.execute("INSERT INTO comments VALUES (1, '演播：李野墨。地球往事三部曲第一部。')")
++    db.commit()
++    db.close()
++    return library_dir
++
++
++def test_rebuild_and_search_chinese(library, tmp_path):
++    service = SearchIndexService(path=str(tmp_path / "search_index.db"),
++                                 library_dir=str(library))
++    result = service.rebuild(force=True)
++    assert result["ok"] and result["docs"] == 2
++
++    # 2 字书名：逐字 AND + 原文精确过滤
++    assert service.search("三体") == [1]
++    # 1 个字也能命中，但必须真的包含这个字
++    assert service.search("体") == [1]
++    # 演播者写在简介里，也能搜到
++    assert service.search("李野墨") == [1]
++    # 英文前缀
++    assert 2 in service.search("harr")
++    # 不存在的词
++    assert service.search("红楼梦") == []
++    # calibre 高级语法交回原生搜索
++    assert service.search("author:刘慈欣") is None
+diff --git a/webserver/handlers/base.py b/webserver/handlers/base.py
+index 0e5ef77..6b8318d 100644
+--- a/webserver/handlers/base.py
++++ b/webserver/handlers/base.py
+@@ -33,6 +33,7 @@ from webserver.services.resource_service import ResourceService
+ from webserver.services.perf_monitor import PerfMonitor
+ from webserver.services.book_access_service import BookAccessService
+ from webserver.services.book_share_service import BookShareService
++from webserver.services.search_index import get_search_index
+ from webserver.models import Item, Message, Reader
+ from webserver import constants
+ from webserver.version import VERSION
+@@ -1758,7 +1759,12 @@ class BaseHandler(web.RequestHandler):
+         cache = self.search_cache()
+         ids = cache.get(query, version)
+         if ids is None:
+-            ids = tuple(self.calibre_db_cache.search(query) or ())
++            # 先用独立的中文 FTS5 索引；索引不可用或查询含 calibre 高级语法时回退
++            ids = get_search_index().search(query)
++            if ids is None:
++                ids = tuple(self.calibre_db_cache.search(query) or ())
++            else:
++                ids = tuple(ids)
+             cache.put(query, version, ids)
+         return list(ids)
+ 
+@@ -1767,7 +1773,11 @@ class BaseHandler(web.RequestHandler):
+         cache = self.search_cache()
+         ids = cache.get(query, version)
+         if ids is None:
+-            ids = tuple(await self.run_calibre_read_async(self.calibre_db_cache.search, query) or ())
++            ids = get_search_index().search(query)
++            if ids is None:
++                ids = tuple(await self.run_calibre_read_async(self.calibre_db_cache.search, query) or ())
++            else:
++                ids = tuple(ids)
+             cache.put(query, version, ids)
+         return list(ids)
+ 
+diff --git a/webserver/handlers/search_index.py b/webserver/handlers/search_index.py
+new file mode 100644
+index 0000000..39cdf35
+--- /dev/null
++++ b/webserver/handlers/search_index.py
+@@ -0,0 +1,51 @@
++#!/usr/bin/env python3
++# -*- coding: UTF-8 -*-
++"""中文检索索引的管理接口（管理员专用）。
++
++- GET  /api/admin/search_index/status   查看索引状态（文档数、是否过期、上次构建）
++- POST /api/admin/search_index/rebuild  触发后台重建（立即返回，不阻塞请求）
++
++搜索本身仍走原来的 /api 接口（`search=` 参数不变），本模块只负责索引的
++可观测性与重建入口。
++"""
++
++import logging
++
++from webserver.i18n import _
++from webserver.handlers.base import BaseHandler, is_admin, js
++from webserver.services.search_index import get_search_index
++
++
++class SearchIndexStatus(BaseHandler):
++    @js
++    @is_admin
++    def get(self):
++        if not self.is_admin():
++            return {"err": "permission.not_admin",
++                    "msg": _("只有管理员可以查看检索索引状态")}
++        return {"err": "ok", "data": get_search_index().status()}
++
++
++class SearchIndexRebuild(BaseHandler):
++    @js
++    @is_admin
++    def post(self):
++        if not self.is_admin():
++            return {"err": "permission.not_admin",
++                    "msg": _("只有管理员可以重建检索索引")}
++        service = get_search_index()
++        started = service.request_rebuild(force=True)
++        if not started:
++            logging.info("[SEARCH_INDEX] rebuild request ignored (disabled or running)")
++            return {"err": "ok",
++                    "msg": _("索引已禁用或正在重建"),
++                    "data": service.status()}
++        return {"err": "ok", "msg": _("索引重建已在后台开始"),
++                "data": service.status()}
++
++
++def routes():
++    return [
++        (r"/api/admin/search_index/status", SearchIndexStatus),
++        (r"/api/admin/search_index/rebuild", SearchIndexRebuild),
++    ]
+diff --git a/webserver/main.py b/webserver/main.py
+index b882a8e..9e798af 100644
+--- a/webserver/main.py
++++ b/webserver/main.py
+@@ -494,12 +494,12 @@ def make_app():
+     # WebDAV must come before files.routes() because files has a catch-all (r"/(.*)")
+     # We need to get routes from handlers module without files, add webdav, then add files
+     import importlib
+-    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "reader_group", "transcribe", "book_dedup", "author_norm"]
++    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "reader_group", "transcribe", "book_dedup", "author_norm", "search_index"]
+     mods = {}
+     for name in names:
+         with substep("import_handler:" + name):
+             mods[name] = importlib.import_module("webserver.handlers." + name)
+-    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, reader_group, transcribe, book_dedup, author_norm = (mods[n] for n in names)
++    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, reader_group, transcribe, book_dedup, author_norm, search_index = (mods[n] for n in names)
+ 
+     app_routes = []
+     app_routes += social_routes.SOCIAL_AUTH_ROUTES
+@@ -528,6 +528,8 @@ def make_app():
+     app_routes += book_dedup.routes()
+     # 4.6.0-9 作者归一化管理接口（体检/别名表/预览/锁定）
+     app_routes += author_norm.routes()
++    # 中文检索索引：状态查询 + 手动重建（搜索接口本身保持不变）
++    app_routes += search_index.routes()
+     app_routes += koreader.routes()
+ 
+     # Podcast routes are always registered; each handler calls check_podcast_enabled()
+@@ -735,6 +737,13 @@ def main():
+     except Exception:
+         logging.warning("Audio cache prewarm failed", exc_info=True)
+ 
++    # 检索索引：缺失/过期时后台重建；之后每 5 分钟检查一次版本
++    try:
++        from webserver.services.search_index import get_search_index
++        get_search_index().start_background_refresh()
++    except Exception:
++        logging.warning("Search index warmup failed", exc_info=True)
++
+     switch_ms = float(CONF.get("GIL_SWITCH_INTERVAL_MS", 0) or 0)
+     if switch_ms > 0:
+         sys.setswitchinterval(switch_ms / 1000.0)
+diff --git a/webserver/services/search_index.py b/webserver/services/search_index.py
+new file mode 100644
+index 0000000..f491161
+--- /dev/null
++++ b/webserver/services/search_index.py
+@@ -0,0 +1,447 @@
++#!/usr/bin/env python3
++# -*- coding: UTF-8 -*-
++"""独立中文检索索引（SQLite FTS5）。
++
++背景
++----
++书库搜索原先完全依赖 calibre 自带的 search：它对中文按整段切词，搜「三体」
++时标题里的「三体（全集）」不一定命中，输入一半的书名也搜不到。这里给书目
++元数据建一份独立的 FTS5 索引，不改 calibre 的 metadata.db，也不改现有搜索
++接口：`BaseHandler.cached_search*` 先问本索引，索引不可用/查询含 calibre
++高级语法时自动回退到原来的 search，行为兼容。
++
++分词策略（针对中文）
++----------------
++- 拉丁字母/数字：按原词进索引，查询时允许前缀匹配（`harry*`）。
++- 汉字：逐字拆开进索引，查询同样逐字做 AND，再用原文做一次精确子串过滤。
++  这样「三体」「刘慈」「全集」这类 1~2 字查询都能命中，且不会因为单字
++  命中而返回一堆噪声。
++- 索引内容：标题、作者、标签、丛书、出版社、简介（含「演播：xxx」）。
++
++刷新策略
++--------
++- 索引文件独立（默认 `/data/books/search_index.db`），整库重建后原子替换。
++- 启动时若索引缺失或与 metadata.db 版本不一致，后台重建。
++- 之后每 SEARCH_INDEX_REFRESH_SECONDS（默认 300 秒）检查一次 stat 版本，
++  变化才重建；重建期间搜索继续用旧索引，不阻塞请求。
++- 也可通过管理接口或 CLI 手动重建。
++"""
++
++import html
++import logging
++import os
++import re
++import sqlite3
++import threading
++import time
++import urllib.parse
++
++from webserver import loader
++
++CONF = loader.get_settings()
++
++CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
++HTML_TAG_RE = re.compile(r"<[^>]+>")
++SPACE_RE = re.compile(r"\s+")
++# 只保留字母/数字/汉字，其余（标点、引号、FTS 运算符）一律当分隔符
++TOKEN_SPLIT_RE = re.compile(r"[^0-9a-zA-Z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
++
++MAX_DOC_CHARS = 8000
++
++SCHEMA = """
++CREATE TABLE IF NOT EXISTS meta (
++    key   TEXT PRIMARY KEY,
++    value TEXT NOT NULL
++);
++CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
++    tokens,
++    doc_text UNINDEXED,
++    tokenize = "unicode61 remove_diacritics 2"
++);
++"""
++
++
++def normalize_text(value):
++    """去 HTML、反转义、压空白、小写；保留中文与字母数字。"""
++    if not value:
++        return ""
++    text = HTML_TAG_RE.sub(" ", str(value))
++    text = html.unescape(text)
++    text = text.replace("\u3000", " ")
++    text = SPACE_RE.sub(" ", text).strip().lower()
++    return text[:MAX_DOC_CHARS]
++
++
++def tokenize_text(text):
++    """把原文拆成索引/查询用的 token 序列。
++
++    返回 (terms, cjk_parts)：
++    - terms：空白分隔的 token 列表（汉字每个字一个 token）；
++    - cjk_parts：原文里连续汉字段落，用于结果精确过滤。
++    """
++    text = normalize_text(text)
++    if not text:
++        return [], []
++
++    terms = []
++    cjk_parts = []
++    for piece in TOKEN_SPLIT_RE.split(text):
++        if not piece:
++            continue
++        if CJK_RE.search(piece):
++            # 连续汉字段：逐字进索引，同时整段留作精确过滤
++            cjk_parts.append(piece)
++            terms.extend(list(piece))
++        else:
++            terms.append(piece)
++    # 去重保序
++    seen = set()
++    unique = []
++    for term in terms:
++        if term not in seen:
++            seen.add(term)
++            unique.append(term)
++    return unique, cjk_parts
++
++
++def build_search_tokens(*fields):
++    """把多个字段拼成 FTS 索引文本（拉丁词保持，汉字逐字加空格）。"""
++    texts = [normalize_text(f) for f in fields if f]
++    if not texts:
++        return ""
++    merged = " ".join(texts)
++    out = []
++    for piece in TOKEN_SPLIT_RE.split(merged):
++        if not piece:
++            continue
++        if CJK_RE.search(piece):
++            out.append(" ".join(piece))
++        else:
++            out.append(piece)
++    return " ".join(out)
++
++
++def looks_like_advanced_query(query):
++    """calibre 高级语法（`author:xxx`、`#tag:`、`AND/OR`、括号、引号）不走本索引。"""
++    q = query.strip()
++    if not q:
++        return True
++    if any(ch in q for ch in '"\'():#'):
++        return True
++    if ":" in q:
++        return True
++    upper = q.upper()
++    return any(op in upper for op in (" AND ", " OR ", " NOT ", "&&", "||"))
++
++
++def _clean_token(term):
++    term = TOKEN_SPLIT_RE.sub("", term)
++    return term.lower()
++
++
++def build_match_expression(terms):
++    """构造 FTS5 MATCH 表达式：全部 AND；拉丁词允许前缀匹配。"""
++    parts = []
++    for term in terms:
++        term = _clean_token(term)
++        if not term:
++            continue
++        if CJK_RE.search(term):
++            parts.append('"%s"' % term)
++        elif len(term) >= 2:
++            parts.append('"%s"*' % term)
++        else:
++            parts.append('"%s"' % term)
++    return " AND ".join(parts)
++
++
++class SearchIndexService:
++    """FTS5 索引的构建、查询与刷新（进程内单例）。"""
++
++    def __init__(self, path=None, library_dir=None):
++        self.path = path or CONF.get("SEARCH_INDEX_PATH", "/data/books/search_index.db")
++        self.library_dir = library_dir or CONF.get("with_library", "/data/books/library/")
++        self.refresh_seconds = int(CONF.get("SEARCH_INDEX_REFRESH_SECONDS", 300) or 0)
++        self.max_results = int(CONF.get("SEARCH_INDEX_MAX_RESULTS", 20000) or 20000)
++        self._build_lock = threading.Lock()
++        self._state_lock = threading.Lock()
++        self._thread = None
++        self._building = False
++        self._fts_available = True
++        self._last_error = ""
++        self._last_build_at = 0
++        self._last_build_seconds = 0
++        self._doc_count = self._load_doc_count()
++
++    # ---------------- 基础信息 ----------------
++    @property
++    def enabled(self):
++        return bool(CONF.get("SEARCH_INDEX_ENABLED", True)) and self._fts_available
++
++    @property
++    def library_db(self):
++        return os.path.join(self.library_dir, "metadata.db")
++
++    def _library_version(self):
++        try:
++            st = os.stat(self.library_db)
++            return "%d-%d" % (st.st_mtime_ns, st.st_size)
++        except OSError:
++            return ""
++
++    def _connect_read(self):
++        uri = "file:%s?mode=ro" % urllib.parse.quote(self.path)
++        return sqlite3.connect(uri, uri=True, timeout=3)
++
++    def _load_doc_count(self):
++        if not os.path.isfile(self.path):
++            return 0
++        try:
++            conn = self._connect_read()
++            try:
++                row = conn.execute(
++                    "SELECT value FROM meta WHERE key='docs'").fetchone()
++                return int(row[0]) if row else 0
++            finally:
++                conn.close()
++        except (sqlite3.Error, ValueError):
++            return 0
++
++    def _index_version(self):
++        if not os.path.isfile(self.path):
++            return ""
++        try:
++            conn = self._connect_read()
++            try:
++                row = conn.execute(
++                    "SELECT value FROM meta WHERE key='library_version'").fetchone()
++                return row[0] if row else ""
++            finally:
++                conn.close()
++        except sqlite3.Error:
++            return ""
++
++    def status(self):
++        index_version = self._index_version()
++        library_version = self._library_version()
++        return {
++            "enabled": self.enabled,
++            "path": self.path,
++            "exists": os.path.isfile(self.path),
++            "docs": self._doc_count,
++            "index_version": index_version,
++            "library_version": library_version,
++            "stale": bool(library_version) and index_version != library_version,
++            "building": self._building,
++            "last_build_at": self._last_build_at,
++            "last_build_seconds": self._last_build_seconds,
++            "last_error": self._last_error,
++            "refresh_seconds": self.refresh_seconds,
++        }
++
++    # ---------------- 查询 ----------------
++    def search(self, query):
++        """返回命中的 book_id 列表；None 表示「请回退到 calibre search」。"""
++        if not self.enabled or not query:
++            return None
++        q = query.strip()
++        if not q or looks_like_advanced_query(q):
++            return None
++        if not os.path.isfile(self.path):
++            self.request_rebuild()
++            return None
++
++        terms, cjk_parts = tokenize_text(q)
++        match = build_match_expression(terms)
++        if not match:
++            return None
++        # 单字查询至少要有精确子串约束，否则噪声太大
++        if not cjk_parts and all(len(t) < 2 for t in terms):
++            return None
++
++        try:
++            conn = self._connect_read()
++            try:
++                rows = conn.execute(
++                    "SELECT rowid, doc_text FROM docs_fts "
++                    "WHERE docs_fts MATCH ? ORDER BY rank LIMIT ?",
++                    (match, self.max_results),
++                ).fetchall()
++            finally:
++                conn.close()
++        except sqlite3.Error:
++            logging.warning("search index query failed, fallback to calibre",
++                            exc_info=True)
++            return None
++
++        if cjk_parts:
++            # 汉字查询做一次原文子串过滤，消除「单字碰巧命中」的噪声
++            rows = [(bid, doc) for bid, doc in rows
++                    if all(part in (doc or "") for part in cjk_parts)]
++
++        return [int(bid) for bid, _ in rows]
++
++    # ---------------- 构建 ----------------
++    def request_rebuild(self, force=False):
++        """异步触发一次重建；已有构建在跑时直接返回 False。"""
++        if not self.enabled:
++            return False
++        with self._state_lock:
++            if self._building:
++                return False
++            self._building = True
++        thread = threading.Thread(
++            target=self._rebuild_task, kwargs={"force": force},
++            name="search-index-build", daemon=True)
++        thread.start()
++        return True
++
++    def _rebuild_task(self, force=False):
++        try:
++            self.rebuild(force=force)
++        except Exception as exc:
++            self._last_error = str(exc)
++            logging.exception("search index rebuild failed")
++        finally:
++            with self._state_lock:
++                self._building = False
++
++    def rebuild(self, force=False):
++        """全量重建索引（原子替换，旧索引在构建期间仍可用）。"""
++        if not self.enabled:
++            return {"ok": False, "msg": "search index disabled"}
++        library_version = self._library_version()
++        if not library_version:
++            return {"ok": False, "msg": "library metadata.db not found"}
++        if not force and self._index_version() == library_version:
++            return {"ok": True, "msg": "index is up to date", "docs": self._doc_count}
++
++        if not self._build_lock.acquire(blocking=False):
++            return {"ok": False, "msg": "another rebuild is running"}
++        started = time.time()
++        tmp_path = "%s.tmp-%d" % (self.path, os.getpid())
++        try:
++            try:
++                os.remove(tmp_path)
++            except OSError:
++                pass
++            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
++
++            conn = sqlite3.connect(tmp_path)
++            try:
++                conn.executescript(SCHEMA)
++                count = self._fill_index(conn)
++                conn.execute("INSERT OR REPLACE INTO meta VALUES('library_version', ?)",
++                             (library_version,))
++                conn.execute("INSERT OR REPLACE INTO meta VALUES('built_at', ?)",
++                             (time.strftime("%Y-%m-%d %H:%M:%S"),))
++                conn.execute("INSERT OR REPLACE INTO meta VALUES('docs', ?)", (str(count),))
++                conn.commit()
++            finally:
++                conn.close()
++
++            os.replace(tmp_path, self.path)
++            self._doc_count = count
++            self._last_build_at = int(time.time())
++            self._last_build_seconds = round(time.time() - started, 1)
++            self._last_error = ""
++            logging.info("[SEARCH_INDEX] rebuilt %d docs in %.1fs", count,
++                         self._last_build_seconds)
++            return {"ok": True, "docs": count,
++                    "seconds": self._last_build_seconds}
++        except sqlite3.OperationalError as exc:
++            if "fts5" in str(exc).lower() or "no such module" in str(exc).lower():
++                self._fts_available = False
++                logging.warning("[SEARCH_INDEX] 当前 SQLite 不支持 FTS5，"
++                                "搜索将回退到 calibre")
++                return {"ok": False, "msg": "FTS5 not available"}
++            raise
++        finally:
++            if os.path.exists(tmp_path):
++                try:
++                    os.remove(tmp_path)
++                except OSError:
++                    pass
++            self._build_lock.release()
++
++    def _fill_index(self, conn):
++        """从 metadata.db 只读导出一遍书目元数据。"""
++        src = sqlite3.connect(
++            "file:%s?mode=ro" % urllib.parse.quote(self.library_db), uri=True, timeout=5)
++        try:
++            authors = dict(src.execute(
++                "SELECT ba.book, group_concat(a.name, ' ') "
++                "FROM books_authors_link ba JOIN authors a ON a.id = ba.author "
++                "GROUP BY ba.book"))
++            tags = dict(src.execute(
++                "SELECT bt.book, group_concat(t.name, ' ') "
++                "FROM books_tags_link bt JOIN tags t ON t.id = bt.tag "
++                "GROUP BY bt.book"))
++            rows = src.execute(
++                "SELECT b.id, b.title, b.sort, p.name, s.name, c.text "
++                "FROM books b "
++                "LEFT JOIN publishers p ON p.id = b.publisher "
++                "LEFT JOIN series s ON s.id = b.series "
++                "LEFT JOIN comments c ON c.book = b.id"
++            ).fetchall()
++        finally:
++            src.close()
++
++        count = 0
++        batch = []
++        for book_id, title, sort_title, publisher, series, comments in rows:
++            doc_text = normalize_text(" ".join(filter(None, [
++                title, sort_title, authors.get(book_id, ""), tags.get(book_id, ""),
++                series, publisher, comments,
++            ])))
++            tokens = build_search_tokens(
++                title, sort_title, authors.get(book_id, ""), tags.get(book_id, ""),
++                series, publisher, comments)
++            if not tokens:
++                continue
++            batch.append((book_id, tokens, doc_text))
++            count += 1
++            if len(batch) >= 500:
++                conn.executemany(
++                    "INSERT INTO docs_fts(rowid, tokens, doc_text) VALUES (?, ?, ?)", batch)
++                batch = []
++        if batch:
++            conn.executemany(
++                "INSERT INTO docs_fts(rowid, tokens, doc_text) VALUES (?, ?, ?)", batch)
++        return count
++
++    # ---------------- 后台保活 ----------------
++    def start_background_refresh(self):
++        """启动常驻线程：索引缺失/过期时后台重建，之后定时检查。"""
++        if not self.enabled:
++            return
++        with self._state_lock:
++            if self._thread and self._thread.is_alive():
++                return
++            self._thread = threading.Thread(
++                target=self._refresh_loop, name="search-index-refresh", daemon=True)
++            self._thread.start()
++
++    def _refresh_loop(self):
++        while True:
++            try:
++                if self._index_version() != self._library_version():
++                    self.request_rebuild()
++            except Exception:
++                logging.exception("[SEARCH_INDEX] refresh check failed")
++            if self.refresh_seconds <= 0:
++                return
++            time.sleep(max(30, self.refresh_seconds))
++
++
++_INSTANCE = None
++_INSTANCE_LOCK = threading.Lock()
++
++
++def get_search_index():
++    global _INSTANCE
++    if _INSTANCE is None:
++        with _INSTANCE_LOCK:
++            if _INSTANCE is None:
++                _INSTANCE = SearchIndexService()
++    return _INSTANCE
+diff --git a/webserver/settings.py b/webserver/settings.py
+index 127c016..5e8974c 100644
+--- a/webserver/settings.py
++++ b/webserver/settings.py
+@@ -27,6 +27,11 @@ settings = {
+     # 「有音频的书」缓存兜底全库扫描间隔（秒）。默认 6 小时；导入/转码/删除
+     # 都会走事件增量更新，这里只兜底手工往书库塞音频的情况。0 = 关闭兜底扫描。
+     "AUDIO_CACHE_REFRESH_SECONDS": 6 * 3600,
++    # 中文检索索引（SQLite FTS5）。关闭后搜索自动回退到 calibre 原生 search。
++    "SEARCH_INDEX_ENABLED": True,
++    "SEARCH_INDEX_PATH": "/data/books/search_index.db",
++    "SEARCH_INDEX_REFRESH_SECONDS": 300,     # 检查 metadata.db 版本变化的间隔
++    "SEARCH_INDEX_MAX_RESULTS": 20000,       # 单次查询最多返回的候选 id 数
+     "extract_path"  : "/data/books/extract/",
+     "with_library"  : "/data/books/library/",
+     "cookie_secret" : "cookie_secret",
