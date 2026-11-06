@@ -162,6 +162,22 @@ def test_react_graph_builds_from_an_mcp_tool_definition(monkeypatch):
     assert callable(graph.astream_events)
 
 
+def test_assistant_websocket_origin_must_match_host():
+    from webserver.handlers.assistant import is_same_host_origin
+
+    host = "books.example.com:9800"
+    assert is_same_host_origin("http://books.example.com:9800", host)
+    assert is_same_host_origin("https://books.example.com:9800", host)
+    assert not is_same_host_origin("https://evil.example.com", host)
+    assert not is_same_host_origin("http://books.example.com", host)
+    # 非浏览器客户端不带 Origin：放行
+    assert is_same_host_origin("", host)
+    assert is_same_host_origin(None, host)
+    # 沙箱 iframe 的 "null" / file:// 一律拒绝
+    assert not is_same_host_origin("null", host)
+    assert not is_same_host_origin("file:///tmp/x", host)
+
+
 def test_mcp_token_is_sent_as_bearer_header_not_in_url():
     client = MCPStreamClient("http://localhost/mcp", "secret-token")
 
