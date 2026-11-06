@@ -81,7 +81,28 @@ SCAN_EXT = constants.ACCEPTED_BOOK_FORMATS
 # Phase1 批量落库窗口：攒够这么多 staged 写操作才开一次短写事务统一落库。
 # 读（去重查询）与算（哈希 IO）一律在写事务之外，写事务内只有纯内存对象的
 # INSERT/DELETE（亚秒级），避免长写事务横跨磁盘 IO 阻塞 worker 的并发写。
-PHASE1_BATCH_SIZE = 500
+# Phase2 是单写者串行 + 攒批提交，不做并发写，原因（一致性保障）：
+#   1. calibre 的 import_book 写 metadata.db 本身是单写者模型，多线程并发导入
+#      会让 calibre 内部事务互相等锁，收益为负；
+#   2. 标题判重索引 _TitleDedupIndex 只允许 Phase2 worker 线程构建/查询/回填
+#      （不加锁），多 worker 需要额外锁或按分片重建，复杂度远高于收益；
+#   3. 真正贵的是每本 2-3 次 fsync，而非 CPU。攒批后每 batch_size 本只有 1 次
+#      短写事务，尾批与异常路径在 finally 兜底提交，失败批次整批回滚（行留在
+#      READY，下轮重扫自愈），计数按 outcomes 对账，不会虚高。
+# 因此只提供可调窗口 import_phase2_batch_size（默认 20），并发度保持 1。
+
+
+def _int_setting(name, default, low, high):
+    """读取整数配置并按区间夹取；脏值（含 auto.py 里的 inf）回退默认值。"""
+    try:
+        value = int(CONF.get(name, default) or default)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(low, min(high, value))
+
+
+PHASE1_BATCH_SIZE = _int_setting("import_phase1_batch_size", 500, 100, 2000)
+PHASE2_BATCH_SIZE = _int_setting("import_phase2_batch_size", 20, 1, 500)
 # 扫描范围：4 = 全量扫描（不忽略所有目录）——无视目录快照、全量 walk，但保留去重。
 # 0 = 全量扫描（默认走目录快照增量）；1/2 为已删除的旧排除选项，发过来按 0 处理并告警。
 SCAN_SCOPE_FULL_NO_SKIP = 4
@@ -136,7 +157,7 @@ class ImportInternalOptions:
     sole: bool = False
     scan_upload_path: str = None
     # Phase2 攒批提交窗口（行/链接每 N 本一次短写事务）
-    batch_size: int = 20
+    batch_size: int = PHASE2_BATCH_SIZE
 
 
 class _TitleDedupIndex:
@@ -2119,7 +2140,7 @@ class ScanService(AsyncService):
             filelist = list(dict.fromkeys(filelist))
         total_count = len(filelist)
         ScanService.static_title_index_total = total_count
-        opts.batch_size = 20
+        opts.batch_size = PHASE2_BATCH_SIZE
 
         # 有界工作队列：Phase1 攒批提交后一次性入队可达数百 id，上界防止百万级导入
         # 常驻内存；队满时 Phase1 阻塞等待 worker 消费（天然背压，此时不持有写事务）。
