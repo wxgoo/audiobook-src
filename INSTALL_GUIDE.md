@@ -538,8 +538,9 @@ cd <mybooks 路径> && docker compose build && docker compose up -d
 2. **扫描器屏蔽**：`conf/nginx/mybooks.conf` 新增两组 `return 444` 规则，
    `.php`/`.env`/`wp-admin`/`phpmyadmin` 等扫描请求静默断开且不写 access log。
    注意 `/api/mcp` 是 MyBooks 真实功能端点，刻意未拦。
-3. 交付物 `myreader-dist.tar.gz` 必须用命令行 `tar -xzf` 解压（详见
-   PORTING_NOTES.md 四之三的符号链接事故复盘），**不要用图形化解压工具**。
+3. 交付物 `myreader-dist.tar.gz` 必须用命令行 `tar -xzf` 解压（符号链接事故的完整
+   复盘见 `CHANGELOG.md`「修复：仓库里的 myreader-dist 是残骸，直出的包必然 502」，
+   打包侧要点见 [`docs/操作总纲.md`](docs/操作总纲.md)），**不要用图形化解压工具**。
 
 ### 八之补二、v4.8.2 增量（书籍分类重整 + 读者组模板）
 
@@ -1503,5 +1504,5 @@ http://<你的地址>/toolbox/audio_transcode
 | 前端集成 | `app/src/pages/admin/settings.vue`、`locales/*.json` | 分节注册与中英文案 |
 | 内置依赖 | `third-party/{foliate-js,edge-tts}`、`prebuilt/wheels/` | 已 vendored，不再依赖 git submodule |
 | 移除 exe | `installer/` 已删除 | Docker 唯一部署方式 |
-| 测试 | `tests/test_reader_group.py`（14）、`tests/test_transcribe_service.py`（24）、`tests/test_audio_link_existing.py`（17）、`tests/test_book_dedup.py`（43） | 98 个全通过 |
-| 上游跟进 | `PORTING_NOTES.md` | **改动清单 + 合并指引，升级前必看** |
+| 测试 | `tests/test_reader_group.py`（14）、`tests/test_transcribe_service.py`（24）、`tests/test_audio_link_existing.py`（17）、`tests/test_book_dedup.py`（43） | 98 个全通过（用例在源码仓库，部署包不含 `tests/`） |
+| 上游跟进 | [`docs/上游跟进清单.md`](docs/上游跟进清单.md) | **改动清单 + 合并指引，升级前必看** |

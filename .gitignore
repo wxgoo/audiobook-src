@@ -92,3 +92,6 @@ node_modules/
 !myreader-dist/**/*.m4a
 !myreader-dist/**/*.m4b
 !myreader-dist/**/*.flac
+
+# 跑 webserver/test/test_download_amazon_cover.py 会写出来的产物（那个脚本是手工试验，不是 pytest 用例）
+amazon_cover.jpg

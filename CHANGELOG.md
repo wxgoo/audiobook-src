@@ -372,21 +372,31 @@ spider 还会往外发请求。前端能带进包的这套东西，等于把一�
 `pack.sh` 加进排除列表，`--check` 同步断言。注意 `webserver/epub_to_audio/tests/`
 是上游包自带的子目录，断言只看顶层 `tests/`，不受影响。
 
-顺带删掉 `tests/tmpr5l3i8ph`、`tests/tmpvw0bstuv` 两个空目录——`tempfile.mkdtemp()`
-留下的，git 不跟踪空目录所以 `git status` 一直没提示，但打包时会一起带上。
-
 **顺带清掉的**
 
+- `amazon_cover.jpg`（152K，仓库根）：`webserver/test/test_download_amazon_cover.py` 那个
+  手工试验脚本跑完写出来的产物，被误提交进库。删掉并加进 `.gitignore`
+- `tests/tmpr5l3i8ph`、`tests/tmpvw0bstuv`：`tempfile.mkdtemp()` 留下的空目录
 - `/workspace` 下散的 `上游跟进清单.md`：与 `docs/上游跟进清单.md` 逐字节相同，是导出时的副本
 - 打包中间产物与临时目录（不进版本库，仅释放磁盘）
+
+**两处文档断链**
+
+- `INSTALL_GUIDE.md` 两处指向已删的 `PORTING_NOTES.md`：符号链接事故复盘改指
+  `CHANGELOG.md` 对应小节 + `docs/操作总纲.md`；「改动清单 + 合并指引」改指
+  `docs/上游跟进清单.md`
+- `scripts/README.md` 的 `test-integration.sh` 一行补警告：要完整源码仓库，
+  部署包已裁掉根 `tests/`
 
 **验证**
 
 - `sh -n scripts/pack.sh` 通过；`--check` 对新包 ✅，且我故意往 `tools/` 塞回
   `meta_source/` 时会报 `!! tools/ 混入部署机用不到的开发工具: meta_source`
-- 包内 `tools/` 实测只剩 5 个文件，总大小从 372K 降到 44K
+- 包内 `tools/` 实测只剩 5 个文件（372K → 44K），顶层 `tests/` 为 0 条，
+  `webserver/epub_to_audio/tests/` 20 条照旧
 - 全仓库 `grep` 复查：`tools/repro_r11_birth_year`、`test_cover_download`、
   `douban_search_debug` 已无任何引用
+- 扫 29 个 md 的相对链接，断链 0 处
 
 ---
 

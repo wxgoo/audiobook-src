@@ -16,7 +16,7 @@
 | [`hotfix.sh`](hotfix.sh) | **只改 Python 时用它，省掉十几分钟的镜像重建**。覆盖容器内 `webserver/` 并自动语法预检、可回滚。文件来源是**部署包**，不是源码目录（见下表） | 不动数据，只换代码文件 |
 | [`migrate-audio-dirs.py`](migrate-audio-dirs.py) | 有声书音频从 `audios/<id>/` 搬进书目录 `.audio/`。默认预演，`--apply` 才动 | **会**。搬文件不可逆，先看清单再决定 |
 | [`test-audio-dirs.py`](test-audio-dirs.py) | 音频路径逻辑自测（假 cache + 临时目录，47 项） | 不改数据，只在 /tmp 里折腾 |
-| [`test-integration.sh`](test-integration.sh) | 跑 `tests/test_main.py` 那 63 个真起站点的用例。**它负责搭 calibre 库 + python3.12 环境**，没有它这些用例在任何新机器上都是红的 | 只在临时夹具目录里折腾 |
+| [`test-integration.sh`](test-integration.sh) | 跑 `tests/test_main.py` 那 63 个真起站点的用例。**它负责搭 calibre 库 + python3.12 环境**，没有它这些用例在任何新机器上都是红的。⚠️ 要完整源码仓库——部署包已把根 `tests/` 裁掉 | 只在临时夹具目录里折腾 |
 
 三个高频命令，照抄即可：
 
