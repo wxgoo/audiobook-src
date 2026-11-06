@@ -57,7 +57,10 @@ def _record_daily_download(user_id, book_id):
 ALLOW_MAX_RUNNING_WORKERS = CONF.get("BOOK2AUDIO_MAX_WORKERS", 2)
 SKIP_AUDIO_FILE_PREFIX = "图书在版编目CIP数据"
 MAX_FREE_AUDIO_FILES = 6
-AUDIO_CACHE_EXPIRE_SECONDS = 300  # 5 minutes
+# 全库兜底扫描间隔。默认 6 小时：正常情况下导入/转码/删除都会通过事件
+# 增量更新缓存，兜底扫描只用于「用户手工往书库塞了 .audio/ 目录」这类
+# 绕过应用的改动。设为 0 可彻底关闭兜底扫描（只剩启动预热 + 事件更新）。
+AUDIO_CACHE_REFRESH_SECONDS = int(CONF.get("AUDIO_CACHE_REFRESH_SECONDS", 6 * 3600))
 
 
 def natural_sort_key(filename):
@@ -100,6 +103,7 @@ class AudioBooksCache:
     _book_ids = set()
     _last_update_time = 0
     _update_lock = threading.Lock()
+    _state_lock = threading.Lock()
     _need_update = True
     _refreshing = False
     _pending_refresh = False
@@ -130,11 +134,16 @@ class AudioBooksCache:
 
     @classmethod
     def _should_update(cls):
-        """判断是否需要更新缓存"""
-        current_time = time.time()
-        return (
-            cls._need_update or (current_time - cls._last_update_time) > AUDIO_CACHE_EXPIRE_SECONDS
-        )
+        """判断是否需要更新缓存。
+
+        事件驱动的增量更新是主路径；这里的兜底扫描默认 6 小时一次，
+        可用 AUDIO_CACHE_REFRESH_SECONDS=0 关闭。
+        """
+        if cls._need_update:
+            return True
+        if AUDIO_CACHE_REFRESH_SECONDS <= 0:
+            return False
+        return (time.time() - cls._last_update_time) > AUDIO_CACHE_REFRESH_SECONDS
 
     @classmethod
     def get_audio_book_ids(cls):
@@ -147,9 +156,10 @@ class AudioBooksCache:
         """扫描全库并替换缓存。只允许在后台线程调用。"""
         try:
             book_ids = cls._scan_audio_directory()
-            cls._book_ids = book_ids
-            cls._last_update_time = time.time()
-            cls._need_update = False
+            with cls._state_lock:
+                cls._book_ids = book_ids
+                cls._last_update_time = time.time()
+                cls._need_update = False
             logging.info("Audio cache updated with %d books", len(book_ids))
         except Exception:
             # 扫描失败保留旧缓存，避免把「有音频」误降级成「没有音频」
@@ -157,9 +167,30 @@ class AudioBooksCache:
 
     @classmethod
     def mark_need_update(cls):
-        """标记需要更新缓存（下一次后台刷新会重新扫盘）"""
+        """标记需要全库兜底扫描（下一次后台刷新会重新扫盘）"""
         cls._need_update = True
         logging.info("Audio cache marked for update")
+
+    @classmethod
+    def mark_has_audio(cls, book_id):
+        """事件驱动：某本书新增了音频（导入/转码/TTS 完成时调用）。
+
+        只改一个 id，不动全库；替换 set 而不是原地修改，读方拿到的旧集合仍然有效。
+        """
+        bid = int(book_id)
+        with cls._state_lock:
+            if bid not in cls._book_ids:
+                cls._book_ids = cls._book_ids | {bid}
+                logging.info("Audio cache +1 book: %s", bid)
+
+    @classmethod
+    def mark_no_audio(cls, book_id):
+        """事件驱动：某本书的音频被删除。"""
+        bid = int(book_id)
+        with cls._state_lock:
+            if bid in cls._book_ids:
+                cls._book_ids = cls._book_ids - {bid}
+                logging.info("Audio cache -1 book: %s", bid)
 
     @classmethod
     def _ensure_background_refresh(cls):
@@ -328,7 +359,7 @@ class AudioUtils:
                 logging.error(f"Error deleting audio directory {audio_dir}: {e}")
                 return False, f"音频文件删除遇到错误: {e}"
         if removed:
-            AudioBooksCache.async_update()
+            AudioBooksCache.mark_no_audio(book_id)
             return True, _("音频文件删除成功")
         return True, _("音频文件不存在")
 
@@ -666,8 +697,6 @@ class AudioConversion(BaseHandler):
             worker = EpubToAudioWorker(main_py_path=epub_to_audio_path)
             ConversionWorkerMap[book_id] = worker
 
-            AudioBooksCache.async_update()
-
             # 创建后台任务
             task_id = None
             try:
@@ -714,6 +743,8 @@ class AudioConversion(BaseHandler):
                         worker.progress_data["status"] = (
                             EpubToAudioWorker.STATUS_PROCESSING
                         )
+                        # 事件驱动：只把这一本书标记为「有音频」，不再全库扫描
+                        AudioBooksCache.mark_has_audio(book_id)
                         # 更新任务为完成
                         if task_id:
                             try:
@@ -900,8 +931,8 @@ class AudioDelete(BaseHandler):
             try:
                 logging.info(f"AudioDelete requested, audio path:{audio_dir}")
                 shutil.rmtree(audio_dir)
-                # Async update cache after deletion
-                AudioBooksCache.async_update()
+                # 事件驱动：只摘掉这一本书的「有音频」标志
+                AudioBooksCache.mark_no_audio(book_id)
 
                 # 检查当前书籍是否没有任何格式的文件了，如果是，则删除书籍元数据
                 book = self.get_book(book_id, raise_exception=False)

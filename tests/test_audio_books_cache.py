@@ -48,6 +48,28 @@ def test_fresh_cache_read_does_not_scan(monkeypatch):
     assert calls == []
 
 
+def test_audio_flag_updates_are_incremental(monkeypatch):
+    calls = []
+
+    def fake_scan(cls):
+        calls.append(1)
+        return set()
+
+    monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(fake_scan))
+    AudioBooksCache._book_ids = {1}
+    AudioBooksCache._last_update_time = time.time()
+    AudioBooksCache._need_update = False
+
+    AudioBooksCache.mark_has_audio(2)
+    assert AudioBooksCache.get_audio_book_ids() == {1, 2}
+
+    AudioBooksCache.mark_no_audio(1)
+    assert AudioBooksCache.get_audio_book_ids() == {2}
+
+    # 全程没有触发全库扫描
+    assert calls == []
+
+
 def test_stale_cache_returns_immediately_and_refreshes_in_background(monkeypatch):
     def fake_scan(cls):
         return {1, 2}
