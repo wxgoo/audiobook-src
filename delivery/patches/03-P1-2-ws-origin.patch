@@ -1,0 +1,98 @@
+From 8f0d1c818dfd036482c83a409cf5a109f2babb83 Mon Sep 17 00:00:00 2001
+From: wxgoo <wxgoo@gitee.com>
+Date: Fri, 6 Nov 2026 20:29:18 +0800
+Subject: [PATCH 03/14] =?UTF-8?q?fix(assistant):=20=E6=A0=A1=E9=AA=8C=20We?=
+ =?UTF-8?q?bSocket=20Origin=EF=BC=8C=E9=98=BB=E6=96=AD=E8=B7=A8=E7=AB=99?=
+ =?UTF-8?q?=E4=BC=9A=E8=AF=9D=E5=8A=AB=E6=8C=81=EF=BC=88P1-2=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- check_origin 由无条件 true 改为校验 Origin 的 host:port 与请求 Host 一致
+
+- 无 Origin 的非浏览器客户端放行（仍依赖 secure cookie 鉴权），null/file:// 拒绝
+
+- 新增 is_same_host_origin 纯函数与回归用例
+---
+ tests/test_ai_assistant_agent.py | 16 ++++++++++++++++
+ webserver/handlers/assistant.py  | 33 ++++++++++++++++++++++++++++++--
+ 2 files changed, 47 insertions(+), 2 deletions(-)
+
+diff --git a/tests/test_ai_assistant_agent.py b/tests/test_ai_assistant_agent.py
+index c62c15f..673d70a 100644
+--- a/tests/test_ai_assistant_agent.py
++++ b/tests/test_ai_assistant_agent.py
+@@ -162,6 +162,22 @@ def test_react_graph_builds_from_an_mcp_tool_definition(monkeypatch):
+     assert callable(graph.astream_events)
+ 
+ 
++def test_assistant_websocket_origin_must_match_host():
++    from webserver.handlers.assistant import is_same_host_origin
++
++    host = "books.example.com:9800"
++    assert is_same_host_origin("http://books.example.com:9800", host)
++    assert is_same_host_origin("https://books.example.com:9800", host)
++    assert not is_same_host_origin("https://evil.example.com", host)
++    assert not is_same_host_origin("http://books.example.com", host)
++    # 非浏览器客户端不带 Origin：放行
++    assert is_same_host_origin("", host)
++    assert is_same_host_origin(None, host)
++    # 沙箱 iframe 的 "null" / file:// 一律拒绝
++    assert not is_same_host_origin("null", host)
++    assert not is_same_host_origin("file:///tmp/x", host)
++
++
+ def test_mcp_token_is_sent_as_bearer_header_not_in_url():
+     client = MCPStreamClient("http://localhost/mcp", "secret-token")
+ 
+diff --git a/webserver/handlers/assistant.py b/webserver/handlers/assistant.py
+index eab57a3..2ec00d2 100644
+--- a/webserver/handlers/assistant.py
++++ b/webserver/handlers/assistant.py
+@@ -5,6 +5,29 @@ import json
+ import logging
+ import tornado.websocket
+ 
++import urllib.parse
++
++
++def is_same_host_origin(origin, host):
++    """Origin 的主机部分是否等于本次请求的 Host。
++
++    - 浏览器发起 WebSocket 一定带 Origin，跨站页面拿用户 Cookie 建连即为
++      CSWSH（跨站 WebSocket 劫持），必须校验；
++    - 非浏览器客户端（脚本、原生 App）通常不带 Origin，放行——它们的鉴权
++      仍依赖 secure cookie，且没有"被第三方页面驱动"的攻击面；
++    - scheme 不参与比较：容器内是 http，外部可能经 nginx 终止 HTTPS，
++      只比较 host:port 才能同时兼容两种入口。
++    """
++    if not origin:
++        return True
++    try:
++        parts = urllib.parse.urlsplit(origin)
++        if parts.scheme not in ("http", "https") or not parts.netloc:
++            return False
++        return parts.netloc.lower() == (host or "").lower()
++    except Exception:
++        return False
++
+ 
+ class AssistantWebSocketHandler(tornado.websocket.WebSocketHandler):
+     # 保存连接的实例，以便后台服务管理
+@@ -20,8 +43,14 @@ class AssistantWebSocketHandler(tornado.websocket.WebSocketHandler):
+         return user_id
+ 
+     def check_origin(self, origin):
+-        logging.info(f"WebSocket check_origin called from: {origin}")
+-        return True
++        # 原实现无条件 return True，等于允许任意网站借用户 Cookie 建立 AI 会话。
++        allowed = is_same_host_origin(origin, self.request.host)
++        if allowed:
++            logging.info("WebSocket origin accepted: %s", origin or "(none)")
++        else:
++            logging.warning("WebSocket origin rejected: %s (host=%s)",
++                            origin, self.request.host)
++        return allowed
+ 
+     async def open(self):
+         logging.info(f"WebSocket open called, user: {self.get_current_user()}")

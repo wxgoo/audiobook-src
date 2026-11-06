@@ -1,0 +1,237 @@
+From faa40f55256e8d27bd777886021f72abaa7a14e8 Mon Sep 17 00:00:00 2001
+From: wxgoo <wxgoo@gitee.com>
+Date: Fri, 6 Nov 2026 20:35:37 +0800
+Subject: [PATCH 06/14] =?UTF-8?q?perf(audio):=20=E9=9F=B3=E9=A2=91?=
+ =?UTF-8?q?=E6=A0=87=E5=BF=97=E6=94=B9=E4=B8=BA=E4=BA=8B=E4=BB=B6=E9=A9=B1?=
+ =?UTF-8?q?=E5=8A=A8=E5=A2=9E=E9=87=8F=E6=9B=B4=E6=96=B0=EF=BC=88=E6=89=A9?=
+ =?UTF-8?q?=E5=B1=95=E9=A1=B9=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 新增 mark_has_audio/mark_no_audio：只增删单个 book_id，不扫全库
+
+- 转码成功、音频导入、TTS 完成、音频删除四个事件点改为增量更新
+
+- 全库兜底扫描由 5 分钟改为默认 6 小时（AUDIO_CACHE_REFRESH_SECONDS，0=关闭）
+
+- 新增回归用例：增量更新全程不触发全库扫描
+---
+ tests/test_audio_books_cache.py     | 22 +++++++++++
+ webserver/handlers/audio.py         | 61 ++++++++++++++++++++++-------
+ webserver/services/audios_import.py |  7 ++++
+ webserver/settings.py               |  3 ++
+ webserver/toolbox/mimo_tts.py       |  4 +-
+ 5 files changed, 81 insertions(+), 16 deletions(-)
+
+diff --git a/tests/test_audio_books_cache.py b/tests/test_audio_books_cache.py
+index 08f64f0..e094a8d 100644
+--- a/tests/test_audio_books_cache.py
++++ b/tests/test_audio_books_cache.py
+@@ -48,6 +48,28 @@ def test_fresh_cache_read_does_not_scan(monkeypatch):
+     assert calls == []
+ 
+ 
++def test_audio_flag_updates_are_incremental(monkeypatch):
++    calls = []
++
++    def fake_scan(cls):
++        calls.append(1)
++        return set()
++
++    monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(fake_scan))
++    AudioBooksCache._book_ids = {1}
++    AudioBooksCache._last_update_time = time.time()
++    AudioBooksCache._need_update = False
++
++    AudioBooksCache.mark_has_audio(2)
++    assert AudioBooksCache.get_audio_book_ids() == {1, 2}
++
++    AudioBooksCache.mark_no_audio(1)
++    assert AudioBooksCache.get_audio_book_ids() == {2}
++
++    # 全程没有触发全库扫描
++    assert calls == []
++
++
+ def test_stale_cache_returns_immediately_and_refreshes_in_background(monkeypatch):
+     def fake_scan(cls):
+         return {1, 2}
+diff --git a/webserver/handlers/audio.py b/webserver/handlers/audio.py
+index 6d67cf3..a1e2e21 100644
+--- a/webserver/handlers/audio.py
++++ b/webserver/handlers/audio.py
+@@ -57,7 +57,10 @@ def _record_daily_download(user_id, book_id):
+ ALLOW_MAX_RUNNING_WORKERS = CONF.get("BOOK2AUDIO_MAX_WORKERS", 2)
+ SKIP_AUDIO_FILE_PREFIX = "图书在版编目CIP数据"
+ MAX_FREE_AUDIO_FILES = 6
+-AUDIO_CACHE_EXPIRE_SECONDS = 300  # 5 minutes
++# 全库兜底扫描间隔。默认 6 小时：正常情况下导入/转码/删除都会通过事件
++# 增量更新缓存，兜底扫描只用于「用户手工往书库塞了 .audio/ 目录」这类
++# 绕过应用的改动。设为 0 可彻底关闭兜底扫描（只剩启动预热 + 事件更新）。
++AUDIO_CACHE_REFRESH_SECONDS = int(CONF.get("AUDIO_CACHE_REFRESH_SECONDS", 6 * 3600))
+ 
+ 
+ def natural_sort_key(filename):
+@@ -100,6 +103,7 @@ class AudioBooksCache:
+     _book_ids = set()
+     _last_update_time = 0
+     _update_lock = threading.Lock()
++    _state_lock = threading.Lock()
+     _need_update = True
+     _refreshing = False
+     _pending_refresh = False
+@@ -130,11 +134,16 @@ class AudioBooksCache:
+ 
+     @classmethod
+     def _should_update(cls):
+-        """判断是否需要更新缓存"""
+-        current_time = time.time()
+-        return (
+-            cls._need_update or (current_time - cls._last_update_time) > AUDIO_CACHE_EXPIRE_SECONDS
+-        )
++        """判断是否需要更新缓存。
++
++        事件驱动的增量更新是主路径；这里的兜底扫描默认 6 小时一次，
++        可用 AUDIO_CACHE_REFRESH_SECONDS=0 关闭。
++        """
++        if cls._need_update:
++            return True
++        if AUDIO_CACHE_REFRESH_SECONDS <= 0:
++            return False
++        return (time.time() - cls._last_update_time) > AUDIO_CACHE_REFRESH_SECONDS
+ 
+     @classmethod
+     def get_audio_book_ids(cls):
+@@ -147,9 +156,10 @@ class AudioBooksCache:
+         """扫描全库并替换缓存。只允许在后台线程调用。"""
+         try:
+             book_ids = cls._scan_audio_directory()
+-            cls._book_ids = book_ids
+-            cls._last_update_time = time.time()
+-            cls._need_update = False
++            with cls._state_lock:
++                cls._book_ids = book_ids
++                cls._last_update_time = time.time()
++                cls._need_update = False
+             logging.info("Audio cache updated with %d books", len(book_ids))
+         except Exception:
+             # 扫描失败保留旧缓存，避免把「有音频」误降级成「没有音频」
+@@ -157,10 +167,31 @@ class AudioBooksCache:
+ 
+     @classmethod
+     def mark_need_update(cls):
+-        """标记需要更新缓存（下一次后台刷新会重新扫盘）"""
++        """标记需要全库兜底扫描（下一次后台刷新会重新扫盘）"""
+         cls._need_update = True
+         logging.info("Audio cache marked for update")
+ 
++    @classmethod
++    def mark_has_audio(cls, book_id):
++        """事件驱动：某本书新增了音频（导入/转码/TTS 完成时调用）。
++
++        只改一个 id，不动全库；替换 set 而不是原地修改，读方拿到的旧集合仍然有效。
++        """
++        bid = int(book_id)
++        with cls._state_lock:
++            if bid not in cls._book_ids:
++                cls._book_ids = cls._book_ids | {bid}
++                logging.info("Audio cache +1 book: %s", bid)
++
++    @classmethod
++    def mark_no_audio(cls, book_id):
++        """事件驱动：某本书的音频被删除。"""
++        bid = int(book_id)
++        with cls._state_lock:
++            if bid in cls._book_ids:
++                cls._book_ids = cls._book_ids - {bid}
++                logging.info("Audio cache -1 book: %s", bid)
++
+     @classmethod
+     def _ensure_background_refresh(cls):
+         """过期时触发一次后台刷新，然后立即返回。
+@@ -328,7 +359,7 @@ class AudioUtils:
+                 logging.error(f"Error deleting audio directory {audio_dir}: {e}")
+                 return False, f"音频文件删除遇到错误: {e}"
+         if removed:
+-            AudioBooksCache.async_update()
++            AudioBooksCache.mark_no_audio(book_id)
+             return True, _("音频文件删除成功")
+         return True, _("音频文件不存在")
+ 
+@@ -666,8 +697,6 @@ class AudioConversion(BaseHandler):
+             worker = EpubToAudioWorker(main_py_path=epub_to_audio_path)
+             ConversionWorkerMap[book_id] = worker
+ 
+-            AudioBooksCache.async_update()
+-
+             # 创建后台任务
+             task_id = None
+             try:
+@@ -714,6 +743,8 @@ class AudioConversion(BaseHandler):
+                         worker.progress_data["status"] = (
+                             EpubToAudioWorker.STATUS_PROCESSING
+                         )
++                        # 事件驱动：只把这一本书标记为「有音频」，不再全库扫描
++                        AudioBooksCache.mark_has_audio(book_id)
+                         # 更新任务为完成
+                         if task_id:
+                             try:
+@@ -900,8 +931,8 @@ class AudioDelete(BaseHandler):
+             try:
+                 logging.info(f"AudioDelete requested, audio path:{audio_dir}")
+                 shutil.rmtree(audio_dir)
+-                # Async update cache after deletion
+-                AudioBooksCache.async_update()
++                # 事件驱动：只摘掉这一本书的「有音频」标志
++                AudioBooksCache.mark_no_audio(book_id)
+ 
+                 # 检查当前书籍是否没有任何格式的文件了，如果是，则删除书籍元数据
+                 book = self.get_book(book_id, raise_exception=False)
+diff --git a/webserver/services/audios_import.py b/webserver/services/audios_import.py
+index 9e7c1fe..df23623 100644
+--- a/webserver/services/audios_import.py
++++ b/webserver/services/audios_import.py
+@@ -688,6 +688,13 @@ class AudioBookImporter(AsyncService):
+                         except Exception as err:
+                             logging.warning("[AUDIO_IMPORT] add_format 失败(%s): %s",
+                                             ebook_file, err)
++                    # 事件驱动：这本书现在有音频了，只更新它自己的标志，不扫全库
++                    try:
++                        from webserver.handlers.audio import AudioBooksCache
++                        AudioBooksCache.mark_has_audio(book_id)
++                    except Exception:
++                        logging.warning("[AUDIO_IMPORT] 更新音频缓存失败: book_id=%s", book_id, exc_info=True)
++
+                     if linked_to_existing:
+                         AudioBookImporter.static_status["linked"] += 1
+                         logging.info("[AUDIO_IMPORT] 音频已挂到已有书籍 book_id=%s 的目录 %s",
+diff --git a/webserver/settings.py b/webserver/settings.py
+index 47a537e..127c016 100644
+--- a/webserver/settings.py
++++ b/webserver/settings.py
+@@ -24,6 +24,9 @@ settings = {
+     # 扫描导入 Phase1 哈希并行的线程数：1=串行（NAS 机械盘兜底），默认 4。
+     # 仅存于此清单（不进设置页白名单），手工部署可写进 auto.py 调整。
+     "scan_hash_workers"  : 4,
++    # 「有音频的书」缓存兜底全库扫描间隔（秒）。默认 6 小时；导入/转码/删除
++    # 都会走事件增量更新，这里只兜底手工往书库塞音频的情况。0 = 关闭兜底扫描。
++    "AUDIO_CACHE_REFRESH_SECONDS": 6 * 3600,
+     "extract_path"  : "/data/books/extract/",
+     "with_library"  : "/data/books/library/",
+     "cookie_secret" : "cookie_secret",
+diff --git a/webserver/toolbox/mimo_tts.py b/webserver/toolbox/mimo_tts.py
+index cda4669..62a2f18 100644
+--- a/webserver/toolbox/mimo_tts.py
++++ b/webserver/toolbox/mimo_tts.py
+@@ -606,7 +606,9 @@ class MimoTTSTool(BaseTool):
+                     "chapter_title": chapter.get("title", ""),
+                 })
+ 
+-            AudioBooksCache.async_update()
++            # 事件驱动：有产物才标记这本书有音频，不再全库扫描
++            if completed_parts > 0:
++                AudioBooksCache.mark_has_audio(book_id)
+ 
+             self.update_task_progress(task_id, 100, {
+                 "status": "completed",

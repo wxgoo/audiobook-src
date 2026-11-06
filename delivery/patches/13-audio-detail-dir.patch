@@ -1,0 +1,86 @@
+From 3ac39bac428ae988246dd4ad6a4e81d3f2d8f7a0 Mon Sep 17 00:00:00 2001
+From: wxgoo <wxgoo@gitee.com>
+Date: Fri, 6 Nov 2026 20:58:22 +0800
+Subject: [PATCH 13/14] =?UTF-8?q?perf(audio):=20=E8=AF=A6=E6=83=85?=
+ =?UTF-8?q?=E9=A1=B5=E9=9F=B3=E9=A2=91=E7=9B=AE=E5=BD=95=E6=94=B9=E7=94=A8?=
+ =?UTF-8?q?=20calibre=20=E8=A7=A3=E6=9E=90=EF=BC=8C=E5=8E=BB=E6=8E=89?=
+ =?UTF-8?q?=E5=85=A8=E5=BA=93=E6=89=AB=E6=8F=8F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+AudioUtils.get_audios 接受 db 参数，优先 resolve_audio_dir（O(1)）；未传 db 的旧调用方保持扫描兜底。BookDetail 传入 self.calibre_db_cache，详情页不再每次请求遍历全库目录。回滚：revert 本提交即可，兜底逻辑仍在。
+---
+ ...206\263\347\255\226\350\256\260\345\275\225.md" |  4 ++--
+ webserver/handlers/audio.py                        | 14 +++++++++-----
+ webserver/handlers/book.py                         |  6 +++++-
+ 3 files changed, 16 insertions(+), 8 deletions(-)
+
+diff --git "a/docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md" "b/docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md"
+index d5e3ba3..6e43745 100644
+--- "a/docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md"
++++ "b/docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md"
+@@ -63,9 +63,9 @@ master 未改动，全部改动在本分支，可用 `git diff master..opt/p0-p1
+ 
+ | 项 | 内容 |
+ |---|---|
+-| 改动文件 | `handlers/audio.py`、`services/audios_import.py`、`toolbox/mimo_tts.py`、`main.py`、`settings.py`、`tests/test_audio_books_cache.py` |
++| 改动文件 | `handlers/audio.py`、`handlers/book.py`、`services/audios_import.py`、`toolbox/mimo_tts.py`、`main.py`、`settings.py`、`tests/test_audio_books_cache.py` |
+ | diff 摘要 | 请求路径只读旧缓存并触发单飞后台刷新；新增 `_state_lock/_refreshing/_pending_refresh`；`AUDIO_CACHE_REFRESH_SECONDS` 兜底；启动预热 |
+-| 影响面 | 「有音频」标志最多滞后一个兜底周期或事件未覆盖的路径；列表不阻塞 |
++| 影响面 | 「有音频」标志最多滞后一个兜底周期或事件未覆盖的路径；列表不阻塞；书籍详情页的音频目录改由 calibre 解析（O(1)），不再全库扫描 |
+ | 回滚 | revert 该提交；或把 `AUDIO_CACHE_REFRESH_SECONDS` 调小 |
+ 
+ ### 1.5 P1-4 Range 读盘异步（`2cfb297`）
+diff --git a/webserver/handlers/audio.py b/webserver/handlers/audio.py
+index 7c0e5ed..a71799b 100644
+--- a/webserver/handlers/audio.py
++++ b/webserver/handlers/audio.py
+@@ -251,8 +251,12 @@ class AudioUtils:
+         return sum(1 for worker in ConversionWorkerMap.values() if worker.is_running())
+ 
+     @staticmethod
+-    def get_audios(bid, uid=None):
+-        """Get audio files for a book."""
++    def get_audios(bid, uid=None, db=None):
++        """Get audio files for a book.
++
++        db 传入 calibre 元数据缓存时走 resolve_audio_dir（O(1)），不再全库扫描；
++        未传（旧调用方）时才回退扫描兜底。
++        """
+         if uid is None:
+             return {"status": "unavailable", "msg": _("登录后才能查看音频"), "count": 0}
+ 
+@@ -260,12 +264,12 @@ class AudioUtils:
+             AudioUtils.site_url = BaseHandler.get_site_url()
+ 
+         book_id = int(bid)
+-        # 静态方法没有 db 实例，靠扫描 library 反查（4.6.0-14 起只此一处布局）
+         audio_dir = None
+         try:
+-            audio_dir = find_audios_by_scanning_library().get(book_id)
++            dirs = AudioUtils.audio_dirs_of(book_id, db)
++            audio_dir = dirs[0] if dirs else None
+         except Exception as err:
+-            logging.debug("[AUDIO] scan library failed: %s", err)
++            logging.debug("[AUDIO] resolve audio dir failed: %s", err)
+         if not audio_dir or not os.path.exists(audio_dir):
+             return {
+                 "status": "unavailable",
+diff --git a/webserver/handlers/book.py b/webserver/handlers/book.py
+index 02c98f9..14bba99 100644
+--- a/webserver/handlers/book.py
++++ b/webserver/handlers/book.py
+@@ -490,7 +490,11 @@ class BookDetail(BaseHandler):
+             "kindle_sender": CONF["smtp_username"],
+             "guest_access": None if self.current_user else BookAccessService.guest_read_source(self, book_id),
+             "book": formated_book,
+-            "audios": AudioUtils.get_audios(bid, self.current_user.id if self.current_user else None),
++            "audios": AudioUtils.get_audios(
++                bid,
++                self.current_user.id if self.current_user else None,
++                db=self.calibre_db_cache,
++            ),
+         }
+ 
+ 

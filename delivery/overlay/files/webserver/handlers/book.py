@@ -1,0 +1,5476 @@
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+
+import datetime
+import hashlib
+import html
+import json
+import logging
+from venv import logger
+import os
+import random
+import re
+import shutil
+import time
+import traceback
+import urllib
+import asyncio
+import threading
+from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
+from webserver.i18n import _
+
+import tornado.escape
+from tornado import web
+from sqlalchemy import func
+
+from webserver import loader, perf, site_time, utils
+from webserver.base import accel
+from webserver.base.formatter import BookFormatter, ReadingStateFormatter
+from webserver.base.image_generator import ImageGenerator
+from webserver.base.image_helper import ImageHelper
+from webserver.base.epub_helper import EpubHelper
+from webserver.base.meta_helper import guess_authors, guess_tags
+from webserver.base.author_norm import resolve_author_list, lock_author
+from webserver.base.homepage import get_homepage_config
+from webserver.services.book_visit_service import BookVisitService
+from webserver.services.book_access_service import BookAccessService
+from webserver.services.autofill import AutoFillService
+from webserver.services.perf_monitor import PerfMonitor
+from webserver.services.ai_fillinfo import AIFillInfoService
+from webserver.services.catalog import CatalogExtractService
+from webserver.services.book_search import BookSearch
+from webserver.services.converter import ConverterService
+from webserver.services.extract import ExtractService, load_txt_content_index
+from webserver.services.mail import MailService
+from webserver.handlers.base import BaseHandler, ListHandler, auth, js, throttle
+from webserver.models import BookReadingStats as BookFormatReadingStatsModel, Item, MyNexusBookAnalysis, Reading, ReadingState, Reader, ScanFile
+from webserver.services.reading_stats_service import ManualReadingService, ReadingStatsService
+from webserver.services.scan_service import ScanService, SCAN_EXT, ImportOptions
+from webserver.services.download_quota_service import DownloadQuotaService
+from webserver.services.book_review_service import BookReviewService
+from webserver.recommend import RecommendConfig, RecommendContext, home_seed, utc_now
+from webserver.plugins.meta import douban, douban_v2
+from webserver.plugins.meta.bookbarn_tags import BookBarnTags
+from webserver.plugins.parser.txt import get_content_encoding
+from webserver.handlers.audio import AudioUtils
+from webserver import constants
+from webserver.constants import COLUMN_CATEGORY, CALIBRE_COLUMN_CATEGORY
+from webserver.constants import ACCEPTED_BOOK_FORMATS, CALIBRE_ERROR_FLAG, SCANNED_DOCUMENT_FORMATS
+from webserver.base.book_files import InvalidBookFileError, read_book_metadata, validate_book_file
+from webserver.constants import CALIBRE_COLUMN_BOOK_TYPE, CALIBRE_COLUMN_PHY_COUNT
+from webserver.constants import BOOK_TYPE_EBOOK, BOOK_TYPE_PHYSICAL, AUTO_FILL_META
+from webserver.constants import COLUMN_EXT_LINK, CALIBRE_COLUMN_EXT_LINK
+from webserver.constants import CALIBRE_COLUMN_LOCATION, COLUMN_LOCATION
+from webserver.constants import CALIBRE_COLUMN_DYNAMIC_COVER, COLUMN_DYNAMIC_COVER
+from webserver.constants import CALIBRE_COLUMN_TRANSLATORS, COLUMN_TRANSLATORS
+
+
+def _load_jieba():
+    try:
+        import jieba
+        return jieba
+    except ImportError:
+        return None
+
+
+# §PDF 占位标题§ 这些标题是 PDF 生成工具留下的痕迹，没有任何书名信息，视同"没有标题"。
+# 4.6.0-16：原来只有单文件上传一处判 SSReader Print.，分片上传/分离格式两处
+# 直接把标题覆盖成文件名——同一个文件走不同上传入口得到不同书名，无法解释。
+PDF_PLACEHOLDER_TITLES = frozenset(("SSReader Print.", "Microsoft Word - ", "Untitled"))
+
+# PDF 标题里出现这些词说明是"下载工具"写的，同样不可信
+_PDF_BAD_TITLE_MARKERS = ("下载工具",)
+
+# 作者占位值：calibre 读不出作者时填 Unknown，等效于没读到
+_AUTHOR_PLACEHOLDERS = frozenset(("unknown", "未知", "佚名", "anonymous", "none"))
+
+
+def normalize_pdf_meta(mi, filename_stem, prefer_filename=None):
+    """统一 PDF 的标题/作者取值口径，消除各处上传路径各写一套的分裂。
+
+    取值优先级（prefer_filename 为 None 时读 CONF["PDF_TILE_WITH_FILE_NAME"]）：
+      1. prefer_filename=True  -> 标题用文件名
+      2. 内嵌标题可信（非空、非占位）-> 用内嵌标题
+      3. 否则回退文件名
+
+    **标题一律整串使用，不做任何拆分**。文件名前后可能带 [作者]、[出版]、（版本）
+    等各种信息，想靠规则剥干净是不现实的，剥错还比不剥更难发现。书名该显示什么
+    由内嵌元数据决定；内嵌不可信时才退到文件名整串，让用户在书详情页一眼看出
+    「这本书的元数据没读出来」，而不是被一个看似干净、实则残缺的标题骗过去。
+    入库后的目录名与文件名由 calibre 按自己的规则生成（title + author + id），
+    与源文件名无关，不需要这里提前处理。
+
+    作者：内嵌作者非空且不是占位值时保留，否则用 utils.guess_author_from_filename
+    从文件名里**保守地**捞一个，捞不到才是"佚名"。
+    ⚠️ 4.6.0-16 之前分片上传把作者**无条件**改成"佚名"，导致刚同步进 PDF 的
+       作者元数据在重新导入时被丢弃——用户反馈"改了等于没改"的直接原因。
+    """
+    if prefer_filename is None:
+        prefer_filename = CONF.get("PDF_TILE_WITH_FILE_NAME", False)
+
+    stem = utils.remove_zlibrary_suffix(filename_stem or "")
+    if prefer_filename:
+        mi.title = stem
+    else:
+        title = (mi.title or "").strip()
+        bad = (
+            not title
+            or title in PDF_PLACEHOLDER_TITLES
+            or any(marker in title for marker in _PDF_BAD_TITLE_MARKERS)
+        )
+        mi.title = stem if bad else utils.remove_zlibrary_suffix(title)
+
+    authors = mi.authors or []
+    if not authors or str(authors[0]).strip().lower() in _AUTHOR_PLACEHOLDERS:
+        guessed = utils.guess_author_from_filename(stem)
+        mi.authors = [guessed] if guessed else [_("佚名")]
+    return mi
+
+
+def normalize_txt_meta(mi, filename_stem):
+    """统一 TXT 的标题/作者取值：文件名里"作者：某某"的约定优先。"""
+    title = utils.remove_zlibrary_suffix(filename_stem or "")
+    title, author = utils.guess_title_author_from_filename(title)
+    mi.title = title if title else (filename_stem or "")
+    mi.authors = [author] if author else [_("佚名")]
+    return mi
+
+
+# 重新导入时，允许从文件补进书库的字段（顺序即比较顺序）
+_FORMAT_MERGE_FIELDS = ("title", "authors", "publisher", "tags", "series", "comments", "languages")
+
+
+def _meta_value_present(mi, name):
+    """字段是否有"实质内容"（空列表/占位作者/空字符串都算没有）。"""
+    value = mi.get(name) if hasattr(mi, "get") else getattr(mi, name, None)
+    if name == "authors":
+        return bool(value) and str(value[0]).strip().lower() not in _AUTHOR_PLACEHOLDERS
+    if name in ("tags", "languages"):
+        return bool(value)
+    if name == "comments":
+        text = (value or "").strip()
+        return bool(text) and text not in ("<>", _("无详细介绍"))
+    return bool(str(value or "").strip())
+
+
+def merge_meta_from_file(db, book_id, file_mi, force=False):
+    """把文件内元数据补进已有书记录；force=True 时有值也覆盖。
+
+    §为什么需要§ 重新导入一本"刚同步过元数据"的书时，书名与库内一致 -> 判重命中
+    同一本 -> 走 add_format 只换文件、不动记录，用户看到"元数据没变"。
+    默认只补空字段（不破坏书库记录权威性），force=True 时整体覆盖。
+    返回实际改动的字段名列表，供前端提示。
+    """
+    if file_mi is None:
+        return []
+    try:
+        current = db.get_metadata(book_id, index_is_id=True, get_user_categories=False)
+    except Exception as err:
+        logging.info("[META_MERGE] get_metadata failed for book %s: %s", book_id, err)
+        return []
+    if current is None:
+        return []
+    changed = []
+    for name in _FORMAT_MERGE_FIELDS:
+        try:
+            incoming = file_mi.get(name) if hasattr(file_mi, "get") else getattr(file_mi, name, None)
+            if not _meta_value_present(file_mi, name):
+                continue
+            if not force and _meta_value_present(current, name):
+                continue
+            old = current.get(name) if hasattr(current, "get") else getattr(current, name, None)
+            if old == incoming:
+                continue
+            current.set(name, incoming)
+            changed.append(name)
+        except Exception as err:  # 单个字段异常不影响其它字段
+            logging.info("[META_MERGE] skip field %s for book %s: %s", name, book_id, err)
+    if not changed:
+        return []
+    try:
+        if current.title:
+            current.title_sort = utils.get_title_sort(current.title)
+        if current.authors:
+            current.author_sort = utils.super_strip(current.authors[0])
+        db.set_metadata(book_id, current, force_changes=True)
+    except Exception as err:
+        logging.error("[META_MERGE] failed to apply merged meta for book %s: %s", book_id, err)
+        logging.error(traceback.format_exc())
+        return []
+    logging.info("[META_MERGE] book %s merged fields from file: %s (force=%s)", book_id, changed, force)
+    return changed
+
+
+def _merge_meta_force(handler):
+    """读 merge_meta_force 开关；非请求上下文（单测/内部调用）安全返回 False。"""
+    try:
+        return str(handler.get_argument("merge_meta_force", "0")).lower() in ("1", "true")
+    except Exception:
+        return False
+
+
+CONF = loader.get_settings()
+
+
+MAX_SHOWN_IDS = 500
+SUGGESTION_COUNT = 12
+SUGGESTION_SPARE = 4
+
+
+class Index(BaseHandler):
+    def fmt(self, b, cover_only=False):
+        if cover_only:
+            return BookFormatter(self, b).format(include_comments=False)
+        return BookFormatter(self, b).format(strip_comments=True)
+
+    def _reader_avatar_url(self, reader):
+        if not reader or not reader.avatar:
+            return ""
+        if reader.avatar.startswith("http"):
+            return reader.avatar.replace("http://", "https://")
+        return self.site_url + "/avatar/%s" % reader.avatar
+
+    async def _social_recommend_books(self):
+        """首页"其他用户推荐"：最近 90 天内被评价（且状态通过）的书，见 plan §2.3。
+        仅登录且个人偏好 show_home_recommendations=True 时才计算，游客/关闭时返回空列表。
+
+        是否展示这张卡由 HOMEPAGE_CONFIG 决定（见 homepage_from_legacy：老站点的
+        ENABLE_BOOK_RECOMMEND_TO_OTHERS 只用于推导初始可见性）。这个 flag 继续管
+        "评价是否计入推荐人数/详情页推荐"，不再反过来让首页卡片永远取不到数据。"""
+        if not CONF.get("ENABLE_BOOK_REVIEW", True) or perf.lite_on("LITE_NO_RECOMMEND"):
+            return []
+        if not self.current_user or not getattr(self.current_user, "show_home_recommendations", True):
+            return []
+        review_rows = BookReviewService.recent_recommendations(self.sqlite_session, days=90, limit=12)
+        if not review_rows:
+            return []
+        rec_books = {b["id"]: b for b in await self.get_books_for_list_async(ids=[r.book_id for r in review_rows])}
+        readers = {
+            u.id: u for u in self.sqlite_session.query(Reader).filter(Reader.id.in_({r.reader_id for r in review_rows})).all()
+        }
+        result = []
+        for row in review_rows:
+            book = rec_books.get(row.book_id)
+            if not book:
+                continue
+            book_data = self.fmt(book, cover_only=True)
+            reader = readers.get(row.reader_id)
+            book_data["recommender"] = {
+                "nickname": (reader.name or reader.username) if reader else "",
+                "avatar": self._reader_avatar_url(reader),
+            }
+            result.append(book_data)
+        return result
+
+    def _legacy_home_ids(self, ids, cnt_random, cnt_recent):
+        random_ids = random.sample(ids, min(cnt_random, len(ids)))
+        ids = sorted(ids, reverse=True)
+        new_ids = random.sample(ids[0:600], min(cnt_recent, len(ids[0:600])))
+        return sorted(random_ids, reverse=True), sorted(new_ids, reverse=True)
+
+    def _stable_home(self):
+        """Same results within a time bucket only when RECOMMEND_SEED_BUCKET_MINUTES > 0 and this is not a refresh."""
+        return RecommendConfig.from_conf(CONF).seed_bucket_minutes > 0 and self.get_argument("refresh", "0") != "1"
+
+    def _home_seed(self, reader_id):
+        if self.get_argument("seed", ""):
+            return self.get_argument("seed")
+        if not self._stable_home():
+            return str(time.time_ns())
+        return home_seed(reader_id, utc_now(), RecommendConfig.from_conf(CONF).seed_bucket_minutes)
+
+    def _shown_ids(self):
+        """Books already on screen (`exclude=1,2,3`), avoided by the next batch when possible."""
+        ids = [int(p) for p in self.get_argument("exclude", "").split(",") if p.strip().isdigit()]
+        return frozenset(ids[:MAX_SHOWN_IDS])
+
+    def _recommend_home_ids(self, cnt_random, cnt_recent, exclude_ids, seed, reader_id):
+        if not CONF.get("RECOMMEND_ENABLE", True) or self.get_argument("personalized", "1") == "0" or perf.lite_on("LITE_NO_RECOMMEND"):
+            return None
+        service = self.settings.get("recommend")
+        if service is None:
+            return None
+        ctx = RecommendContext(
+            reader_id=reader_id,
+            is_visible=self.is_features_visible,
+            exclude_ids=frozenset(exclude_ids),
+            rng=random.Random(seed),
+            avoid_ids=self._shown_ids(),
+            shuffle=not self._stable_home(),
+        )
+        try:
+            result = service.home(ctx, cnt_random, cnt_recent)
+        except Exception:
+            logging.exception("[recommend] home recommendation failed, fall back to legacy")
+            return None
+        return (result.random_ids, result.new_ids, result.reasons) if result else None
+
+    def _fmt_with_reason(self, book, reasons, cover_only=False):
+        data = self.fmt(book, cover_only=cover_only)
+        reason = reasons.get(book["id"])
+        if reason:
+            data["reason"] = {"type": reason.type, "value": reason.value}
+        return data
+
+    def _all_book_ids(self):
+        return list(self.calibre_db_cache.all_book_ids())
+
+    async def _home_books(self, random_ids, new_ids):
+        books = {b["id"]: b for b in await self.get_books_for_list_async(ids=list(set(random_ids) | set(new_ids)), convert_to_local_tz=False)}
+        return [books[i] for i in random_ids if i in books], [books[i] for i in new_ids if i in books]
+
+    @js
+    @throttle()
+    async def get(self):
+        """首页显示随机书籍和最近添加的书籍"""
+        homepage_config = get_homepage_config()
+        hidden = set(homepage_config.get("hidden") or [])
+        need_random = "index.randomRecommendation" not in hidden
+        need_new = "index.newRecommendation" not in hidden
+        need_social = "index.socialRecommendation" not in hidden
+
+        setting_random_count = CONF.get("MAIN_PAGE_RANDOM_COUNT", 12)
+        setting_recent_count = CONF.get("MAIN_PAGE_RECENT_COUNT", 12)
+        if perf.lite_on("LITE_PAGE_SIZE"):
+            setting_random_count = min(setting_random_count, 12)
+            setting_recent_count = min(setting_recent_count, 12)
+        if need_random:
+            cnt_random = min(int(self.get_argument("random", setting_random_count)), setting_random_count)
+        else:
+            cnt_random = 0
+        if need_new:
+            cnt_recent = min(int(self.get_argument("recent", setting_recent_count)), 200)
+        else:
+            cnt_recent = 0
+
+        home_key = None
+        if perf.lite_on("LITE_HOME_CACHE") and self.get_argument("refresh", "0") != "1":
+            home_key = (
+                self.user_id(), cnt_random, cnt_recent, self.get_argument("exclude", ""), self.get_argument("personalized", "1"),
+                self.get_argument("seed", ""), need_random, need_new, need_social, tuple(sorted(hidden)),
+            )
+            cached = BaseHandler._home_cache.get(home_key, self.library_version())
+            if cached is not None:
+                cached = dict(cached)
+                cached["homepage"] = homepage_config
+                return cached
+
+        if not need_random and not need_new and not need_social:
+            return {
+                "err": "ok",
+                "random_books_count": 0,
+                "new_books_count": 0,
+                "random_books": [],
+                "new_books": [],
+                "social_recommend_books": [],
+                "seed": "",
+                "homepage": homepage_config,
+            }
+
+        t0 = time.perf_counter()
+        ids = await self.run_calibre_read_async(self._all_book_ids)
+        t_ids = time.perf_counter()
+        if not ids:
+            return {
+                "err": "nobooks",
+                "random_books_count": 0,
+                "new_books_count": 0,
+                "random_books": [],
+                "new_books": [],
+                "social_recommend_books": [],
+                "homepage": homepage_config,
+            }
+
+        cnt_recent = min(cnt_recent, len(ids))
+        cnt_random = min(cnt_random, len(ids))
+        social_books = await self._social_recommend_books() if need_social else []
+        t_social = time.perf_counter()
+        reader_id = self.user_id() or None
+        seed = self._home_seed(reader_id)
+        home_ids = self._recommend_home_ids(cnt_random, cnt_recent, [b["id"] for b in social_books], seed, reader_id)
+        random_ids, new_ids, reasons = home_ids or (*self._legacy_home_ids(ids, cnt_random, cnt_recent), {})
+        t_home = time.perf_counter()
+        random_books, new_books = await self._home_books(random_ids, new_ids)
+        t_books = time.perf_counter()
+
+        result = {
+            "err": "ok",
+            "random_books_count": len(random_books),
+            "new_books_count": len(new_books),
+            "random_books": [self._fmt_with_reason(b, reasons, cover_only=True) for b in random_books],
+            "new_books": [self._fmt_with_reason(b, reasons) for b in new_books],
+            "social_recommend_books": social_books,
+            "seed": seed if home_ids else "",
+            "homepage": homepage_config,
+        }
+        t_fmt = time.perf_counter()
+        logging.info(
+            "[index timing] ids=%.0fms social=%.0fms home(%s)=%.0fms get_books=%.0fms fmt=%.0fms total=%.0fms",
+            (t_ids - t0) * 1000, (t_social - t_ids) * 1000, "recommend" if home_ids else "legacy",
+            (t_home - t_social) * 1000, (t_books - t_home) * 1000, (t_fmt - t_books) * 1000, (t_fmt - t0) * 1000,
+        )
+        if home_key is not None:
+            cache_payload = dict(result)
+            cache_payload.pop("homepage", None)
+            BaseHandler._home_cache.put(home_key, self.library_version(), cache_payload)
+        return result
+
+
+class HomepageConfig(BaseHandler):
+    @js
+    def get(self):
+        return {"err": "ok", "config": get_homepage_config()}
+
+
+class BookDetail(BaseHandler):
+    @js
+    def get(self, bid):
+        book = None
+        try:
+            book_id = int(bid)
+            book = self.get_book(book_id, fully=True, raise_exception=False)
+        except Exception as e:
+            logging.error("get book %s failed: %s" % (bid, e))
+
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+
+        if self.current_user and self.get_argument("track", "1") != "0":
+            try:
+                BookVisitService.record(self.current_user.id, book_id)
+            except Exception as e:
+                logging.error("record book visit failed: %s" % e)
+
+        # 添加当前用户的阅读状态信息
+        if self.current_user:
+            reading_state = self.sqlite_session.query(ReadingState).filter(
+                ReadingState.book_id == book_id,
+                ReadingState.reader_id == self.current_user.id
+            ).first()
+
+            # 创建阅读状态映射
+            if reading_state:
+                book["state"] = ReadingStateFormatter.format_reading_state(reading_state)
+            else:
+                book["state"] = ReadingStateFormatter.format_reading_state(None)
+        else:
+            logging.info("User not logged in, skipping reading state.")
+
+        if "state" not in book:
+            book["state"] = {
+                "favorite": 0,
+                "favorite_date": None,
+                "wants": 0,
+                "wants_date": None,
+                "read_state": 0,
+                "read_date": None,
+                "online_read": 0,
+                "download": 0
+            }
+
+        # 分格式的阅读时长/进度统计
+        formated_book = BookFormatter(self, book).format(with_files=True, with_perms=True)
+        formated_book["reading_stats"] = ReadingStatsService.get_book_format_stats(self.current_user.id, book_id) if self.current_user else []
+        analysis = self.sqlite_session.get(MyNexusBookAnalysis, book_id)
+        can_read_ai_data = bool(self.current_user or BookAccessService.guest_read_allowed(self, book_id))
+        formated_book["ai_companion_available"] = bool(self.current_user and analysis and analysis.status == "completed")
+        formated_book["ai_reading_guide"] = analysis.reading_guide if can_read_ai_data and analysis and analysis.status == "completed" else ""
+        if self.is_admin():
+            formated_book["mynexus_configured"] = bool(CONF.get("ENABLE_MYNEXUS") and CONF.get("MYNEXUS_URL") and CONF.get("MYNEXUS_TOKEN"))
+            formated_book["mynexus_analysis"] = {
+                "status": analysis.status,
+                "progress": analysis.progress,
+                "error_msg": analysis.error_msg,
+                "can_retry": analysis.status == "failed",
+            } if analysis else {"status": "not_started", "progress": 0, "error_msg": ""}
+
+        return {
+            "err": "ok",
+            "kindle_sender": CONF["smtp_username"],
+            "guest_access": None if self.current_user else BookAccessService.guest_read_source(self, book_id),
+            "book": formated_book,
+            "audios": AudioUtils.get_audios(
+                bid,
+                self.current_user.id if self.current_user else None,
+                db=self.calibre_db_cache,
+            ),
+        }
+
+
+class BookTags(BaseHandler):
+    # Update the tags by BookBarn Tags API
+    @js
+    @auth
+    def post(self, id):
+        book_id = int(id)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        isbn = book.get("isbn", "")
+        title = book.get("title", "")
+        authors = book.get("authors", [])
+        author = authors[0] if authors else ""
+
+        if title.startswith("百度百科"):
+            return {"err": "ok", "msg": _("无需更新")}
+
+        try:
+            api = BookBarnTags(token=CONF.get("BOOKBARN_TOKEN", ""))
+            if not api:
+                return {"err": "plugin.missing", "msg": _("BookBarn Tags插件未安装")}
+            tags = api.get_tags(isbn=isbn, title=title, author=author)
+            if not tags:
+                tags = ""
+            logging.info(f"BookBarn Tags for book {book_id} ({title}): {tags}")
+            if len(tags) > 0:
+                new_tags = tags.split(",") if tags else None
+                if len(new_tags) > 0:
+                    updated_tags = list(set(new_tags))
+                    self.calibre_db.set_tags(book_id, updated_tags)
+                    logging.info(f"Updated tags for book {book_id}: {updated_tags}")
+                    return {"err": "ok", "msg": _("标签更新成功")}
+            return {"err": "ok", "msg": _("标签已是最新，无需更新")}
+        except Exception as e:
+            logging.error(f"Error updating tags for book {book_id}: {e}")
+            return {"err": "internal", "msg": _("更新标签时发生错误，请稍后再试")}
+
+
+class BookAIFill(BaseHandler):
+    """使用 AI 同步更新单本书的分类、标签、简介和作者介绍"""
+    @js
+    @auth
+    async def post(self, id):
+        book_id = int(id)
+        book = await self.get_book_async(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        # fill_one 内含同步 AI 请求与信息源联网搜索（可达分钟级），下放线程池避免冻住 ioloop
+        result = await utils.run_in_threadpool(AIFillInfoService().fill_one, book_id, force=True)
+        status = result.get("status", "fail")
+        if status == "ok":
+            return {
+                "err": "ok",
+                "msg": _("AI 更新成功"),
+                "category": result.get("category", ""),
+                "tags": result.get("tags", []),
+            }
+        return {"err": "ai.fill.failed", "msg": result.get("msg", _("AI 更新失败"))}
+
+
+class BookUpdateTags(BaseHandler):
+    """Batch update tags for all books with a specific tag"""
+    @js
+    @auth
+    def post(self):
+        if not self.is_admin():
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        tag_name = self.get_argument("tag", "").strip()
+        if not tag_name:
+            return {"err": "params.invalid", "msg": _("请指定标签名称")}
+
+        try:
+            # Search books by tag
+            query = f'tags:="{tag_name}"'
+            book_ids = self.calibre_db_cache.search(query)
+
+            if not book_ids:
+                return {"err": "ok", "msg": _("未找到包含该标签的书籍"), "count": 0}
+
+            # Convert to list to avoid "Set changed size during iteration" error
+            book_ids = list(book_ids)
+
+            # Limit to 300 books
+            total_count = len(book_ids)
+            if total_count > 300:
+                book_ids = book_ids[:300]
+                logging.info(f"Limiting tag update to first 300 books out of {total_count}")
+
+            # Call AutoFillService to update tags in background
+            AutoFillService().auto_fill_all(book_ids, only_tags=True, force=True)
+
+            msg = _("已提交 %d 本书籍的标签更新任务，正在后台处理, 请稍后刷新查看结果") % len(book_ids)
+            if total_count > 300:
+                msg += _("（共找到 %d 本，仅处理前 300 本）") % total_count
+
+            return {"err": "ok", "msg": msg, "count": len(book_ids), "total": total_count}
+
+        except Exception as e:
+            logging.error(f"Error in batch tag update for tag {tag_name}: {e}")
+            return {"err": "internal", "msg": _("批量更新标签时发生错误")}
+
+
+class BookCategory(BaseHandler):
+    @js
+    @auth
+    def post(self, id):
+        book_id = int(id)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        data = tornado.escape.json_decode(self.request.body)
+        category = data.get(COLUMN_CATEGORY, "").strip()
+        if category == '清除' or category.lower() == 'clear':
+            category = ''
+        logging.info(f"Updating category for book {book_id}: {category}")
+        try:
+            # Use set_field directly on the cache to avoid Metadata object issues
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_CATEGORY, {book_id: category})
+            return {"err": "ok", "msg": _("分类更新成功")}
+        except Exception as e:
+            logging.error(f"Error updating category for book {book_id}: {e}")
+            return {"err": "internal", "msg": _("更新分类失败")}
+
+
+class BookLocation(BaseHandler):
+    @js
+    @auth
+    def post(self, id):
+        book_id = int(id)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        data = tornado.escape.json_decode(self.request.body)
+        location = data.get(COLUMN_LOCATION, "").strip()
+        if len(location) > 20:
+            return {"err": "params.location.invalid", "msg": _("位置信息过长")}
+
+        logging.info(f"Updating location for book {book_id}: {location}")
+        try:
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_LOCATION, {book_id: location})
+            return {"err": "ok", "msg": _("位置更新成功")}
+        except Exception as e:
+            logging.error(f"Error updating location for book {book_id}: {e}")
+            return {"err": "internal", "msg": _("更新位置失败")}
+
+
+class BookCatalog(BaseHandler):
+    """重新提取单本书籍的目录信息，优先使用EPUB，其次PDF、TXT"""
+    @js
+    @auth
+    def post(self, id):
+        book_id = int(id)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        result = CatalogExtractService().extract_one(book_id, force=True)
+        if result.get("err") != "ok":
+            return {"err": result.get("err", "internal"), "msg": result.get("msg", _("目录提取失败"))}
+        return {"err": "ok", "msg": _("目录提取成功"), "catalog": result.get("catalog", "")}
+
+
+class BookCatalogBatch(BaseHandler):
+    """批量提取书籍目录：传入idlist时只处理指定书籍(强制重新提取)，否则处理全部书籍(跳过已有目录的书籍)"""
+
+    @js
+    @auth
+    def post(self):
+        if not self.is_admin():
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        extract_status = CatalogExtractService().status()
+        if extract_status["is_running"]:
+            return {"err": "task.running", "msg": _("有目录提取任务正在运行中，请稍后再试")}
+
+        data = tornado.escape.json_decode(self.request.body)
+        idlist = data.get("idlist")
+
+        if isinstance(idlist, list) and len(idlist) > 0:
+            book_ids = [int(bid) for bid in idlist]
+            force = True
+        else:
+            book_ids = list(self.calibre_db_cache.all_book_ids())
+            force = False
+
+        CatalogExtractService().extract_batch(self.current_user.id, book_ids, force=force)
+        msg = _("目录提取任务已启动，共 %d 本，右上角可以查看进度") % len(book_ids)
+        return {"err": "ok", "msg": msg}
+
+
+class BookCategoryBatch(BaseHandler):
+    @js
+    @auth
+    def post(self):
+        if not self.is_admin():
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        data = tornado.escape.json_decode(self.request.body)
+        category = data.get(COLUMN_CATEGORY, "").strip()
+        author = data.get("author", "").strip()
+        tag = data.get("tag", "").strip()
+        series = data.get("series", "").strip()
+
+        if not category:
+            return {"err": "params.category.empty", "msg": _("分类不能为空")}
+
+        if not author and not tag and not series:
+            return {"err": "params.invalid", "msg": _("必须指定作者、标签或丛书")}
+
+        # Find books
+        book_ids = set()
+        if author:
+            # Search by author
+            try:
+                # Use calibre search syntax for author
+                # authors:"=Author Name"
+                query = f'authors:="{author}"'
+                ids = self.calibre_db_cache.search(query)
+                book_ids.update(ids)
+            except Exception as e:
+                logging.error(f"Error searching books by author {author}: {e}")
+                return {"err": "internal", "msg": _("搜索作者书籍失败")}
+
+        if tag:
+            # Search by tag
+            try:
+                query = f'tags:="{tag}"'
+                ids = self.calibre_db_cache.search(query)
+                book_ids.update(ids)
+            except Exception as e:
+                logging.error(f"Error searching books by tag {tag}: {e}")
+                return {"err": "internal", "msg": _("搜索标签书籍失败")}
+
+        if series:
+            # Search by series
+            try:
+                query = f'series:="{series}"'
+                ids = self.calibre_db_cache.search(query)
+                book_ids.update(ids)
+            except Exception as e:
+                logging.error(f"Error searching books by series {series}: {e}")
+                return {"err": "internal", "msg": _("搜索丛书书籍失败")}
+
+        if not book_ids:
+            return {"err": "ok", "msg": _("未找到符合条件的书籍"), "count": 0}
+
+        logging.info(
+            f"Batch updating category to '{category}' for {len(book_ids)} books (Author: {author}, Tag: {tag}, Series: {series})"
+        )
+
+        count = 0
+        try:
+            # Update category for each book
+            # We use the cache's set_field which expects {book_id: value}
+            # To optimize, we can construct a dict for all books if set_field supports it,
+            # but usually it's one call per update or specific batch APIs.
+            # Looking at existing BookCategory.post, it uses:
+            # self.calibre_db_cache.set_field('#category', {book_id: category})
+
+            # set_field can handle a dict of {id: value}
+            updates = {bid: category for bid in book_ids}
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_CATEGORY, updates)
+            count = len(book_ids)
+
+            return {"err": "ok", "msg": _("成功更新 %d 本书籍分类") % count, "count": count}
+        except Exception as e:
+            logging.error(f"Error batch updating category: {e}")
+            return {"err": "internal", "msg": _("批量更新分类失败")}
+
+
+class BookCategories(BaseHandler):
+    def _filter_categories_by_reading_range(self, categories):
+        """根据当前用户的阅读范围设置过滤分类列表，管理员和未登录用户不过滤"""
+        user = self.current_user
+        if not user:
+            # 未登录用户只能看到未设置分类的书籍，因此只能看到一个空分类
+            return []
+        if not user or self.is_admin():
+            return categories
+        # v4.7 读者组：自身未显式设置时回退组配置
+        from webserver.services.reader_group import ReaderGroupService
+        eff = ReaderGroupService.effective_limits(user)
+        read_limit = eff["read_limit"]
+        if read_limit == 0:
+            return categories
+        limit_cats = set(filter(None, eff["limit_categories"].split(',')))
+        if not limit_cats:
+            return categories
+        if read_limit == 1:
+            return [c for c in categories if c["name"] in limit_cats]
+        # read_limit == 2: 黑名单
+        return [c for c in categories if c["name"] not in limit_cats]
+
+    @js
+    async def get(self):
+        # Find the custom column for category
+        category_key = CALIBRE_COLUMN_CATEGORY
+        if category_key not in self.calibre_db.field_metadata:
+            return {"err": "ok", "categories": []}
+
+        meta = self.calibre_db.field_metadata[category_key]
+        table = f"custom_column_{meta['colnum']}"
+        link_table = f"books_{table}_link"
+
+        sql = f"""
+            SELECT t.value, count(l.book) as count
+            FROM {table} t
+            JOIN {link_table} l ON t.id = l.value
+            GROUP BY t.id
+            ORDER BY count DESC
+        """
+
+        try:
+            version = self.library_version()
+            rows = BaseHandler._catalog_cache.get(("categories", sql), version)
+            if rows is None:
+                rows = [(row[0], row[1]) for row in await self.run_calibre_sql(sql)]
+                BaseHandler._catalog_cache.put(("categories", sql), version, rows)
+            categories = [{"name": row[0], "count": row[1]} for row in rows]
+
+            if CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+                categories = self._filter_categories_by_reading_range(categories)
+
+            return {"err": "ok", "categories": categories}
+        except Exception as e:
+            logging.error(f"Error fetching categories: {e}")
+            return {"err": "internal", "msg": _("获取分类列表失败")}
+
+
+class TagSearch(BaseHandler):
+    @js
+    async def get(self):
+        q = (self.get_argument("q", "") or "").strip()
+        limit = min(50, int(self.get_argument("limit", 20)))
+        sql = """SELECT tags.name, count(distinct book) as count
+        FROM tags left join books_tags_link on tags.id = books_tags_link.tag
+        WHERE tags.name LIKE ? ESCAPE '\\'
+        GROUP BY tags.id ORDER BY count DESC LIMIT ?"""
+        try:
+            rows = await self.run_calibre_sql(sql, (q + "%", limit))
+            tags = [{"name": r[0], "count": r[1]} for r in rows]
+            return {"err": "ok", "tags": tags}
+        except Exception as e:
+            logging.error(f"Error searching tags: {e}")
+            return {"err": "internal", "msg": _("获取标签列表失败")}
+
+
+class AuthorSearch(BaseHandler):
+    @js
+    async def get(self):
+        """按输入内容动态查询已有作者，供编辑书籍时的作者输入框做自动完成。
+
+        不传q（或q为空）时，默认按藏书量降序返回前100位作者。
+        """
+        q = (self.get_argument("q", "") or "").strip()
+        limit = min(100, int(self.get_argument("limit", 100)))
+        sql = """SELECT authors.name, count(distinct book) as count
+        FROM authors left join books_authors_link on authors.id = books_authors_link.author
+        WHERE authors.name LIKE ? ESCAPE '\\'
+        GROUP BY authors.id ORDER BY count DESC LIMIT ?"""
+        try:
+            rows = await self.run_calibre_sql(sql, (q + "%", limit))
+            authors = [{"name": r[0], "count": r[1]} for r in rows]
+            return {"err": "ok", "authors": authors}
+        except Exception as e:
+            logging.error(f"Error searching authors: {e}")
+            return {"err": "internal", "msg": _("获取作者列表失败")}
+
+
+class BookConverter(BaseHandler):
+    @js
+    @auth
+    def post(self, id):
+        book_id = int(id)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        fmts = []
+        paths = []
+        for fmt in constants.SUPPORTED_EBOOK_FORMATS:
+            book_path = book.get("fmt_%s" % fmt, None)
+            if book_path:
+                fmts.append(fmt)
+                paths.append(book_path)
+
+        if not fmts:
+            # 仅含 DJVU/UVZ/CBZ 等扫描版格式的书籍没有可转换的电子书源
+            return {"err": "params.book.invalid", "msg": _("本书没有可转换的格式")}
+
+        if ('epub' in fmts) and ('azw3' in fmts):
+            return {"err": "params.book.invalid", "msg": _("本书已有EPUB及Kindle版本, 不需要转换")}
+
+        if fmts[0] == "epub":
+            fmt = "azw3"
+        elif fmts[0] == "pdf":
+            fmt = "epub"
+        else:
+            fmt = "epub"
+
+        if 'docx' in fmts:
+            # docx is preferred than pdf
+            fpath = paths[fmts.index('docx')]
+        else:
+            fpath = paths[0]
+
+        service = ConverterService()
+        if service.is_book_converting(book):
+            return {"err": "params.book.converting", "msg": _("本书正在转换中，请稍后再试")}
+        logging.info(f"Start converting book {book_id} from {fmts[0]} to {fmt}, title:{book.get('title', '')}")
+        service.convert_and_save(self.user_id(), book, fpath, fmt)
+        return {"err": "ok", "content": "%s" % _("转换成功，请稍后刷新页面查看")}
+
+
+class BookToPDF(BaseHandler):
+    @js
+    @auth
+    def post(self, id):
+        book_id = int(id)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        fmts = []
+        paths = []
+        has_pdf = False
+        for fmt in ["epub", "azw3", "mobi", "azw", "pdf", "docx"]:
+            book_path = book.get("fmt_%s" % fmt, None)
+            if not book_path:
+                continue
+            if fmt == "pdf":
+                has_pdf = True
+                continue
+            fmts.append(fmt)
+            paths.append(book_path)
+
+        if has_pdf:
+            return {"err": "params.book.invalid", "msg": _("本书已有PDF版本, 不需要转换")}
+        if len(fmts) == 0:
+            return {"err": "params.book.invalid", "msg": _("本书不支持转换，仅支持EPUB及Kindle使用的格式转换为PDF")}
+
+        fpath = paths[0]
+        service = ConverterService()
+        if service.is_book_converting(book):
+            return {"err": "params.book.converting", "msg": _("本书正在转换中，请稍后再试")}
+        service.convert_and_save(self.user_id(), book, fpath, "pdf")
+        return {"err": "ok", "content": "%s" % _("转换成功，请稍后刷新页面查看")}
+class BookSetSole(BaseHandler):
+    @js
+    @auth
+    def post(self, bid):
+        book = self.get_book(bid, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+        bid = book["id"]
+        if isinstance(book["collector"], dict):
+            cid = book["collector"]["id"]
+        else:
+            cid = book["collector"].id
+        if not self.current_user.can_edit() or not (self.is_admin() or self.is_book_owner(bid, cid)):
+            return {"err": "permission", "msg": _("无权操作")}
+
+        succeed = False
+        try:
+            self.sqlite_session.query(Item).filter(Item.book_id == bid).update({"sole": not book["sole"]})
+            self.sqlite_session.commit()
+            succeed = True
+        except Exception as e:
+            self.sqlite_session.rollback()
+            logging.error("set book %d sole failed: %s" % (bid, e))
+
+        if succeed:
+            return {"err": "ok", "msg": _("更新成功")}
+        else:
+            return {"err": "db.update.failed", "msg": _("更新失败，请稍后再试")}
+
+
+class BookRefer(BaseHandler):
+    _search_executor = ThreadPoolExecutor(max_workers=int(CONF.get("REFER_SEARCH_MAX_WORKERS", 6)))
+    _search_cache_ttl = int(CONF.get("REFER_SEARCH_CACHE_TTL", 180))
+    _search_max_concurrency = int(CONF.get("REFER_SEARCH_MAX_CONCURRENCY", 16))
+    _search_cache = {}
+    _search_inflight = {}
+    _search_state_lock = threading.Lock()
+    _search_semaphore = None
+
+    meta_keys = ["cover_url", "source", "website", "title", "authors", "author_sort", "publisher", "comments", "provider_key", "provider_value", "isbn", "isbn13", "language", "identifiers", "tags", "series"]
+
+    @classmethod
+    def _get_search_semaphore(cls):
+        if cls._search_semaphore is None:
+            cls._search_semaphore = asyncio.Semaphore(cls._search_max_concurrency)
+        return cls._search_semaphore
+
+    @staticmethod
+    def _build_search_key(title, isbn, publisher):
+        return "|".join([(title or "").strip(), (isbn or "").strip(), (publisher or "").strip()])
+
+    @classmethod
+    def _get_cached_books(cls, key):
+        now = time.time()
+        with cls._search_state_lock:
+            entry = cls._search_cache.get(key)
+            if not entry:
+                return None
+            expires_at, books = entry
+            if now >= expires_at:
+                cls._search_cache.pop(key, None)
+                return None
+            return books
+
+    @classmethod
+    def _set_cached_books(cls, key, books):
+        with cls._search_state_lock:
+            cls._search_cache[key] = (time.time() + cls._search_cache_ttl, books)
+
+    @classmethod
+    def _cleanup_inflight(cls, key, fut):
+        with cls._search_state_lock:
+            current = cls._search_inflight.get(key)
+            if current is fut:
+                cls._search_inflight.pop(key, None)
+
+    def _format_refer_books(self, books):
+        rsp = []
+        for b in books:
+            try:
+                d = dict((k, b.get(k, None)) for k in self.meta_keys)
+                # Remoe the key with empty values
+                d = {k: v for k, v in d.items() if v}
+                pubdate = b.get("pubdate")
+                if b.rating:
+                    d["rating"] = round(b.rating, 1)
+                d["pubyear"] = pubdate.strftime("%Y") if pubdate else ""
+                d["pubdate"] = pubdate.strftime("%Y-%m-%d") if pubdate else ""
+                if not d.get("comments", ""):
+                    d["comments"] = _("无详细介绍")
+                rsp.append(d)
+            except Exception as e:
+                logging.error("get book meta error: %s" % e)
+                logging.error(traceback.format_exc())
+        return rsp
+
+    def _convert_to_metadata(self, metadata):
+        from calibre.ebooks.metadata.book.base import Metadata
+        mi = Metadata(metadata.get("title", ""))
+        mi.publisher = metadata.get("publisher", None)
+        mi.authors = metadata.get("authors", [])
+        mi.author_sort = metadata.get("author_sort", None)
+        mi.isbn = metadata.get("isbn", "")
+        mi.isbn13 = metadata.get("isbn13", None)
+        mi.language = metadata.get("language", "zho")
+        mi.identifiers = metadata.get("identifiers", None)
+        mi.comments = metadata.get("comments", None)
+        mi.website = metadata.get("website", None)
+        mi.source = metadata.get("source", None)
+        mi.provider_key = metadata.get("provider_key", None)
+        mi.provider_value = metadata.get("provider_value", None)
+        mi.cover_url = metadata.get("cover_url", None)
+        mi.rating = metadata.get("rating", 0)
+        mi.series = metadata.get("series", None)
+        mi.tags = metadata.get("tags", [])
+        if "pubdate" in metadata:
+            mi.pubdate = utils.parse_date(metadata["pubdate"])
+        return mi
+
+    def plugin_fill_book_cover(self, provider_key, cover_url):
+        return BookSearch.get_cover(provider_key, cover_url)
+
+    def plugin_get_book_meta(self, provider_key, provider_value, mi):
+        return BookSearch.get_metadata_by_provider(provider_key, provider_value, mi)
+
+    def reset_book_meta(self, book_id):
+        book = self.get_book(book_id)
+        for fmt in ["epub", "mobi", "azw", "azw3", "txt", "pdf", "djvu", "cbz"]:
+            book_path = book.get("fmt_%s" % fmt, None)
+            if book_path:
+                break
+        if not book_path:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+        logging.info("[RESET]reset book meta for %d, path=%s" % (book_id, book_path))
+
+        from calibre.ebooks.metadata.meta import get_metadata
+        from calibre.utils.date import now as nowf
+        book_name = os.path.basename(book_path)
+        logging.info("[RESET]book name = " + repr(book_name))
+        fmt = os.path.splitext(book_name)[1]
+        fmt = fmt[1:] if fmt else None
+        if not fmt:
+            return {"err": "params.filename", "msg": _("文件名不合法")}
+        fmt = fmt.lower()
+
+        # read ebook meta
+        _translators = []
+        with open(book_path, "rb") as stream:
+            org_mi = get_metadata(stream, stream_type=fmt, use_libprs_metadata=True)
+            org_mi.title = utils.super_strip(org_mi.title)
+            if org_mi.authors:
+                _authors_, _translators = guess_authors(org_mi.authors)
+            else:
+                _authors_, _translators = guess_authors([org_mi.author_sort])
+            # 4.6.0-9：电子书内嵌元数据是第三个脏来源（前两个：有声书 ID3、刮削源）。
+            # 归一化到别名表中的标准名；原文为空时保留清洗结果，不要凭空造作者。
+            org_mi.authors = resolve_author_list(_authors_) or _authors_
+            logging.info(f"[RESET] get the book title from book file: {org_mi.title}")
+            if org_mi.isbn:
+                org_mi.set("isbn", utils.super_strip(org_mi.isbn))
+            else:
+                org_mi.set("isbn", "")
+            if org_mi.publisher:
+                org_mi.set("publisher", utils.super_strip(org_mi.publisher))
+            else:
+                org_mi.set("publisher", "")
+            if org_mi.tags:
+                org_mi.set("tags", guess_tags(org_mi.tags))
+            else:
+                org_mi.set("tags", [])
+            if org_mi.series:
+                org_mi.set("series", utils.super_strip(org_mi.series))
+            else:
+                org_mi.set("series", "")
+            if org_mi.series_index:
+                try:
+                    org_mi.set("series_index", float(org_mi.series_index))
+                except Exception:
+                    org_mi.set("series_index", 1.0)
+        if org_mi.title and org_mi.title == CALIBRE_ERROR_FLAG:
+            return {"err": "book.invalid", "msg": _("此书籍文件无法识别, 或者受DRM保护无法处理")}
+
+        # 4.6.0-16：PDF 不再无条件把作者改成"佚名"——文件里若已写入可信作者就保留。
+        # 标题仍以库内记录为准（重置语义就是"恢复库里那一份"）。
+        if fmt == "txt":
+            org_mi.title = book.get("title", book_name[:-4])
+            org_mi.authors = [_("佚名")]
+        elif fmt == "pdf":
+            org_mi.title = book.get("title") or org_mi.title
+            authors = org_mi.authors or []
+            if not authors or str(authors[0]).strip().lower() in _AUTHOR_PLACEHOLDERS:
+                org_mi.authors = [_("佚名")]
+
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        org_mi.set("comments", _(""))
+        if org_mi.get("comments", "") == "":
+            org_mi.set("comments", _("无详细介绍"))
+        dynamic_cover = False
+        if CONF.get("USE_DYNAMIC_COVER", False) and org_mi.cover_data is not None:
+            (data, mime) = org_mi.cover_data
+            if data is None and mime is None:
+                author = org_mi.authors[0] if org_mi.authors else _("佚名")
+                data = ImageGenerator.generate_cover(org_mi.title, author)
+                if data:
+                    org_mi.cover_data = ("jpeg", data)
+                    dynamic_cover = True
+        if org_mi.cover_data and org_mi.cover_data[1] and org_mi.cover_data[1][:4] == b"RIFF":
+            org_mi.cover_data = ("jpeg", ImageHelper.convert_to_jpeg(org_mi.cover_data[1]))
+        org_mi.timestamp = nowf()
+        self.calibre_db.set_metadata(book_id, org_mi, force_changes=True)
+        self.calibre_db_cache.set_field(CALIBRE_COLUMN_CATEGORY, {book_id: ""})
+        self.calibre_db_cache.set_field(CALIBRE_COLUMN_DYNAMIC_COVER, {book_id: 1 if dynamic_cover else 0})
+        if _translators:
+            translators = ",".join(_translators)
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_TRANSLATORS, {book_id: translators})
+
+        return {"err": "ok", "book_id": book_id}
+
+    @js
+    @auth
+    async def get(self, id):
+        book_id = int(id)
+        # 优先使用URL参数中的书籍信息，避免查询数据库
+        title = self.get_argument('title', "")
+        isbn = self.get_argument('isbn', "")
+        publisher = self.get_argument('publisher', "")
+
+        # 如果参数不完整，则查询数据库获取（保持向后兼容）
+        if not title and not isbn:
+            mi = self.calibre_db.get_metadata(book_id, index_is_id=True)
+            title = title or mi.title
+            isbn = isbn or mi.isbn
+            publisher = publisher or mi.publisher
+
+        logging.info(f"BookRefer: Searching for book meta with title='{title}', isbn='{isbn}', publisher='{publisher}'")
+        key = self._build_search_key(title, isbn, publisher)
+        cached_books = self._get_cached_books(key)
+        if cached_books is not None:
+            return {"err": "ok", "books": self._format_refer_books(cached_books,), "cached": True}
+
+        semaphore = self._get_search_semaphore()
+        loop = asyncio.get_running_loop()
+
+        async with semaphore:
+            created = False
+            with self._search_state_lock:
+                fut = self._search_inflight.get(key)
+                if fut is None:
+                    fut = loop.run_in_executor(
+                        self._search_executor,
+                        BookSearch.search_books,
+                        title,
+                        isbn,
+                        publisher,
+                    )
+                    self._search_inflight[key] = fut
+                    created = True
+
+            if created:
+                fut.add_done_callback(lambda f, _key=key: self._cleanup_inflight(_key, f))
+
+            search_timeout = float(CONF.get("REFER_SEARCH_TIMEOUT", 60))
+            try:
+                books = await asyncio.wait_for(asyncio.shield(fut), timeout=search_timeout)
+            except asyncio.TimeoutError:
+                logging.warning("BookRefer search timeout: key=%s", key)
+                fallback = self._get_cached_books(key) or []
+                return {"err": "timeout", "books": self._format_refer_books(fallback), "msg": _("查询超时，请稍后重试")}
+            except Exception as e:
+                logging.error("BookRefer search failed: %s", e)
+                fallback = self._get_cached_books(key) or []
+                return {"err": "search.failed", "books": self._format_refer_books(fallback), "msg": _("查询失败，请稍后重试")}
+
+        books = books or []
+        if books:
+            self._set_cached_books(key, books)
+        return {"err": "ok", "books": self._format_refer_books(books)}
+
+    @js
+    @auth
+    def post(self, id):
+        from calibre.utils.date import now as nowf
+        should_reset = self.get_argument("reset", "no")
+        provider_key = self.get_argument("provider_key", "error")
+        provider_value = self.get_argument("provider_value", "")
+        only_meta = self.get_argument("only_meta", "")
+        only_cover = self.get_argument("only_cover", "")
+        only_author_comments = self.get_argument("only_author_comments", "")
+        metadata = self.get_argument("metadata", "")
+        if metadata:
+            try:
+                metadata = json.loads(metadata)
+            except Exception as e:
+                logging.error(f"Error parsing metadata JSON: {e}")
+                return {"err": "params.invalid", "msg": _("无效的metadata参数")}
+        if not self.current_user.can_edit():
+            return {"err": "permission", "msg": _("无权操作")}
+
+        book_id = int(id)
+        mi = self.calibre_db.get_metadata(book_id, index_is_id=True)
+        if not mi:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        if should_reset == "yes":
+            return self.reset_book_meta(book_id)
+
+        if not provider_key:
+            return {"err": "params.provider_key.invalid", "msg": _("请求参数错误")}
+        if not provider_value:
+            return {"err": "params.provider_key.invalid", "msg": _("请求参数错误")}
+        if [only_meta, only_cover, only_author_comments].count("yes") > 1:
+            return {"err": "params.conflict", "msg": _("参数冲突")}
+
+        refer_mi = None
+        if provider_key == douban.KEY:
+            try:
+                refer_mi = self.plugin_get_book_meta(provider_key, provider_value, mi)
+                if not refer_mi:
+                    return {"err": "plugin.no_result", "msg": _("未找到相关信息或被限制访问，频繁出现请稍后再试，或查看日志确认原因")}
+                # Correct the author if douban detail not return authors
+                if not refer_mi.authors or (len(refer_mi.authors) == 1 and refer_mi.authors[0] in ("佚名", "")):
+                    refer_mi.author_sort = metadata.get("author_sort", None) if metadata else mi.author_sort
+                    refer_mi.authors = metadata.get("authors", []) if metadata else mi.authors
+            except Exception as e:
+                logging.error(f"Error fetching book meta from plugin {provider_key}: {e}")
+                return {"err": "plugin.no_result", "msg": _("未找到相关信息或被限制访问，频繁出现请稍后再试，或查看日志确认原因")}
+        else:
+            if provider_key == douban_v2.KEY and metadata and metadata["comments"] == ".....":
+                metadata["comments"] = ""
+                refer_mi = self.plugin_get_book_meta(provider_key, provider_value, metadata)
+            if not refer_mi:
+                refer_mi = self._convert_to_metadata(metadata) if metadata else mi
+            if only_meta != "yes" and only_author_comments != "yes":
+                try:
+                    cover_url = metadata.get("cover_url") if metadata else None
+                    logging.debug(f"[Metadata] Try to get cover {cover_url}")
+                    if cover_url:
+                        refer_mi.cover_data = self.plugin_fill_book_cover(provider_key, cover_url)
+                except Exception as e:
+                    logging.error(f"Error filling book metadata from plugin {provider_key}: {e}")
+
+        if not refer_mi:
+            return {"err": "plugin.fail", "msg": _("拉取图书信息异常，请重试")}
+
+        _authors, _translators = [], []
+        if only_cover == "yes":
+            # just set cover
+            if not refer_mi.cover_data:
+                return {"err": "plugin.no_cover", "msg": _("未找到封面信息")}
+            mi.cover_data = refer_mi.cover_data
+        elif only_author_comments == "yes":
+            # just set authors and comments
+            if refer_mi.authors:
+                _authors, _translators = guess_authors(refer_mi.authors)
+            elif refer_mi.author_sort:
+                _authors, _translators = guess_authors([refer_mi.author_sort])
+            if _authors:
+                # 4.6.0-9：只改作者/简介的场景（列表页的"更新作者简介"）同样归一化
+                _authors = resolve_author_list(_authors) or _authors
+                mi.authors = _authors
+                if refer_mi.author_sort:
+                    mi.author_sort = refer_mi.author_sort
+            if refer_mi.comments:
+                mi.comments = refer_mi.comments
+            if not _authors and not refer_mi.comments:
+                return {"err": "plugin.no_result", "msg": _("未找到作者及简介信息")}
+        else:
+            if only_meta == "yes":
+                refer_mi.cover_data = None
+            if len(refer_mi.tags) == 0 and len(mi.tags) == 0:
+                ts = []
+                for tag in CONF['BOOK_NAV'].replace("=", "/").replace("\n", "/").split("/"):
+                    if tag in refer_mi.title or tag in refer_mi.comments:
+                        ts.append(tag)
+                    elif tag in refer_mi.authors:
+                        ts.append(tag)
+                if len(ts) > 0:
+                    mi.tags += ts[:8]
+                    logging.debug("tags are %s" % ','.join(mi.tags))
+                    self.calibre_db.set_tags(book_id, mi.tags)
+            # update authors
+            if refer_mi.authors:
+                _authors, _translators = guess_authors(refer_mi.authors)
+            elif refer_mi.author_sort:
+                _authors, _translators = guess_authors([refer_mi.author_sort])
+            # 4.6.0-9：界面点"刮削"也是脏作者进库的一条路，与 autofill 走同一套归一化。
+            # 注意这里**不打锁**——用户只是点了刮削按钮，没手工改作者，
+            # 打锁会让这本书从此脱离自动刮削，属于越权替他做决定。
+            _authors = resolve_author_list(_authors) or _authors
+            refer_mi.authors = _authors
+            mi.smart_update(refer_mi, replace_metadata=True)
+
+        mi.timestamp = nowf()
+        self.calibre_db.set_metadata(book_id, mi, force_changes=True)
+        if _translators:
+            translators = ",".join(_translators)
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_TRANSLATORS, {book_id: translators})
+        return {"err": "ok"}
+
+
+class BookCover(BaseHandler):
+    def generate_default_cover(self, book_id, mi):
+        from calibre.utils.date import now as nowf
+        title = mi.title if mi.title else _("未知书籍")
+        author = mi.authors[0] if mi.authors else _("佚名")
+        cover_data = ImageGenerator.generate_cover(title, author)
+        if cover_data:
+            mi.cover_data = ("jpeg", cover_data)
+            mi.timestamp = nowf()
+            self.calibre_db.set_metadata(book_id, mi)
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_DYNAMIC_COVER, {book_id: 1})
+            return {"err": "ok", "msg": _("已生成默认封面")}
+        else:
+            return {"err": "cover.generate_failed", "msg": _("生成封面失败")}
+
+    @js
+    @auth
+    def post(self, id):
+        from calibre.utils.date import now as nowf
+        book_id = int(id)
+        mi = self.calibre_db.get_metadata(book_id, index_is_id=True)
+        if not mi:
+            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
+
+        fileinfo = self.request.files.get('cover_data')
+        if not fileinfo:
+            # 生成默认封面
+            return self.generate_default_cover(book_id, mi)
+
+        fileinfo = fileinfo[0]
+        # Prepare cover data as (format, bytes) tuple for Calibre API
+        img_data = fileinfo['body']
+        # Determine image format from filename or content_type
+        ext = os.path.splitext(fileinfo['filename'])[1].lower().lstrip('.')
+        if not ext and 'content_type' in fileinfo:
+            ext = fileinfo['content_type'].split('/')[-1]
+        if ext == 'webp' or img_data[:4] == b'RIFF' and img_data[8:12] == b'WEBP':
+            # Calibre/Qt 不一定带 webp 插件，统一转成 jpeg 再保存
+            from calibre.utils.img import image_from_data, image_to_data
+            try:
+                img_data = image_to_data(image_from_data(img_data), fmt='jpeg')
+            except Exception:
+                return {"err": "params.cover.invalid", "msg": _("封面图片格式无效")}
+            ext = 'jpeg'
+        mi.cover_data = (ext or None, img_data)
+        mi.timestamp = nowf()
+
+        self.calibre_db.set_metadata(book_id, mi)
+        self.calibre_db_cache.set_field(CALIBRE_COLUMN_DYNAMIC_COVER, {book_id: 0})
+        return {"err": "ok"}
+
+
+class BookCropCover(BaseHandler):
+    @js
+    @auth
+    def post(self):
+        from calibre.utils.date import now as nowf
+        data = tornado.escape.json_decode(self.request.body) if self.request.body else {}
+        book_ids = []
+        if "id" in data:
+            book_ids.append(int(data["id"]))
+        elif "ids" in data:
+            book_ids.extend([int(x) for x in data["ids"]])
+        else:
+            req_id = self.get_argument("id", None)
+            if req_id:
+                book_ids.append(int(req_id))
+            else:
+                req_ids = self.get_arguments("ids")
+                if req_ids:
+                    book_ids.extend([int(x) for x in req_ids])
+
+        if not book_ids:
+            return {"err": "params.invalid", "msg": _("请指定书籍ID")}
+
+        updated_count = 0
+        failed_count = 0
+
+        for book_id in book_ids:
+            if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+                failed_count += 1
+                continue
+            try:
+                # 获取当前封面
+                cover_data = self.calibre_db.cover(book_id, index_is_id=True)
+                if not cover_data:
+                    logging.info("Book %d cover data is empty, skipped cropping." % book_id)
+                    failed_count += 1
+                    continue
+
+                new_cover_bytes = ImageHelper.crop_white_borders(cover_data)
+                if new_cover_bytes:
+                    mi = self.calibre_db.get_metadata(book_id, index_is_id=True)
+                    if mi:
+                        mi.cover_data = ("jpeg", new_cover_bytes)
+                        mi.timestamp = nowf()
+                        self.calibre_db.set_metadata(book_id, mi)
+                        self.calibre_db_cache.set_field(CALIBRE_COLUMN_DYNAMIC_COVER, {book_id: 0})
+                        updated_count += 1
+            except Exception as e:
+                logging.error(f"Error cropping cover for book {book_id}: {e}")
+                logging.error(traceback.format_exc())
+                failed_count += 1
+
+        return {
+            "err": "ok",
+            "msg": _("处理完成，成功更新 %d 本，跳过/失败 %d 本。") % (updated_count, len(book_ids) - updated_count),
+            "data": {
+                "updated": updated_count,
+                "failed": len(book_ids) - updated_count
+            }
+        }
+
+
+class BookFavorite(BaseHandler):
+    @js
+    @auth
+    def post(self, id):
+        """设置或取消收藏某本书"""
+        book_id = int(id)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+
+        user_id = self.user_id()
+        data = tornado.escape.json_decode(self.request.body)
+        favorite_status = data.get("favorite", False)
+
+        # 查找或创建阅读状态记录
+        reading_state = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.book_id == book_id,
+            ReadingState.reader_id == user_id
+        ).first()
+
+        if not reading_state:
+            reading_state = ReadingState(book_id, user_id)
+            self.sqlite_session.add(reading_state)
+
+        # 设置收藏状态
+        reading_state.set_favorite(favorite_status)
+        self.sqlite_session.add(reading_state)
+        self.sqlite_session.commit()
+        self.invalidate_recommendation()
+
+        action = "收藏" if favorite_status else "取消收藏"
+        return {"err": "ok", "msg": _("%s成功") % action}
+
+    @js
+    @auth
+    def get(self):
+        """获取当前用户的收藏（分页）"""
+        user_id = self.user_id()
+        logging.info("User %d is fetching favorite books." % user_id)
+        query = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.reader_id == user_id,
+            ReadingState.favorite == 1
+        )
+        total_cnt = query.count()
+
+        start = self.get_argument_start()
+        page_size = CONF.get("DEFAULT_PAGE_SIZE", 60)
+        delta = max(min(int(self.get_argument("size", page_size)), 100), 0)
+        reading_states = query.order_by(ReadingState.favorite_date.desc()).limit(delta).offset(start).all()
+
+        # 批量获取所有书籍
+        book_ids = [state.book_id for state in reading_states]
+        books_dict = {book['id']: book for book in self.get_books_for_list(ids=book_ids)}
+
+        # 构建书籍状态字典
+        state_dict = {state.book_id: state for state in reading_states}
+
+        favorite_books = []
+        for book_id in book_ids:
+            book = books_dict.get(book_id)
+            if not book:
+                continue
+            book_data = BookFormatter(self, book).format()
+            book_data["state"] = ReadingStateFormatter.format_reading_state(state_dict[book_id])
+            favorite_books.append(book_data)
+
+        return {"err": "ok",
+                "title": _("我的收藏"),
+                "total": total_cnt,
+                "books": favorite_books}
+
+
+class BookVisits(BaseHandler):
+    @js
+    @auth
+    def get(self):
+        start = self.get_argument_start()
+        page_size = CONF.get("DEFAULT_PAGE_SIZE", 60)
+        size = max(min(int(self.get_argument("size", page_size)), 100), 0)
+        rows, total = BookVisitService.list(self.user_id(), start, size)
+        times = dict(rows)
+        books_dict = {book["id"]: book for book in self.get_books_for_list(ids=list(times))} if times else {}
+        books = []
+        for book_id, visit_time in rows:
+            book = books_dict.get(book_id)
+            if not book:
+                continue
+            data = BookFormatter(self, book).format()
+            data["visit_time"] = visit_time.isoformat()
+            books.append(data)
+        return {"err": "ok", "title": _("浏览记录"), "total": total, "books": books}
+
+
+class BookVisitsClear(BaseHandler):
+    @js
+    @auth
+    def post(self):
+        BookVisitService.clear(self.user_id())
+        return {"err": "ok", "msg": _("浏览记录已清空")}
+
+
+class BookWantToRead(BaseHandler):
+    @js
+    @auth
+    def post(self, id):
+        """设置或取消待读某本书"""
+        book_id = int(id)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+
+        user_id = self.user_id()
+        data = tornado.escape.json_decode(self.request.body)
+        wants_status = data.get("wants", False)
+
+        # 查找或创建阅读状态记录
+        reading_state = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.book_id == book_id,
+            ReadingState.reader_id == user_id
+        ).first()
+
+        if not reading_state:
+            reading_state = ReadingState(book_id, user_id)
+            self.sqlite_session.add(reading_state)
+
+        # 设置待读状态
+        reading_state.set_wants(wants_status)
+        self.sqlite_session.add(reading_state)
+        self.sqlite_session.commit()
+        self.invalidate_recommendation()
+
+        action = "标记为待读" if wants_status else "取消待读"
+        return {"err": "ok", "msg": _("%s成功") % action}
+
+    @js
+    @auth
+    def get(self):
+        """获取当前用户的待读书籍（分页）"""
+        user_id = self.user_id()
+        logging.info("User %d is fetching favorite books." % user_id)
+        query = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.reader_id == user_id,
+            ReadingState.wants == 1
+        )
+        total_cnt = query.count()
+
+        start = self.get_argument_start()
+        page_size = CONF.get("DEFAULT_PAGE_SIZE", 60)
+        delta = max(min(int(self.get_argument("size", page_size)), 100), 0)
+        reading_states = query.order_by(ReadingState.wants_date.desc()).limit(delta).offset(start).all()
+
+        # 批量获取所有书籍
+        book_ids = [state.book_id for state in reading_states]
+        books_dict = {book['id']: book for book in self.get_books_for_list(ids=book_ids)}
+
+        # 构建书籍状态字典
+        state_dict = {state.book_id: state for state in reading_states}
+
+        favorite_books = []
+        for book_id in book_ids:
+            book = books_dict.get(book_id)
+            if not book:
+                continue
+            book_data = BookFormatter(self, book).format()
+            book_data["state"] = ReadingStateFormatter.format_reading_state(state_dict[book_id])
+            favorite_books.append(book_data)
+
+        return {"err": "ok",
+                "title": _("待读清单"),
+                "total": total_cnt,
+                "books": favorite_books}
+
+
+class BookReading(BaseHandler):
+    @js
+    @auth
+    def get(self):
+        """获取当前用户的在读书籍（分页）"""
+        user_id = self.user_id()
+
+        # 首页"在读书籍"卡片会带上 home=1 请求这个接口；ENABLE_HOMEPAGE_READING_BOOKS=False
+        # 时直接返回空列表，让首页不显示这个板块，但不影响 /reading 列表页本身。
+        is_home_request = self.get_argument("home", "") == "1"
+        if is_home_request and not CONF.get("ENABLE_HOMEPAGE_READING_BOOKS", True):
+            return {"err": "ok", "title": _("在读书籍"), "total": 0, "books": []}
+
+        query = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.reader_id == user_id,
+            ReadingState.read_state == 1  # 在读状态
+        )
+        total_cnt = query.count()
+
+        start = self.get_argument_start()
+        page_size = CONF.get("DEFAULT_PAGE_SIZE", 60)
+        delta = max(min(int(self.get_argument("size", page_size)), 100), 0)
+
+        # 按最近一次阅读时间倒序：web 阅读器和客户端同步都会更新 BookReadingStats.update_time
+        # （见 reading_stats_service.py），一本书可能有多个格式的行，取其中最大的 update_time；
+        # 没有任何 BookReadingStats 行（比如迁移前的旧数据）时退回 ReadingState.read_date。
+        last_read_subq = (
+            self.sqlite_session.query(
+                BookFormatReadingStatsModel.book_id.label("book_id"),
+                func.max(BookFormatReadingStatsModel.update_time).label("last_read_time"),
+            )
+            .filter(BookFormatReadingStatsModel.reader_id == user_id)
+            .group_by(BookFormatReadingStatsModel.book_id)
+            .subquery()
+        )
+        reading_states = (
+            query.outerjoin(last_read_subq, last_read_subq.c.book_id == ReadingState.book_id)
+            .order_by(func.coalesce(last_read_subq.c.last_read_time, ReadingState.read_date).desc())
+            .limit(delta)
+            .offset(start)
+            .all()
+        )
+
+        # 批量获取所有书籍
+        book_ids = [state.book_id for state in reading_states]
+        books_dict = {book['id']: book for book in self.get_books_for_list(ids=book_ids)}
+
+        # 构建书籍状态字典
+        state_dict = {state.book_id: state for state in reading_states}
+
+        reading_books = []
+        for book_id in book_ids:
+            book = books_dict.get(book_id)
+            if not book:
+                continue
+            book_data = BookFormatter(self, book).format(include_comments=not is_home_request)
+            book_data["state"] = ReadingStateFormatter.format_reading_state(state_dict[book_id])
+            reading_books.append(book_data)
+
+        return {"err": "ok",
+                "title": _("在读书籍"),
+                "total": total_cnt,
+                "books": reading_books}
+
+
+class PrintBooks(BaseHandler):
+    @js
+    def get(self):
+        title = _("实体书")
+
+        try:
+            # 查询所有实体书（通过Calibre自定义字段CALIBRE_COLUMN_BOOK_TYPE），按添加时间倒序排列
+            self.calibre_db.sort(field="timestamp", ascending=False)
+            all_ids = list(self.calibre_db_cache.search(
+                f"{CALIBRE_COLUMN_BOOK_TYPE}:={BOOK_TYPE_PHYSICAL}"
+            ))
+            total_cnt = len(all_ids)
+
+            start = self.get_argument_start()
+            delta = CONF.get("DEFAULT_PAGE_SIZE", 60)
+            ids = all_ids[start:start + delta]
+            books = self.get_books_for_list(ids=ids)
+            books.sort(key=lambda x: ids.index(x["id"]))
+
+            books_result = []
+            for book in books:
+                book_data = BookFormatter(self, book).format()
+                books_result.append(book_data)
+
+            return {"err": "ok",
+                    "title": title,
+                    "total": total_cnt,
+                    "books": books_result}
+        except Exception as e:
+            traceback.print_exc()
+            logging.error("Failed to get print books: %s", e)
+            return {"err": "internal", "msg": _("获取实体书失败")}
+
+
+class BookSoled(BaseHandler):
+    @js
+    @auth
+    def get(self):
+        """获取当前用户设为soled的所有图书信息"""
+        user_id = self.user_id()
+        title = _("私有书籍")
+
+        # 查询当前用户设为sole的所有图书，按添加时间倒序排列
+        db_items = self.sqlite_session.query(Item).filter(
+            Item.collector_id == user_id,
+            Item.sole == 1
+        ).order_by(Item.create_time.desc())
+
+        try:
+            start = self.get_argument_start()
+            delta = 60
+            items = db_items.limit(delta).offset(start).all()
+            ids = [item.book_id for item in items]
+            total_items = 0
+
+            if len(ids) > 0:
+                # 获取总数用于分页
+                total_items = self.sqlite_session.query(Item).filter(
+                    Item.collector_id == user_id,
+                    Item.sole == 1
+                ).count()
+
+            books = self.get_books_for_list(ids=ids)
+            books.sort(key=lambda x: x["id"], reverse=True)
+
+            books_result = []
+            for book in books:
+                book_data = BookFormatter(self, book).format()
+                books_result.append(book_data)
+
+            return {"err": "ok",
+                    "title": title,
+                    "total": total_items,
+                    "books": books_result}
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            logging.error("Failed to get soled books: %s", e)
+            return {"err": "internal", "msg": _("获取私有书籍失败")}
+
+
+class BookReadDone(BaseHandler):
+    @js
+    @auth
+    def get(self):
+        """获取当前用户的已读完书籍（分页）"""
+        user_id = self.user_id()
+        logging.info("User %d is fetching read done books." % user_id)
+        query = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.reader_id == user_id,
+            ReadingState.read_state == 2  # 已读完状态
+        )
+        total_cnt = query.count()
+
+        start = self.get_argument_start()
+        page_size = CONF.get("DEFAULT_PAGE_SIZE", 60)
+        delta = max(min(int(self.get_argument("size", page_size)), 200), 10)
+        reading_states = query.order_by(ReadingState.read_date.desc()).limit(delta).offset(start).all()
+
+        # 批量获取所有书籍
+        book_ids = [state.book_id for state in reading_states]
+        books_dict = {book['id']: book for book in self.get_books_for_list(ids=book_ids)}
+
+        # 构建书籍状态字典
+        state_dict = {state.book_id: state for state in reading_states}
+
+        read_done_books = []
+        for book_id in book_ids:
+            book = books_dict.get(book_id)
+            if not book:
+                continue
+            book_data = BookFormatter(self, book).format()
+            book_data["state"] = ReadingStateFormatter.format_reading_state(state_dict[book_id])
+            read_done_books.append(book_data)
+
+        return {"err": "ok",
+                "title": _("已读完书籍"),
+                "total": total_cnt,
+                "books": read_done_books}
+
+
+class BookReadingStats(BaseHandler):
+    @js
+    @auth
+    def get(self):
+        """获取当前用户的阅读统计信息"""
+        import datetime
+        from sqlalchemy import extract
+
+        user_id = self.user_id()
+        logging.info("User %d is fetching reading statistics." % user_id)
+
+        # 本月起止按站点时区切（上游 v4.6.1 的做法）。原来直接
+        # extract('year'/'month', read_date) 等于按容器时区切月：站点时区设成
+        # 其他时区时，月初那几小时会被算进上个月。site_month_bounds_server_local
+        # 返回与 read_date 存储口径一致（naive 服务器本地）的半开区间。
+        from webserver.site_time import site_month_bounds_server_local
+        _month_start, _month_end = site_month_bounds_server_local()
+
+        # 总体统计
+        total_reading = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.reader_id == user_id,
+            ReadingState.read_state == 1  # 在读
+        ).count()
+
+        total_read_done = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.reader_id == user_id,
+            ReadingState.read_state == 2  # 已读完
+        ).count()
+
+        # 本月统计 - 在读（本月设置为在读状态的书籍）
+        month_reading = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.reader_id == user_id,
+            ReadingState.read_state == 1,
+            ReadingState.read_date >= _month_start,
+            ReadingState.read_date < _month_end
+        ).count()
+
+        # 本月统计 - 已读完（本月读完的书籍）
+        month_read_done = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.reader_id == user_id,
+            ReadingState.read_state == 2,
+            ReadingState.read_date >= _month_start,
+            ReadingState.read_date < _month_end
+        ).count()
+
+        # 本月读完的书籍列表
+        month_read_done_states = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.reader_id == user_id,
+            ReadingState.read_state == 2,
+            ReadingState.read_date >= _month_start,
+            ReadingState.read_date < _month_end
+        ).order_by(ReadingState.read_date.desc()).limit(12).all()
+
+        month_read_done_books = []
+        for state in month_read_done_states:
+            book = self.get_book(state.book_id, raise_exception=False)
+            if not book:
+                continue
+            book_data = BookFormatter(self, book).format()
+            book_data["state"] = ReadingStateFormatter.format_reading_state(state)
+            month_read_done_books.append(book_data)
+
+        # 当前在读的书籍列表
+        current_reading_states = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.reader_id == user_id,
+            ReadingState.read_state == 1
+        ).order_by(ReadingState.read_date.desc()).limit(12).all()
+
+        current_reading_books = []
+        for state in current_reading_states:
+            book = self.get_book(state.book_id, raise_exception=False)
+            if not book:
+                continue
+            book_data = BookFormatter(self, book).format()
+            book_data["state"] = ReadingStateFormatter.format_reading_state(state)
+            current_reading_books.append(book_data)
+
+        return {
+            "err": "ok",
+            "stats": {
+                "total_reading": total_reading,
+                "total_read_done": total_read_done,
+                "month_reading": month_reading,
+                "month_read_done": month_read_done,
+                # 4.6.0-14 改时区口径时误删了这两个变量，返回时 NameError，
+                # 整个统计接口 500（前端 .catch 吞掉，历史页统计卡片静默消失）。
+                # 从月起点取：_month_start 是按站点时区切的 naive 服务器本地时刻，
+                # 其年/月就是站点时区的「当前年月」，与上面的统计口径一致。
+                "current_year": _month_start.year,
+                "current_month": _month_start.month,
+            },
+            "month_read_done_books": month_read_done_books,
+            "current_reading_books": current_reading_books
+        }
+
+
+class BookReadingState(BaseHandler):
+    @js
+    @auth
+    def post(self, id):
+        """设置某本书的阅读状态"""
+        book_id = int(id)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+
+        user_id = self.user_id()
+        data = tornado.escape.json_decode(self.request.body)
+        read_state = data.get("read_state", 0)
+
+        # 验证阅读状态值
+        if read_state not in [0, 1, 2]:
+            return {"err": "params.invalid", "msg": _("阅读状态参数错误")}
+
+        # 查找或创建阅读状态记录
+        reading_state = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.book_id == book_id,
+            ReadingState.reader_id == user_id
+        ).first()
+
+        if not reading_state:
+            reading_state = ReadingState(book_id, user_id)
+            self.sqlite_session.add(reading_state)
+
+        # 设置阅读状态
+        reading_state.set_read_state(read_state)
+
+        # 如果是在线阅读或下载操作，同时更新相应状态
+        if data.get("online_read") is not None:
+            reading_state.set_online_read(data["online_read"])
+        if data.get("download") is not None:
+            reading_state.set_download(data["download"])
+
+        self.sqlite_session.add(reading_state)
+        self.sqlite_session.commit()
+        self.invalidate_recommendation()
+
+        state_names = {0: "未读", 1: "在读", 2: "已读完"}
+        return {"err": "ok", "msg": _("阅读状态已设置为：%s") % state_names[read_state]}
+
+    @js
+    @auth
+    def get(self, id):
+        """获取当前用户对某本书的阅读状态"""
+        book_id = int(id)
+        user_id = self.user_id()
+
+        reading_state = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.book_id == book_id,
+            ReadingState.reader_id == user_id
+        ).first()
+
+        return ReadingStateFormatter.format_reading_state_with_api_format(reading_state)
+
+
+class BookFormatReadingStats(BaseHandler):
+    """当前用户对某本书、分格式的阅读时长/进度统计。
+
+    GET 返回所有格式的统计（与 BookDetail 内嵌的 book["reading_stats"] 同源），可选 query
+    参数 format 限定只查询某一个格式，
+    POST 用于手动补记/纠正某个格式的时长、进度、开始/完成时间——例如导入历史阅读记录，
+    或者网页阅读器等没有自动心跳/进度上报的场景。
+    """
+
+    @staticmethod
+    def _parse_time(value):
+        """接受 ISO8601 字符串或毫秒/秒级时间戳，统一转成 UTC 的 naive datetime。"""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            ts = value / 1000.0 if value > 1e12 else value
+            return datetime.datetime.utcfromtimestamp(ts)
+        if isinstance(value, str):
+            try:
+                return datetime.datetime.fromisoformat(value)
+            except ValueError:
+                raise web.HTTPError(400, reason=_("时间格式无效：%s") % value)
+        raise web.HTTPError(400, reason=_("时间格式无效：%s") % value)
+
+    @js
+    @auth
+    def get(self, id):
+        book_id = int(id)
+        fmt = (self.get_query_argument("format", None) or "").strip().lower() or None
+        return {"err": "ok", "stats": ReadingStatsService.get_book_format_stats(self.user_id(), book_id, fmt=fmt)}
+
+    @js
+    @auth
+    def post(self, id):
+        book_id = int(id)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+
+        data = tornado.escape.json_decode(self.request.body)
+        fmt = (data.get("format") or "").strip().lower()
+        if not fmt:
+            return {"err": "params.invalid", "msg": _("缺少必填参数：format")}
+
+        progress = None
+        raw_progress = data.get("progress")
+        if isinstance(raw_progress, (list, tuple)) and len(raw_progress) == 2:
+            try:
+                current, total = int(raw_progress[0]), int(raw_progress[1])
+            except (TypeError, ValueError):
+                return {"err": "params.invalid", "msg": _("progress 参数格式错误，应为 [当前, 总数]")}
+            if total <= 0:
+                return {"err": "params.invalid", "msg": _("progress 参数格式错误，应为 [当前, 总数]")}
+            progress = (current, total)
+
+        state = data.get("state")
+        if state is not None and state not in (BookFormatReadingStatsModel.STATE_READING, BookFormatReadingStatsModel.STATE_FINISHED):
+            return {"err": "params.invalid", "msg": _("阅读状态参数错误")}
+
+        result = ReadingStatsService.update_book_format_stats(
+            self.user_id(),
+            book_id,
+            fmt,
+            duration_seconds=int(data.get("duration_seconds") or 0),
+            progress=progress,
+            start_time=self._parse_time(data.get("start_time")),
+            finish_time=self._parse_time(data.get("finish_time")),
+            state=state,
+        )
+        return {"err": "ok", "stats": result}
+
+
+class BookReadingTimeCorrection(BaseHandler):
+    """管理菜单"阅读时间补录"：按日期新增/编辑/删除一条手工阅读记录，差值同步到
+    Reading 分桶、BookReadingStats、Reader.total_reading_seconds。"""
+
+    MAX_DURATION_SECONDS = 18 * 3600
+
+    @staticmethod
+    def _parse_date(value):
+        try:
+            return datetime.datetime.strptime(value, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            return None
+
+    @js
+    @auth
+    def get(self, id):
+        book_id = int(id)
+        date = self._parse_date(self.get_query_argument("date", None))
+        if date is None:
+            return {"err": "params.invalid", "msg": _("日期格式错误")}
+        return {"err": "ok", **ManualReadingService.get_reference(self.user_id(), book_id, date)}
+
+    @js
+    @auth
+    def post(self, id):
+        book_id = int(id)
+        if not self.calibre_db_cache.has_id(book_id):
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+        book_formats = self.get_book_files(book_id)
+        if not book_formats:
+            return {"err": "params.invalid", "msg": _("这本书没有可阅读的电子书格式")}
+
+        book_formats = tuple(fmt.lower() for fmt in book_formats)
+        logging.info(f"Fomats: {book_formats}")
+
+        data = tornado.escape.json_decode(self.request.body)
+        date = self._parse_date(data.get("date"))
+        if date is None:
+            return {"err": "params.invalid", "msg": _("日期格式错误")}
+        # 与分桶同一口径：按站点时区判「未来」，否则 UTC+8 的读者在本地凌晨补录当天
+        # 会被 UTC 日判成明天而拒收
+        if date > site_time.site_today():
+            return {"err": "params.invalid", "msg": _("不能补录未来的阅读时间")}
+
+        try:
+            duration_seconds = int(data.get("duration_seconds"))
+        except (TypeError, ValueError):
+            return {"err": "params.invalid", "msg": _("缺少必填参数：duration_seconds")}
+        if duration_seconds < 0 or duration_seconds > self.MAX_DURATION_SECONDS:
+            return {"err": "params.invalid", "msg": _("单次阅读时长需在 0~18 小时之间")}
+
+        result = ManualReadingService.upsert_entry(
+            self.user_id(),
+            book_id,
+            date,
+            duration_seconds,
+            start_time=(data.get("start_time") or "").strip() or None,
+            end_time=(data.get("end_time") or "").strip() or None,
+            available_formats=book_formats,
+        )
+        return {"err": "ok", **result}
+
+    @js
+    @auth
+    def delete(self, id):
+        book_id = int(id)
+        date = self._parse_date(self.get_query_argument("date", None))
+        if date is None:
+            return {"err": "params.invalid", "msg": _("日期格式错误")}
+        result = ManualReadingService.delete_entry(self.user_id(), book_id, date)
+        return {"err": "ok", **result}
+
+
+class BookStateBatch(BaseHandler):
+    ACTIONS = ("favorite", "wants", "reading", "read-done")
+
+    @js
+    @auth
+    def post(self):
+        """批量清除所选书籍在当前用户下的收藏/待读/阅读状态"""
+        data = tornado.escape.json_decode(self.request.body)
+        book_ids = data.get("book_ids") or []
+        action = data.get("action")
+
+        if action not in self.ACTIONS:
+            return {"err": "params.invalid", "msg": _("操作类型参数错误")}
+        if not isinstance(book_ids, list) or not book_ids:
+            return {"err": "params.invalid", "msg": _("未选择任何书籍")}
+
+        try:
+            book_ids = [int(i) for i in book_ids]
+        except (TypeError, ValueError):
+            return {"err": "params.invalid", "msg": _("书籍编号参数错误")}
+
+        user_id = self.user_id()
+        reading_states = self.sqlite_session.query(ReadingState).filter(
+            ReadingState.book_id.in_(book_ids),
+            ReadingState.reader_id == user_id
+        ).all()
+
+        for reading_state in reading_states:
+            if action == "favorite":
+                reading_state.set_favorite(False)
+            elif action == "wants":
+                reading_state.set_wants(False)
+            else:
+                # "reading" 和 "read-done" 都是把阅读状态重置为未读
+                reading_state.set_read_state(0)
+            self.sqlite_session.add(reading_state)
+
+        self.sqlite_session.commit()
+        self.invalidate_recommendation()
+
+        return {"err": "ok", "msg": _("已处理 %d 本书籍") % len(reading_states), "count": len(reading_states)}
+
+
+class BookEdit(BaseHandler):
+    KEYS = [
+        "authors",
+        "title",
+        "comments",
+        "tags",
+        "publisher",
+        "isbn",
+        "series",
+        "series_index",
+        "rating",
+        "languages",
+        "translators"
+    ]
+
+    def _is_html_content(self, content: str) -> bool:
+        if not content:
+            return False
+        html_pattern = re.compile(r'<[^>]+>')
+        return bool(html_pattern.search(content))
+
+    def edit_book(self, bid, data):
+        from calibre.utils.date import now as nowf
+        mi = self.calibre_db.get_metadata(bid, index_is_id=True, get_cover=True)
+        need_update_cover = False
+        if CONF.get("USE_DYNAMIC_COVER", False) and data.get("title", None) and data["title"] != mi.title:
+            fmt, cover_data = mi.cover_data if mi.cover_data else (None, None)
+            if cover_data is not None or mi.cover:
+                dynamic_cover_flag = self.calibre_db.get_custom(bid, label=COLUMN_DYNAMIC_COVER, index_is_id=True)
+                need_update_cover = dynamic_cover_flag == 1
+            else:
+                need_update_cover = True
+
+        author_changed = False
+        for key, val in data.items():
+            if key not in self.KEYS:
+                continue
+            if key == "comments" and not self._is_html_content(val):
+                # replace the line break with <br/> to avoid losing line break when display in web
+                val = val.replace("\n", "<br/>")
+            if key == "authors":
+                # 归一化到别名表里的标准名（未登记的写法原样保留），
+                # 并标记"作者已人工确认"，后续自动刮削不再覆盖这本书的作者。
+                # 兼容字符串入参（按 / , 、 ; 切分），避免被当成字符序列逐个处理。
+                if isinstance(val, str):
+                    val = [v.strip() for v in re.split(r"[/,，、;；]", val) if v.strip()]
+                elif not isinstance(val, (list, tuple)):
+                    val = []
+                val = resolve_author_list(list(val))
+                author_changed = True
+            mi.set(key, val)
+
+        if author_changed:
+            lock_author(self.calibre_db, bid)
+
+        if data.get("pubdate", None):
+            content = douban.str2date(data["pubdate"])
+            if content is None:
+                return {"err": "params.pudate.invalid", "msg": _("出版日期参数错误，格式应为 2026-05-10或2026-05或2026年或2026")}
+            mi.set("pubdate", content)
+
+        if data.get("book_count", None):
+            book_cnt = data.get("book_count", 0)
+            if data.get("book_type", BOOK_TYPE_EBOOK) == BOOK_TYPE_PHYSICAL:
+                mi.set(CALIBRE_COLUMN_PHY_COUNT, book_cnt)
+                mi.set(CALIBRE_COLUMN_BOOK_TYPE, BOOK_TYPE_PHYSICAL)
+            else:
+                mi.set(CALIBRE_COLUMN_PHY_COUNT, 0)
+                mi.set(CALIBRE_COLUMN_BOOK_TYPE, BOOK_TYPE_EBOOK)
+            # Need to update the item too
+            existing_item = self.sqlite_session.query(Item).filter(Item.book_id == bid).first()
+            if existing_item:
+                existing_item.book_count = book_cnt
+                self.sqlite_session.add(existing_item)
+                self.sqlite_session.commit()
+            else:
+                item = Item()
+                item.book_id = bid
+                item.collector_id = self.user_id()
+                item.book_type = data.get("book_type", BOOK_TYPE_EBOOK)
+                item.book_count = book_cnt
+                self.sqlite_session.add(item)
+                self.sqlite_session.commit()
+
+        if "tags" in data and not data["tags"]:
+            self.calibre_db.set_tags(bid, [])
+
+        if COLUMN_CATEGORY in data:
+            category = data[COLUMN_CATEGORY].strip()
+            if len(category) < 80:
+                if category == '清除' or category.lower() == 'clear':
+                    category = ''
+                mi.set(CALIBRE_COLUMN_CATEGORY, category)
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_CATEGORY, {bid: category})
+            else:
+                logging.error("Too many characters in the category, ignore it!")
+        if COLUMN_EXT_LINK in data:
+            ext_link = data[COLUMN_EXT_LINK].strip()
+            if len(ext_link) < 500 and (ext_link.startswith('http://') or ext_link.startswith('https://') or ext_link == ''):
+                mi.set(CALIBRE_COLUMN_EXT_LINK, ext_link)
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_EXT_LINK, {bid: ext_link})
+            else:
+                logging.error("Too many characters in the external link, ignore it!")
+        if COLUMN_LOCATION in data:
+            location = data[COLUMN_LOCATION].strip()
+            if len(location) < 64:
+                mi.set(CALIBRE_COLUMN_LOCATION, location)
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_LOCATION, {bid: location})
+            else:
+                logging.error("Too many characters in the location, ignore it!")
+        if COLUMN_TRANSLATORS in data:
+            translators = ",".join(data.get(COLUMN_TRANSLATORS, []))
+            mi.set(CALIBRE_COLUMN_TRANSLATORS, translators)
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_TRANSLATORS, {bid: translators})
+
+        if mi.authors:
+            # authors中如果有.,则替换为·
+            mi.authors = [a.replace(".", "·") for a in mi.authors]
+        mi.timestamp = nowf()
+        mi.title_sort = utils.get_title_sort(mi.title)
+        # If the existing cover is dynamic generated, and the new title or author may cause the cover to be no longer suitable, we need to regenerate it
+        if CONF.get("USE_DYNAMIC_COVER", False) and need_update_cover:
+            author = mi.authors[0] if mi.authors else _("佚名")
+            cover_data = ImageGenerator.generate_cover(mi.title, author)
+            if cover_data:
+                mi.cover_data = ("jpeg", cover_data)
+
+        result = True
+        try:
+            self.calibre_db.set_metadata(bid, mi, force_changes=True)
+        except Exception as e:
+            result = False
+            logging.error(f"[XXX]Failed to update metadata: {e} for bid: {bid}")
+        return result
+
+    @js
+    @auth
+    def post(self, bid):
+        book = self.get_book(bid, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+        bid = book["id"]
+        update_books = []
+        if isinstance(book["collector"], dict):
+            cid = book["collector"]["id"]
+        else:
+            cid = book["collector"].id
+        if not self.current_user.can_edit() or not (self.is_admin() or self.is_book_owner(bid, cid)):
+            return {"err": "permission", "msg": _("无权操作")}
+
+        data = tornado.escape.json_decode(self.request.body)
+        logging.debug(f"Book edit data: {data}")
+        id_list = data.get("ids", None)
+
+        result = True
+        failed = 0
+        if id_list and bid in id_list:
+            # 仅当有列表，且当前书籍在列表中时，才进行批量更新
+            for bid in id_list:
+                if not self.edit_book(bid, data):
+                    failed += 1
+                update_books.append(bid)
+            if failed == len(id_list):
+                result = False
+        else:
+            result = self.edit_book(bid, data)
+            update_books = [bid]
+        if result:
+            if failed > 0:
+                return {"err": "ok", "msg": _("部分更新成功, 失败{failed}本书籍，可以从日志查看错误信息"), "books": update_books}
+            else:
+                return {"err": "ok", "msg": _("更新成功"), "books": update_books}
+        else:
+            return {"err": "ok", "msg": _("更新失败，可以从日志查看错误信息"), "books": update_books}
+
+
+class BookDelete(BaseHandler):
+    _deleting = set()
+
+    @js
+    @auth
+    async def post(self, bid):
+        book = await self.get_book_async(bid)
+        bid = book["id"]
+
+        if isinstance(book["collector"], dict):
+            cid = book["collector"]["id"]
+        else:
+            cid = book["collector"].id
+        if not self.current_user.can_edit() or not (self.is_admin() or self.is_book_owner(bid, cid)):
+            return {"err": "permission", "msg": _("无权操作")}
+
+        if not self.current_user.can_delete() or not (self.is_admin() or self.is_book_owner(bid, cid)):
+            return {"err": "permission", "msg": _("无权操作")}
+
+        if bid in BookDelete._deleting:
+            return {"err": "ok", "msg": _("删除成功")}
+        BookDelete._deleting.add(bid)
+        try:
+            # 书目录要在当前线程算（calibre Cache 不是线程安全的），
+            # 只把算好的路径字符串丢进线程池。
+            audio_dirs = AudioUtils.audio_dirs_of(bid, getattr(self, "calibre_db_cache", None))
+            await utils.run_in_threadpool(AudioUtils.clear_audio, bid,
+                                          extra_dirs=audio_dirs)
+            if await self.delete_book_async(bid, book.get("title", "")):
+                return {"err": "ok", "msg": _("删除成功")}
+            return {"err": "fail", "msg": _("删除失败, 请查看日志。如果一直出错，请联系管理员。")}
+        finally:
+            BookDelete._deleting.discard(bid)
+
+
+class BookDeleteFormat(BaseHandler):
+    @js
+    @auth
+    def post(self, bid):
+        book = self.get_book(bid, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+        bid = book["id"]
+
+        if isinstance(book["collector"], dict):
+            cid = book["collector"]["id"]
+        else:
+            cid = book["collector"].id
+        if not self.current_user.can_edit() or not (self.is_admin() or self.is_book_owner(bid, cid)):
+            return {"err": "permission", "msg": _("无权操作")}
+
+        if not self.current_user.can_delete() or not (self.is_admin() or self.is_book_owner(bid, cid)):
+            return {"err": "permission", "msg": _("无权操作")}
+
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+            fmt = data.get("format", "").strip().lower()
+        except Exception:
+            return {"err": "params.invalid", "msg": _("请求参数格式错误")}
+
+        if not fmt:
+            return {"err": "params.missing", "msg": _("格式参数不能为空")}
+
+        fmt_key = "fmt_%s" % fmt
+        if fmt_key not in book:
+            return {"err": "format.not_found", "msg": _("书籍不包含 %s 格式") % fmt.upper()}
+
+        # 检查书籍是否只有一个格式
+        available_formats = book.get("available_formats", "")
+        available_formats = [f.strip() for f in available_formats if f.strip()]
+        if len(available_formats) <= 1:
+            return {"err": "last.format", "msg": _("书籍只有一个格式，无法刪除")}
+
+        try:
+            self.calibre_db_cache.remove_formats({bid: [fmt.upper()]})
+            self.add_msg("success", _("删除书籍《%s》的%s格式") % (book["title"], fmt))
+            return {"err": "ok", "msg": _("删除%s格式成功" % fmt)}
+        except Exception as e:
+            logging.error(f"删除书籍《{book['title']}》的{fmt}格式失败: {e}")
+            return {"err": "fail", "msg": _("删除%s格式失败, 请查看日志。如果一直出错，请联系管理员。" % fmt)}
+
+
+class BookDownloadQuota(BaseHandler):
+    @js
+    @auth
+    def get(self):
+        """返回当前用户今日下载配额的使用情况，供前端在真正触发下载前做提示，不消耗配额。"""
+        if not CONF.get("ENABLE_DOWNLOAD_QUOTA", False) or self.is_admin():
+            return {"err": "ok", "allowed": True, "used": 0, "quota": 0}
+        result = DownloadQuotaService.get_usage(self.current_user)
+        allowed = result.quota == 0 or result.used < result.quota
+        if allowed:
+            return {"err": "ok", "allowed": True, "used": result.used, "quota": result.quota}
+        return {
+            "err": "quota.exceeded",
+            "allowed": False,
+            "used": result.used,
+            "quota": result.quota,
+            "msg": _("今日下载次数已达上限(%d/%d)，请明天再试") % (result.used, result.quota),
+        }
+
+
+class BookDownloadSign(BaseHandler):
+    @js
+    @auth
+    def get(self, bid):
+        fmt = self.get_argument("fmt", "").strip()
+        if not fmt or "/" in fmt or "." in fmt:
+            return {"err": "params.invalid", "msg": _("参数错误")}
+        return {"err": "ok", "sign": self.make_download_sign(self.current_user.id, bid, fmt)}
+
+
+class BookDownload(BaseHandler, web.StaticFileHandler):
+    def send_error_of_not_invited(self):
+        self.set_header("WWW-Authenticate", "Basic")
+        self.set_status(401)
+        raise web.Finish()
+
+    def initialize(self):
+        self.root = "/"
+        self.default_filename = None
+        # tornado 6.5 起 StaticFileHandler 多了这一项：validate_absolute_path
+        # 会调 _resolve_symlink_target，那里直接读 self.allowed_symlink_directory，
+        # 没有这个属性就 AttributeError → 每次下载 500。
+        # 原生的赋值写在 StaticFileHandler.initialize() 里，而本类整个覆写了
+        # initialize 又没调 super()，所以必须自己补。
+        # 值跟 self.root 保持一致："这里接受任意绝对路径"，限制成 / 才不会
+        # 把合法请求误判成「跑到静态目录外面了」而 403。
+        self.allowed_symlink_directory = "/"
+        self.is_opds = self.get_argument("from", "") == "opds"
+        BaseHandler.initialize(self)
+
+    # tornado 原生 get_content 的 64KB 读块硬编码在方法内、且它是 classmethod（实例
+    # 属性改不动），故以覆写方式放大 lite 模式整本下载的读块；带 Range 的请求与普通
+    # 模式委托原生实现，行为不变。
+    LITE_CHUNK_SIZE = 256 * 1024
+
+    @classmethod
+    def get_content(cls, abspath, start=None, end=None):
+        if start is not None or end is not None or not perf.lite_on("LITE_DOWNLOAD_PATH_CACHE"):
+            yield from super().get_content(abspath, start, end)
+            return
+        with open(abspath, "rb") as file:
+            while True:
+                chunk = file.read(cls.LITE_CHUNK_SIZE)
+                if not chunk:
+                    return
+                yield chunk
+
+    def prepare(self):
+        BaseHandler.prepare(self)
+        bid = self.requested_book_id()
+        if not self.current_user and not BookAccessService.guest_download_allowed(self, bid):
+            self.login_by_download_sign()
+        if not self.current_user and not BookAccessService.guest_download_allowed(self, bid):
+            if self.is_opds:
+                return self.send_error_of_not_invited()
+            else:
+                return self.redirect("/login")
+
+        if self.current_user and not BookAccessService.share_download_granted(self, bid):
+            if self.current_user.can_save():
+                if not self.current_user.is_active():
+                    raise web.HTTPError(403, reason=_("无权操作，请先登录注册邮箱激活账号。"))
+            else:
+                raise web.HTTPError(403, reason=_("无权操作"))
+
+    def requested_book_id(self):
+        try:
+            return int(self.path_args[0].split("/")[-1].split(".")[0])
+        except (IndexError, ValueError, TypeError, AttributeError):
+            # TypeError/AttributeError：self.path_args 为 None（没经过
+            # url 路由就调到这里的场景，例如内部/工具直接构造 handler，
+            # 或将来有人从别处复用一个未初始化的实例）。
+            # 这个方法本身就声明了「拿不到就是 None」的契约，调用方
+            # （_charge_download / share_download_granted）也都是按 None 处理的，
+            # 不该因为缺属性就抛到请求栈外面变成 500。
+            return None
+
+    def login_by_download_sign(self):
+        sign = self.get_argument("dl", "")
+        if not sign or not self.path_args:
+            return
+        try:
+            bid, fmt = self.path_args[0].split("/")[-1].split(".")
+            uid = self.parse_download_sign(sign, bid, fmt)
+        except ValueError:
+            uid = None
+        user = self.sqlite_session.get(Reader, uid) if uid else None
+        if not user:
+            raise web.HTTPError(403, reason=_("下载链接已失效，请刷新页面后重试"))
+        self.current_user = user
+
+    DOWNLOAD_CACHE_TTL = 60
+    DOWNLOAD_CACHE_MAX = 512
+    _download_cache = {}
+
+    def _charge_download(self, bid, fmt):
+        """同一用户同一本书同一格式在窗口期内的多次请求（分段、续传、重试）只扣一次配额；HEAD 不扣。"""
+        if not self.current_user or self.request.method == "HEAD" or BookAccessService.share_download_granted(self, self.requested_book_id()):
+            return
+        protocol = Reading.PROTOCOL_OPDS if self.is_opds else Reading.PROTOCOL_WEB
+        result = DownloadQuotaService.charge(self.current_user, bid, fmt, protocol)
+        if not result.allowed:
+            raise web.HTTPError(429, reason=_("今日下载次数已达上限(%d/%d)，请明天再试") % (result.used, result.quota))
+
+    def parse_url_path(self, url_path: str) -> str:
+        filename = url_path.split("/")[-1]
+        bid, fmt = filename.split(".")
+        fmt = fmt.lower()
+        logging.debug("download %s bid=%s, fmt=%s", filename, bid, fmt)
+        uid = self.current_user.id if self.current_user else 0
+        key = (uid, bid, fmt, self.is_opds)
+        now = time.time()
+        ttl = 600 if perf.lite_on("LITE_DOWNLOAD_PATH_CACHE") else self.DOWNLOAD_CACHE_TTL
+        hit = BookDownload._download_cache.get(key)
+        if hit and hit[0] > now and os.path.exists(hit[1]):
+            BookDownload._download_cache[key] = (now + ttl, hit[1], hit[2])
+            self._charge_download(bid, fmt)
+            self.set_header("Content-Disposition", hit[2].encode("UTF-8"))
+            self.set_header("Content-Type", "application/octet-stream")
+            return hit[1]
+        book = self.get_book(bid, raise_exception=False)
+        if not book or "fmt_%s" % fmt not in book:
+            raise web.HTTPError(404, reason=_("%s格式无法下载" % fmt))
+        self._charge_download(bid, fmt)
+
+        path = book["fmt_%s" % fmt]
+        book["fmt"] = fmt
+        book["title"] = urllib.parse.quote_plus(book["title"][:128])
+        fname = "%(title)s.%(fmt)s" % book
+        att = "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (fname, fname)
+        if self.is_opds:
+            att = 'attachment; filename="%(id)d.%(fmt)s"' % book
+
+        cache = BookDownload._download_cache
+        if len(cache) >= self.DOWNLOAD_CACHE_MAX:
+            cache.clear()
+        cache[key] = (now + ttl, path, att)
+        self.set_header("Content-Disposition", att.encode("UTF-8"))
+        self.set_header("Content-Type", "application/octet-stream")
+        return path
+
+    async def get(self, path, include_body=True):
+        if accel.enabled(self):
+            file_path = self.parse_url_path(path)
+            if not os.path.isfile(file_path):
+                return await super().get(path, include_body)
+
+            # 4.6.0-9 坏字体清理（旧书侧）：下载 epub 时若书里带着 calibre 产出的
+            # `FONT` 加密伪字体，改发「精简副本」。这类死数据实测能占全书一半
+            # （哈利波特那本 3.11MB 里 1.66MB 是它），而浏览器根本加载不了，
+            # 弱网下纯属白等。生成一次后缓存在 CACHE_DIR，后续直接命中。
+            # 详见 webserver/services/epub_font_fix.py。
+            lite_path = self.epub_lite_path(file_path)
+            if lite_path:
+                uri = accel.uri_for(accel.CACHE_PREFIX, CONF.get("CACHE_DIR", "/data/cache"), lite_path)
+                if uri:
+                    self.set_header("X-Accel-Redirect", uri)
+                    return
+
+            uri = accel.uri_for(accel.LIBRARY_PREFIX, self.calibre_db_cache.backend.library_path, file_path)
+            if uri:
+                self.set_header("X-Accel-Redirect", uri)
+                return
+        return await super().get(path, include_body)
+
+    # --- epub 坏字体精简副本 ------------------------------------------------
+    _EPUB_LITE_LOCK = threading.Lock()
+    # 已知无需精简的书（key 含 mtime+size，源变了会自动失效）。
+    # 没有它的话，每次下载一本干净的书都要重读一遍 zip 中央目录。
+    _EPUB_LITE_CLEAN = set()
+    _EPUB_LITE_CLEAN_MAX = 2048
+
+    def epub_lite_path(self, file_path):
+        """需要且成功生成精简副本时返回副本路径，否则 None。
+
+        只在 .epub 上生效；生成失败一律回落原文件，绝不影响下载。
+        """
+        if not file_path.lower().endswith(".epub"):
+            return None
+        cache_root = CONF.get("CACHE_DIR", "/data/cache")
+        if not cache_root:
+            return None
+
+        try:
+            st = os.stat(file_path)
+        except OSError:
+            return None
+
+        # 副本按「源文件 mtime+size」命名：源变了自然换新副本，无需额外失效逻辑
+        key = "%s-%d-%d" % (
+            hashlib.md5(os.path.abspath(file_path).encode("utf-8", "replace")).hexdigest()[:16],
+            int(st.st_mtime), st.st_size,
+        )
+        if key in BookDownload._EPUB_LITE_CLEAN:
+            return None
+
+        out_dir = os.path.join(cache_root, "epub-lite")
+        out_path = os.path.join(out_dir, key + ".epub")
+        if os.path.exists(out_path):
+            return out_path
+
+        with BookDownload._EPUB_LITE_LOCK:
+            if os.path.exists(out_path):
+                return out_path
+            if key in BookDownload._EPUB_LITE_CLEAN:
+                return None
+            try:
+                from webserver.services.epub_font_fix import build_stripped_epub
+
+                os.makedirs(out_dir, exist_ok=True)
+                tmp_path = out_path + ".tmp-%d" % os.getpid()
+                ok = build_stripped_epub(file_path, tmp_path)
+                if not ok:
+                    # 这本书没有坏字体：记进负缓存，后续请求直接返回
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                    clean = BookDownload._EPUB_LITE_CLEAN
+                    if len(clean) >= BookDownload._EPUB_LITE_CLEAN_MAX:
+                        clean.clear()
+                    clean.add(key)
+                    logging.debug("[EPUB-LITE] 无需精简: %s", os.path.basename(file_path))
+                    return None
+                os.replace(tmp_path, out_path)
+                return out_path
+            except Exception as err:
+                logging.warning("[EPUB-LITE] 生成精简副本失败，回落原文件: %s", err)
+                logging.warning(traceback.format_exc())
+                return None
+
+    @classmethod
+    def get_absolute_path(cls, root: str, path: str) -> str:
+        return path
+
+    def compute_etag(self) -> Optional[str]:
+        return None
+
+
+class BookNav(ListHandler):
+    @js
+    async def get(self):
+        tagmap = await self.all_tags_with_count_async()
+        navs = []
+        done = set()
+        for line in CONF['BOOK_NAV'].split("\n"):
+            line = utils.super_strip(line)
+            p = line.split("=")
+            if len(p) != 2:
+                continue
+            h1, tags = p
+            tags = [v.strip() for v in tags.split("/")]
+            done.update(tags)
+            tag_items = [{"name": v, "count": tagmap.get(v, 0)} for v in tags if tagmap.get(v, 0) > 0]
+            if tag_items:
+                navs.append({"legend": h1, "tags": tag_items})
+
+        tag_items = [{"name": tag, "count": cnt} for tag, cnt in tagmap.items() if tag not in done]
+        navs.append({"legend": _("其它"), "tags": tag_items})
+
+        return {"err": "ok", "navs": navs}
+
+
+class RecentBook(ListHandler):
+    @throttle(write=True)
+    async def get(self):
+        title = _("新书推荐")
+        ids = await self.books_by_id_async()
+        return await self.render_book_list([], ids=ids, title=title, sort_fields="id")
+
+
+class SearchBook(ListHandler):
+    CALIBRE_KEYS = ("title:", "authors:", "comments:", "publisher:", "isbn:", "series:", "tags:", "author:", "py:", "title_sort:")
+    CALIBRE_KEY_DESCRIPTION = (_("书名:"), _("作者:"), _("简介:"), _("出版社:"), _("ISBN:"), _("丛书:"), _("标签:"), _("作者:"), _("书名:"), _("书名:"))
+    # Calibre 内置的搜索字段；自定义列以 # 开头，另行识别
+    CALIBRE_SEARCH_TERMS = {
+        "all", "author", "authors", "author_sort", "comments", "cover", "date", "format", "formats", "id", "identifiers", "isbn", "languages", "language", "marked", "ondevice",
+        "pubdate", "published", "publisher", "rating", "series", "series_index", "series_sort", "size", "tag", "tags", "template", "timestamp", "title", "title_sort", "uuid", "vl", "py",
+    }
+    CALIBRE_EXPR_RE = re.compile(r"(?:^|[\s(])(#?[A-Za-z_][A-Za-z0-9_]*):", re.UNICODE)
+    ISBN_RE = re.compile(r"^(?:97[89])?\d{9}[\dXx]$")
+    # 组合条件搜索的参数 -> (Calibre 字段, 描述)
+    FIELD_ARGS = (
+        ("author", "authors", _("作者:")),
+        ("publisher", "publisher", _("出版社:")),
+        ("series", "series", _("丛书:")),
+        ("tag", "tags", _("标签:")),
+    )
+
+    @classmethod
+    def _is_calibre_expr(cls, text):
+        for m in cls.CALIBRE_EXPR_RE.finditer(text):
+            key = m.group(1)
+            if key.startswith("#") or key.lower() in cls.CALIBRE_SEARCH_TERMS:
+                return True
+        return False
+
+    @staticmethod
+    def _quote(value):
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    @staticmethod
+    def _variants(value):
+        # 原文 + 简繁体转换结果，去重保序
+        values = [value]
+        for profile in ["s2t", "t2s"]:
+            converted = utils.get_opencc(profile).convert(value)
+            if converted not in values:
+                values.append(converted)
+        return values
+
+    def _field_clause(self, field, value, exact=False):
+        prefix = "=" if exact else ""
+        return "(" + " OR ".join(f"{field}:{self._quote(prefix + v)}" for v in self._variants(value)) + ")"
+
+    def _isbn_clause(self, isbn):
+        isbn = re.sub(r"[\s-]", "", isbn)
+        return f"(isbn:{self._quote(isbn)} OR identifiers:{self._quote('=isbn:' + isbn)})"
+
+    def _build_structured_query(self, name, book_title, exact):
+        """组合条件搜索：name/title/author/isbn/publisher/series/tag 之间为 AND 关系。
+
+        未提供任何字段参数时返回 None，走原有的关键字搜索逻辑。
+        """
+        isbn = self.get_argument("isbn", "").strip()
+        fields = [(field, self.get_argument(arg, "").strip(), desc) for arg, field, desc in self.FIELD_ARGS]
+        fields = [f for f in fields if f[1]]
+        if not isbn and not fields:
+            return None, None
+
+        clauses, descs = [], []
+        if name:
+            if self._is_calibre_expr(name):
+                clauses.append("( " + name + " )")
+            else:
+                clauses.append("(" + " OR ".join(self._quote(v) for v in self._variants(self._clear(name))) + ")")
+            descs.append(name)
+        if book_title:
+            clauses.append(self._field_clause("title", book_title, exact=True))
+            descs.append(_("书名:") + book_title)
+        for field, value, desc in fields:
+            clauses.append(self._field_clause(field, value, exact))
+            descs.append(desc + value)
+        if isbn:
+            clauses.append(self._isbn_clause(isbn))
+            descs.append(_("ISBN:") + isbn)
+        return " AND ".join(clauses), " ".join(descs)
+
+    def _clear(self, text):
+        # 去除字串中的括号及其内容，以免影响查询
+        if not text:
+            return text
+        text = re.sub(r"\([^)]*\)|（[^）]*）", " ", text)
+        text = text.replace("(", " ").replace(")", " ")
+        return text.strip()
+
+    def _add_books(self, result_ids, ids, seen):
+        if not result_ids:
+            return
+        for bid in result_ids:
+            if bid not in seen:
+                ids.append(bid)
+                seen.add(bid)
+
+    FAST_SEARCH_FIELDS = ("title", "authors", "tags", "series")
+
+    def _fast_clause(self, values, title_search):
+        if title_search:
+            return " OR ".join(f"title:={v}" for v in values)
+        return " OR ".join("(" + " OR ".join(f"{field}:{self._quote(v)}" for field in self.FAST_SEARCH_FIELDS) + ")" for v in values)
+
+    async def _fast_search(self, name, title_search):
+        ids = await self.cached_search_async(self._fast_clause([name], title_search))
+        if ids:
+            return ids
+        variants = [c for c in (utils.get_opencc(profile).convert(name) for profile in ("s2t", "t2s")) if c != name]
+        if not variants:
+            return []
+        return await self.cached_search_async(self._fast_clause(variants, title_search))
+
+    async def _search_by_segmentation(self, name, ids, seen):
+        jieba = _load_jieba() if 2 < len(name) < 10 else None
+        if jieba is None:
+            return None
+
+        start = time.time()
+        or_query = None
+
+        try:
+            # 对name进行分词
+            words = jieba.cut(name)
+            # 过滤分词结果：排除等于name本身的词和长度为1的词，并去重
+            filtered_words = list({w for w in words if w != name and len(w) > 1})
+
+            if filtered_words and len(filtered_words) > 1:
+                logging.info(f"Word segmentation for '{name}': {filtered_words}")
+                # 1. 先查所有分词都包含的书（AND查询）
+                try:
+                    and_query = " AND ".join([f'title:"{word}"' for word in filtered_words])
+                    and_ids = await self.cached_search_async(and_query)
+                    if and_ids:
+                        self._add_books(and_ids, ids, seen)
+                        logging.info(f"Found {len(and_ids)} books for AND of segmented words: {filtered_words}")
+                except Exception as e:
+                    logging.error("Search book by AND segmented words failed: %s" % e)
+
+                # OR查询放到后面与其他查询合并
+                or_query = " OR ".join([f'title:"{word}"' for word in filtered_words])
+        except Exception as e:
+            logging.error(f"Word segmentation failed for '{name}': %s" % e)
+        logging.info(f"[TRACE]Word segmentation search took {time.time() - start:.2f} seconds.")
+        return or_query
+
+    @throttle(per_user=True, write=True)
+    async def get(self):
+        name = self.get_argument("name", "").strip()
+        book_title = self.get_argument("title", "").strip()  # 传入此参数代表只按名称搜索
+        exclude_id = int(self.get_argument("exclude", "0").strip())
+        seg = int(self.get_argument("seg", "0").strip())  # 是否进行分词查询
+        order_by = self.get_argument("order", "").strip()
+        exact = self.get_argument("exact", "0").strip() in ("1", "true")
+
+        structured_query, structured_desc = self._build_structured_query(name, book_title, exact)
+        if structured_query:
+            return await self._render_search(structured_query, _("搜索") + structured_desc, exclude_id, order_by)
+
+        if not name and not book_title:
+            return self.write({"err": "params.invalid", "msg": _("请输入搜索关键字")})
+
+        title_search = len(book_title) > 0
+        if title_search:
+            name = book_title
+        calibre_query = False
+        title_name = name
+        for idx, key in enumerate(self.CALIBRE_KEYS):
+            if name.startswith(key):
+                calibre_query = True
+                title_search = False
+                title_name = name.replace(key, self.CALIBRE_KEY_DESCRIPTION[idx], 1)
+                name = name.replace("py:", "title_sort:")
+                break
+
+        if not calibre_query and not title_search:
+            if self.ISBN_RE.match(re.sub(r"[\s-]", "", name)):
+                # 纯 ISBN 关键字：直接按 ISBN 精确查找
+                return await self._render_search(self._isbn_clause(name), _("搜索") + _("ISBN:") + name, exclude_id, order_by)
+            if self._is_calibre_expr(name):
+                # 任意 Calibre 条件表达式，如 authors:=余华 AND rating:>=4、#category:="小说"
+                calibre_query = True
+
+        title = _("搜索") + title_name
+        ids = []
+        seen = set()
+        seg_or_query = None
+
+        if not calibre_query:
+            book_title = self._clear(book_title)
+            name = self._clear(name)
+
+        fast = perf.lite_on("LITE_SEARCH_FAST") and not calibre_query
+        if fast and seg == 1:
+            return await self._render_book_ids([], title, exclude_id, order_by)
+
+        # 只有当 seg=1 时才进行分词搜索
+        if seg == 1 and title_search and not calibre_query:
+            # 分词搜索：当name长度在2-10之间且jieba可用时
+            seg_or_query = await self._search_by_segmentation(name, ids, seen)
+
+        if fast:
+            self._add_books(await self._fast_search(name, title_search), ids, seen)
+            return await self._render_book_ids(ids, title, exclude_id, order_by)
+
+        # 简繁体转换搜索（合并为一次查询）
+        start = time.time()
+
+        if calibre_query:
+            converted_names = ["( " + name + " )"]
+        else:
+            converted_names = [name]
+        for profile in ['s2t', 't2s']:
+            converted_name = utils.get_opencc(profile).convert(name)
+            if converted_name != name:
+                if calibre_query:
+                    converted_names.append("( " + converted_name + " )")
+                else:
+                    converted_names.append(converted_name)
+        if converted_names:
+            try:
+                if seg == 1:
+                    query = seg_or_query
+                else:
+                    if title_search:
+                        # 对于精确标题搜索，构建OR查询
+                        query = " OR ".join([f'title:={cn}' for cn in converted_names])
+                    else:
+                        # 主要是comments字段的搜索比较耗时
+                        query = " OR ".join(converted_names)
+                    if seg_or_query:
+                        query = f"({query}) OR ({seg_or_query})"
+                logging.info(f"Searching books with query: {query}")
+                ids2 = None
+                if query:
+                    ids2 = await self.cached_search_async(query)
+                if ids2:
+                    self._add_books(ids2, ids, seen)
+            except Exception as e:
+                logging.error("Search book failed: %s" % e)
+                logging.error(traceback.format_exc())
+        logging.info(f"[TRACE] search took {time.time() - start:.2f} seconds, found:{len(ids)}")
+        return await self._render_book_ids(ids, title, exclude_id, order_by)
+
+    async def _render_search(self, query, title, exclude_id, order_by):
+        logging.info(f"Searching books with query: {query}")
+        ids = []
+        try:
+            ids = await self.cached_search_async(query)
+        except Exception as e:
+            logging.error("Search book failed: %s" % e)
+            logging.error(traceback.format_exc())
+        return await self._render_book_ids(ids, title, exclude_id, order_by)
+
+    @staticmethod
+    def _sole_book_ids(session, ids, user_id):
+        sole_book_ids = set()
+        for offset in range(0, len(ids), 500):
+            batch = ids[offset : offset + 500]
+            sole_book_ids.update(
+                book_id
+                for (book_id,) in session.query(Item.book_id)
+                .filter(
+                    Item.book_id.in_(batch),
+                    Item.sole == 1,
+                    Item.collector_id != user_id,
+                )
+                .all()
+            )
+        return sole_book_ids
+
+    async def _render_book_ids(self, ids, title, exclude_id, order_by):
+        if exclude_id > 0 and exclude_id in ids:
+            ids.remove(exclude_id)
+
+        # 查询被别的用户标记为sole的图书ID，并将ids中对应的ID去除
+        sole_book_ids = await self.run_sqlite_async(
+            self._sole_book_ids, ids, self.user_id()
+        )
+
+        ids = [book_id for book_id in ids if book_id not in sole_book_ids]
+        return await self.render_book_list([], ids=ids, title=title, sort_fields=order_by)
+
+
+class HotBook(ListHandler):
+    def get(self):
+        title = _("热度榜单")
+        db_items = self.sqlite_session.query(Item).filter(Item.count_visit > 1).order_by(Item.count_visit.desc())
+        start = self.get_argument_start()
+        delta = 60
+        items = db_items.limit(delta).offset(start).all()
+        ids = [item.book_id for item in items]
+        return self.render_book_list([], ids=ids, title=title)
+
+
+# 通ISBN添加实体图书
+class BookAddByISBN(BaseHandler):
+    @js
+    @auth
+    async def post(self):
+        if not (self.current_user.is_admin() or self.current_user.can_upload()):
+            return {"err": "permission", "msg": _("无权操作")}
+        data = tornado.escape.json_decode(self.request.body)
+        isbn = data.get("isbn", "").strip()
+        if not isbn:
+            return {"err": "params.invalid", "msg": _("请输入ISBN号")}
+
+        # 使用基类方法查找已存在的ISBN实体书
+        existing_books = self.find_phy_books_by_isbn(isbn)
+
+        # 如果已存在该ISBN的图书，更新相关计数
+        if existing_books:
+            book_id = list(existing_books)[0]  # 取第一个匹配的图书ID
+            # 检查当前用户是否已经有该图书的Item记录
+            existing_item = self.sqlite_session.query(Item).filter(
+                Item.book_id == book_id
+            ).first()
+
+            book_count = 1
+            if existing_item:
+                book_count = (existing_item.book_count or 0) + 1
+                existing_item.book_count = book_count
+                self.sqlite_session.add(existing_item)
+                self.sqlite_session.commit()
+            else:
+                item = Item()
+                item.book_id = book_id
+                item.collector_id = self.user_id()
+                item.book_type = BOOK_TYPE_PHYSICAL
+                item.book_count = book_count
+                self.sqlite_session.add(item)
+                self.sqlite_session.commit()
+
+            # 更新calibre custom data
+            try:
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_BOOK_TYPE, {book_id: BOOK_TYPE_PHYSICAL})
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_PHY_COUNT, {book_id: book_count})
+            except Exception as e:
+                logging.error(f"Failed to set custom fields for book ID {book_id}: {e}")
+
+            return {"err": "ok", "msg": _("实体书数量已更新，当前数量：%d") % book_count, "book_id": book_id}
+
+        logging.info("Adding new book by ISBN: %s" % isbn)
+        try:
+            # 通过 BookSearch 查询ISBN的图书信息（依次尝试豆瓣、新华书店兜底）。
+            # 每个信息源超时 10s，同步等待会冻住 ioloop，下放线程池执行
+            book_data = await utils.run_in_threadpool(BookSearch.find_physical_book_by_isbn, isbn)
+            if not book_data:
+                return {"err": "book.notfound", "msg": _("未找到该ISBN号对应的图书")}
+
+            # 通过上面返回的book metadata, 添加图书到calibre中（不需要文件，仅metadata）
+            book_data.title_sort = utils.get_title_sort(book_data.title)
+            book_id = self.calibre_db.create_book_entry(book_data)
+            if book_id is None:
+                return {"err": "book.duplicate", "msg": _("该图书已存在或创建失败")}
+
+            try:
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_BOOK_TYPE, {book_id: BOOK_TYPE_PHYSICAL})
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_PHY_COUNT, {book_id: 1})
+                BaseHandler._physical_books_count_cache_time = 0
+            except Exception as e:
+                logging.error(f"Failed to set custom fields for book ID {book_id}: {e}")
+
+            # 创建Item记录
+            item = Item()
+            item.book_id = book_id
+            item.collector_id = self.user_id()
+            item.book_type = BOOK_TYPE_PHYSICAL
+            item.book_count = 1
+            self.sqlite_session.add(item)
+            self.sqlite_session.commit()
+            return {"err": "ok", "msg": _("图书添加成功"), "book_id": book_id}
+        except Exception as e:
+            logging.error("Failed to add book by ISBN: %s", e)
+            return {"err": "internal", "msg": _("查询ISBN失败，请在系统设置中配置互联网信息源中插件地址。如http://douban-rs-api:80/。")}
+
+
+# 直接录入书名/作者/ISBN添加实体图书（ISBN、作者可选），添加后强制刮削
+class BookAddManual(BaseHandler):
+    @js
+    @auth
+    def post(self):
+        if not (self.current_user.is_admin() or self.current_user.can_upload()):
+            return {"err": "permission", "msg": _("无权操作")}
+        data = tornado.escape.json_decode(self.request.body)
+        title = (data.get("title") or "").strip()
+        author = (data.get("author") or "").strip()
+        isbn = re.sub(r"[-\s]", "", (data.get("isbn") or "")).upper()
+        if not title:
+            return {"err": "params.invalid", "msg": _("请输入书名")}
+        if len(title) > 100 or len(author) > 64:
+            return {"err": "params.invalid", "msg": _("书名或作者过长")}
+        if re.search(r"['\"\x00-\x1f\x7f]", title + author):
+            return {"err": "params.invalid", "msg": _("书名或作者包含非法字符")}
+        authors = [a.strip() for a in re.split(r"[,，]", author) if a.strip()]
+        if isbn and not re.match(r"^([0-9]{9}[0-9X]|[0-9]{13})$", isbn):
+            return {"err": "params.invalid", "msg": _("无效的ISBN号")}
+
+        if isbn and self.find_phy_books_by_isbn(isbn):
+            return {"err": "book.duplicate", "msg": _("该ISBN对应的图书已存在")}
+
+        try:
+            from calibre.ebooks.metadata.book.base import Metadata
+            from calibre.utils.date import now as nowf
+
+            mi = Metadata(title, authors if authors else [_("佚名")])
+            if isbn:
+                mi.isbn = isbn
+            mi.title_sort = utils.get_title_sort(title)
+            mi.timestamp = nowf()
+
+            book_id = self.calibre_db.create_book_entry(mi)
+            if book_id is None:
+                return {"err": "book.duplicate", "msg": _("该图书已存在或创建失败")}
+
+            try:
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_BOOK_TYPE, {book_id: BOOK_TYPE_PHYSICAL})
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_PHY_COUNT, {book_id: 1})
+                BaseHandler._physical_books_count_cache_time = 0
+            except Exception as e:
+                logging.error(f"Failed to set custom fields for book ID {book_id}: {e}")
+
+            item = Item()
+            item.book_id = book_id
+            item.collector_id = self.user_id()
+            item.book_type = BOOK_TYPE_PHYSICAL
+            item.book_count = 1
+            self.sqlite_session.add(item)
+            self.sqlite_session.commit()
+
+            # 直接录入的信息很少，添加后强制刮削补全。
+            # auto_fill 是同步调用（网络刮削约数秒），这里改走异步服务，不阻塞请求
+            AutoFillService().auto_fill_all([book_id], force=True, qpm=600)
+            return {"err": "ok", "msg": _("图书添加成功"), "book_id": book_id}
+        except Exception as e:
+            logging.error("Failed to add book manually: %s", e)
+            logging.error(traceback.format_exc())
+            return {"err": "internal", "msg": _("添加图书失败")}
+
+
+class BookUpload(BaseHandler):
+    @classmethod
+    def convert(cls, s):
+        try:
+            return s.group(0).encode("latin1").decode("utf8")
+        except Exception:
+            return s.group(0)
+
+    def _prepare_new_book(self, mi, fpaths, fmt):
+        dynamic_cover = False
+        mi.title_sort = utils.get_title_sort(mi.title)
+        detected_language = utils.detect_title_language(mi.title)
+        if detected_language:
+            mi.languages = detected_language
+        if not mi.languages:
+            mi.languages = CONF.get("DEFAULT_LANGUAGE", constants.DEFAULT_LANGUAGE_CODE)
+
+        stage = PerfMonitor.instance().stage
+        cover_fmt, cover_data = mi.cover_data
+        if (cover_fmt is None or cover_data is None) and fmt.lower() == "epub":
+            epub_fpath = next((p for p in fpaths if p.lower().endswith(".epub")), None)
+            if epub_fpath:
+                with stage("upload.cover_extract"):
+                    cover_buf = EpubHelper.extract_cover(epub_fpath)
+                if cover_buf:
+                    mi.cover_data = ("jpeg", cover_buf.read())
+                    logging.info("_add_new_book: 从 epub 文件提取封面成功: %s", epub_fpath)
+                else:
+                    logging.warning("_add_new_book: 从 epub 文件提取封面失败: %s", epub_fpath)
+
+        if CONF.get("USE_DYNAMIC_COVER", False):
+            fmt, cover_data = mi.cover_data
+            if fmt is None or cover_data is None:
+                author = mi.authors[0] if mi.authors else _("佚名")
+                with stage("upload.dynamic_cover"):
+                    data = ImageGenerator.generate_cover(mi.title, author)
+                if data:
+                    mi.cover_data = ("jpeg", data)
+                    dynamic_cover = True
+        return dynamic_cover
+
+    def _import_to_calibre(self, mi, fpaths, dynamic_cover):
+        with PerfMonitor.instance().stage("upload.import_book"):
+            book_id = self.calibre_db.import_book(mi, fpaths)
+        if book_id is not None and dynamic_cover:
+            try:
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_DYNAMIC_COVER, {book_id: 1})
+            except Exception as e:
+                logging.error(f"Failed to set dynamic cover field for book ID {book_id}: {e}")
+        return book_id
+
+    def _after_import(self, mi, book_id):
+        stage = PerfMonitor.instance().stage
+        self.increase_history_count("upload_history")
+        with stage("upload.item_commit"):
+            item = Item()
+            item.book_id = book_id
+            item.collector_id = self.user_id()
+            self.sqlite_session.add(item)
+            try:
+                self.sqlite_session.commit()
+            except Exception:
+                # session 已经因为之前某次 flush 失败进入「必须 rollback」状态时，
+                # 直接 commit 会抛 PendingRollbackError，把一次本来能成功的上传
+                # 变成 500。这里先回滚把 session 拉回可用状态，再重试一次。
+                logging.warning("upload: retry item commit after rollback", exc_info=True)
+                self.sqlite_session.rollback()
+                self.sqlite_session.add(item)
+                self.sqlite_session.commit()
+        if perf.lite_on("LITE_SKIP_AFTER_UPLOAD"):
+            return book_id
+        if CONF.get(AUTO_FILL_META, False):
+            # `AutoFillService` 是 AsyncService：async_mode() 为真时它只是把任务丢进
+            # 队列（安全）；为假时（单测、以及后台服务未启动的部署）它会**就地同步**
+            # 跑，而内部 `db.set_metadata()` 是 calibre 写操作，必须与
+            # `run_calibre_async` 共用同一把 db_lock。不持锁就在 ioloop 线程里写
+            # calibre，会与扫描/导入线程抢 calibre 的独占写锁，表现成
+            # `apsw.ReadOnlyError: attempt to write a readonly database`。
+            with self.db_lock:
+                AutoFillService().auto_fill_async(book_id)
+        # 目录提取会顺带给含 TXT 的书预热阅读索引，所以不再单独调 _prepare_txt_content
+        # —— 否则同一本新书会被两个线程各整本扫一遍。
+        CatalogExtractService().extract_one_async(book_id)
+
+        if CONF.get("SEND_MAIL_FOR_NEW_BOOKS", False) and mi.title:
+            try:
+                emails = []
+                readers = self.sqlite_session.query(Reader).filter(Reader.active.is_(1)).all()
+                for r in readers:
+                    if not r.email or not r.active:
+                        continue
+                    if r.extra and r.extra.get("allow_sending_mail", True) is True:
+                        emails.append(r.email)
+                if emails:
+                    site_url = self.site_url
+                    if not site_url:
+                        referer = self.request.headers.get("Referer", "")
+                        parsed = urllib.parse.urlsplit(referer)
+                        if parsed.scheme and parsed.netloc:
+                            site_url = f"{parsed.scheme}://{parsed.netloc}"
+                    MailService().send_new_book_notification(emails, [mi.title], site_url=site_url)
+                else:
+                    logging.info("No active readers with email found for new book notification.")
+            except Exception as e:
+                logging.error("Failed to trigger new book notification: %s", e)
+
+        return book_id
+
+    def _prepare_txt_content(self, book_id, force=False):
+        """为含 TXT 格式的书籍预生成章节索引（走预热队列，不阻塞本次请求）。
+
+        force=True 用于 TXT 文件刚被替换的场景：旧索引的 start/end 是旧文件的
+        字节偏移，阅读器按它 seek 会读到别的段落，必须重算。
+        """
+        try:
+            formats = set(self.calibre_db_cache.formats(book_id, verify_formats=False) or [])
+            if "TXT" not in formats:
+                return
+            txt_path = self.calibre_db.format_abspath(book_id, "TXT", index_is_id=True)
+            if txt_path:
+                ExtractService().preheat_txt_content(book_id, txt_path, force=force)
+        except Exception as e:
+            logging.warning("Failed to prepare txt content for book %s: %s", book_id, e)
+
+    def _add_new_book(self, mi, fpaths, fmt=None):
+        dynamic_cover = self._prepare_new_book(mi, fpaths, fmt)
+        book_id = self._import_to_calibre(mi, fpaths, dynamic_cover)
+        return self._after_import(mi, book_id)
+
+    def _add_new_book_for_threadpool(self, mi, fpaths):
+        """`_add_new_book` 的线程池版本：只做 FS/calibre 部分，交回 ioloop 再写 users.db。
+
+        ## 为什么不能在池里跑完 `_add_new_book`
+
+        `utils.run_in_threadpool(self._add_new_book, ...)` 把整个方法丢进了工作线程，
+        而 `_add_new_book` 末尾的 `_after_import` 里用的是 `self.sqlite_session` ——
+        那是一个**绑定在 ioloop 线程上、且没有设置 `check_same_thread=False`** 的
+        SQLAlchemy Session。跨线程用它有两个后果：
+
+        * SQLite 连接对象属于创建它的线程。走到这里时连接已经是**另一个线程**打开的，
+          写事务被 sqlite3 拒绝，报 `attempt to write a readonly database`；
+        * Session 的 identity map 与 `threading.local` 的 scoped_session 对不上，
+          缓存在 `self.current_user` 上的 `Reader` 已经挂在别的 session 上，报
+          `Object '<Reader>' is already attached to session 'N' (this is 'M')`。
+
+        生产上单请求跑的时候两者往往撞不上（连接恰好在本线程建、也没并发 flush）；
+        一旦别的线程（`ReadingStatsService` 的周期性 flush、`ScanService`）动过
+        `scoped_session`，就会稳定复现。测试里 `test_scan` 先跑一遍正好把这个
+        「别的线程」造出来，于是 `test_upload` 成片红。
+
+        所以这里把方法拆开：池里只做解析与导入（不碰 users.db），`_after_import`
+        回到 ioloop 线程执行 —— 和 `_add_new_book_async` 的写法一致。
+        """
+
+        def _import():
+            dynamic_cover = self._prepare_new_book(mi, fpaths, None)
+            return self._import_to_calibre(mi, fpaths, dynamic_cover)
+
+        return _import
+
+    async def _add_new_book_async(self, mi, fpaths, fmt):
+        dynamic_cover = await utils.run_in_threadpool(self._prepare_new_book, mi, fpaths, fmt)
+        book_id = await self.run_calibre_async(self._import_to_calibre, mi, fpaths, dynamic_cover)
+        return self._after_import(mi, book_id)
+
+    def get_upload_file(self):
+        # for unittest mock
+        if "ebook" not in self.request.files:
+            return None, None
+        p = self.request.files["ebook"][0]
+        return (p["filename"], p["body"])
+
+    async def _add_format_to_existing_book(self, book_id, update_metadata=True, force=False):
+        """向已存在的书籍添加新格式文件"""
+        book = await self.get_book_async(book_id, raise_exception=False)
+        if not book:
+            return {"err": "book.not_found", "msg": _("书籍不存在")}
+
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        name, data = self.get_upload_file()
+        if name is None:
+            return {"err": "params.filename", "msg": _("文件不存在或未选择文件")}
+
+        name = re.sub(r"[\x80-\xFF]+", BookUpload.convert, name)
+        name = self._sanitize_uploaded_filename(name)
+        if not name:
+            return {"err": "params.filename", "msg": _("文件名不合法")}
+        logging.info(f"Adding format to book {book_id}, file name = {repr(name)}")
+
+        fmt = os.path.splitext(name)[1]
+        fmt = fmt[1:] if fmt else None
+        if not fmt:
+            return {"err": "params.filename", "msg": _("文件名不合法, 没有扩展名")}
+        fmt = fmt.lower()
+
+        if fmt not in ACCEPTED_BOOK_FORMATS:
+            return {"err": "params.format.unsupported", "msg": _("不支持的书籍格式: %s" % fmt)}
+
+        if f"fmt_{fmt}" in book and not force:
+            return {
+                "err": "format.already_exists",
+                "msg": _("书籍已存在 %s 格式") % fmt.upper(),
+                "book_id": book_id
+            }
+
+        try:
+            fpath = self._safe_upload_path(name)
+        except ValueError:
+            return {"err": "params.filename", "msg": _("文件名不合法")}
+        try:
+            await utils.run_in_threadpool(self._save_and_validate, fpath, data, fmt)
+        except InvalidBookFileError as e:
+            self._remove_staged_file(fpath)
+            return {"err": "book.invalid", "msg": _("文件校验失败：%s") % e}
+        except OSError as e:
+            logging.error(f"Failed to save uploaded file for book {book_id}: {e}")
+            self._remove_staged_file(fpath)
+            return {"err": "internal", "msg": _("保存上传文件失败, 请检查文件名是否过长或者书库所在路径空间不足!")}
+
+        logging.info(f"Save format file to [{fpath}]")
+        try:
+            await self.run_calibre_async(self.calibre_db.add_format, book_id, fmt.upper(), fpath, index_is_id=True, replace=force)
+            logging.info(f"Successfully added {fmt.upper()} format to book {book_id}")
+
+            if fmt == "txt":
+                # 换掉的 TXT 是另一份文件，旧索引的字节偏移全部失效，强制重算
+                self._prepare_txt_content(book_id, force=True)
+
+            try:
+                if update_metadata and fmt in utils.meta_writable_formats():
+                    self.save_book_meta(book_id, fmt=fmt)
+                    logging.info(f"Metadata written to new format {fmt.upper()} for book {book_id}")
+            except Exception as e:
+                logging.warning(f"Failed to write metadata to new format: {e}")
+
+            self.add_msg("success", _("格式添加成功！"))
+            return {"err": "ok", "book_id": book_id, "msg": _("成功添加 %s 格式") % fmt.upper()}
+        except Exception as e:
+            logging.error(f"Failed to add format to book {book_id}: {e}")
+            return {"err": "internal", "msg": _("添加格式失败: %s") % str(e)}
+        finally:
+            self._remove_staged_file(fpath)
+
+    @staticmethod
+    def _save_and_validate(fpath, data, fmt):
+        stage = PerfMonitor.instance().stage
+        with stage("upload.save_file"), open(fpath, "wb") as f:
+            f.write(data)
+        with stage("upload.validate"):
+            validate_book_file(fpath, fmt)
+
+    _upload_slots = None
+
+    @classmethod
+    def _upload_slot(cls):
+        if cls._upload_slots is None:
+            cls._upload_slots = asyncio.Semaphore(max(1, int(CONF.get("UPLOAD_CONCURRENCY", 1))))
+        return cls._upload_slots
+
+    @js
+    async def post(self):
+        if not BookAccessService.guest_upload_allowed():
+            if self.is_guest():
+                return {"err": "permission", "msg": _("无权操作，请先登录")}
+            if not (self.current_user.is_admin() or self.current_user.can_upload()):
+                return {"err": "permission", "msg": _("无权操作")}
+
+        target_book_id = self.get_argument("bid", None)
+        # get_argument 缺省返回的 1 是 int、客户端传的是字符串 "1"：直接 == 1
+        # 会把显式传 "1" 的「更新元数据」静默判成 False。统一按宽松开关解析。
+        update_metadata = str(self.get_argument("update_meta", "1")).strip().lower() \
+            not in ("0", "false", "no", "off", "")
+        if target_book_id:
+            force = str(self.get_argument("force", "0")).lower() in ("1", "true")
+            return await self._add_format_to_existing_book(int(target_book_id), update_metadata, force)
+
+        name, data = self.get_upload_file()
+        if name is None:
+            return {"err": "params.filename", "msg": _("文件不存在或未选择文件")}
+
+        name = re.sub(r"[\x80-\xFF]+", BookUpload.convert, name)
+        name = self._sanitize_uploaded_filename(name)
+        if not name:
+            return {"err": "params.filename", "msg": _("文件名不合法")}
+        logging.info("upload book name = " + repr(name))
+        fmt = os.path.splitext(name)[1]
+        fmt = fmt[1:] if fmt else None
+        if not fmt:
+            return {"err": "params.filename", "msg": _("文件名不合法, 没有扩展名")}
+        fmt = fmt.lower()
+        if fmt not in ACCEPTED_BOOK_FORMATS:
+            return {"err": "params.format.unsupported", "msg": _("不支持的书籍格式: %s" % fmt)}
+
+        async with self._upload_slot():
+            return await self._import_uploaded_book(name, data, fmt)
+
+    async def _import_uploaded_book(self, name, data, fmt):
+        fpath = None
+        try:
+            err, fpath, mi, translators = await utils.run_in_threadpool(self._receive_new_book, name, data, fmt)
+            if err:
+                return err
+            if CONF.get("UPLOAD_IGNORE_TITLE_CHECKING", False):
+                kind, payload = "new", True
+            else:
+                kind, payload = await self.run_calibre_async(self._resolve_same_title, mi, fmt)
+            if kind == "samebook":
+                return payload
+            merged = []
+            if kind == "existing":
+                book_id = payload
+                await self.run_calibre_async(self.calibre_db.add_format, book_id, fmt.upper(), fpath, True)
+                # 4.6.0-16：并入既有书时把文件里的元数据补进记录（默认只补空字段）
+                merged = await self.run_calibre_async(
+                    merge_meta_from_file, self.calibre_db, book_id, mi, _merge_meta_force(self),
+                ) or []
+            else:
+                book_id = await self._add_new_book_async(mi, [fpath], fmt)
+                if payload and translators:
+                    await self.run_calibre_async(self.calibre_db_cache.set_field, CALIBRE_COLUMN_TRANSLATORS, {book_id: ",".join(translators)})
+            self.add_msg("success", _("导入书籍成功！"))
+            # merged 让前端能告诉用户"本次并入了哪本书、补了哪些字段"，
+            # 否则用户只看到"导入成功"，以为改动被吞了。
+            return {"err": "ok", "book_id": book_id, "merged_fields": merged}
+        finally:
+            self._remove_staged_file(fpath)
+
+    @staticmethod
+    def _remove_staged_file(fpath):
+        keep = CONF.get("KEEP_UPLOAD_SOURCE_FILE", False) and not perf.lite_on("LITE_NO_SOURCE_COPY")
+        if fpath and not keep and os.path.exists(fpath):
+            try:
+                os.remove(fpath)
+            except Exception as e:
+                logging.warning("Failed to remove uploaded source file %s: %s", fpath, e)
+
+    def _receive_new_book(self, name, data, fmt):
+        stage = PerfMonitor.instance().stage
+        try:
+            fpath = self._safe_upload_path(name)
+        except ValueError:
+            return {"err": "params.filename", "msg": _("文件名不合法")}, None, None, []
+
+        logging.info("save upload file into [%s], fmt:%s", fpath, fmt)
+        try:
+            with stage("upload.save_file"), open(fpath, "wb") as f:
+                f.write(data)
+        except Exception as e:
+            logging.error("Failed to save uploaded file: %s", e)
+            return {"err": "internal", "msg": _("保存上传文件失败, 请检查文件名是否过长或者书库所在路径空间不足!")}, fpath, None, []
+
+        try:
+            with stage("upload.validate"):
+                validate_book_file(fpath, fmt)
+        except InvalidBookFileError as e:
+            return {"err": "book.invalid", "msg": _("文件校验失败：%s") % e}, fpath, None, []
+        with stage("upload.read_meta"):
+            mi = read_book_metadata(fpath, fmt, name)
+        failed = False
+        translators = []
+        if mi.title and mi.title == CALIBRE_ERROR_FLAG:
+            if fmt == "pdf":
+                mi.title = utils.remove_zlibrary_suffix(name.replace("." + fmt, ""))
+            else:
+                logging.error("Failed to get metadata for %s, reason:%s", fpath, mi.comments)
+                failed = True
+        mi.title = utils.super_strip(mi.title)
+        if mi.authors:
+            authors, translators = guess_authors(mi.authors)
+        else:
+            authors = guess_authors([utils.super_strip(mi.author_sort)])
+        mi.tags = guess_tags(mi.tags)
+        # 4.6.0-9：入库那一刻归一化。这里是最划算的一道——脏名字还没落库，
+        # 归一化后 calibre 目录名/作者目录一次建对，不用后期再搬文件夹。
+        mi.authors = resolve_author_list(authors) or authors
+
+        if failed:
+            return {"err": "book.invalid", "msg": _("此书籍文件无法识别, 或者受DRM保护无法导入")}, fpath, None, []
+
+        name = name[:-len(fmt) - 1]
+        if fmt == "txt":
+            normalize_txt_meta(mi, name)
+        elif fmt == "pdf":
+            normalize_pdf_meta(mi, name)
+
+        logging.info("upload mi.title = " + repr(mi.title))
+        if mi.cover_data and mi.cover_data[1] and mi.cover_data[1][:4] == b"RIFF":
+            mi.cover_data = ("jpeg", ImageHelper.convert_to_jpeg(mi.cover_data[1]))
+        return None, fpath, mi, translators
+
+    def _resolve_same_title(self, mi, fmt):
+        with PerfMonitor.instance().stage("upload.same_title"):
+            books = self.calibre_db.books_with_same_title(mi)
+        if books and fmt in SCANNED_DOCUMENT_FORMATS and len(books) > 1:
+            logging.info("upload: %d same-title candidates for scanned document, import as new book", len(books))
+            books = []
+        if not books:
+            return "new", True
+        book_id = None
+        for id in books:
+            b = self.calibre_db.get_metadata(id, index_is_id=True, get_user_categories=False)
+            logging.info(f"book id:{id}, book_type:{b.get(CALIBRE_COLUMN_BOOK_TYPE, BOOK_TYPE_EBOOK)}")
+            logging.info(f"  existed formats: {b.formats}")
+            if b.get(CALIBRE_COLUMN_BOOK_TYPE, BOOK_TYPE_EBOOK) == BOOK_TYPE_PHYSICAL:
+                continue
+            if b.get("authors", "") != mi.authors:
+                # 作者不匹配的候选直接跳过：原来的写法先记 book_id 再在作者
+                # 不匹配时清成 None，会把先前已找到的同作者候选一并丢掉——
+                # books 是集合、迭代顺序不定，本该并入既有书的会建出重复书
+                continue
+            if fmt.upper() in b.formats:
+                return "samebook", {
+                    "err": "samebook",
+                    "msg": _("同名书籍《%s》已存在这一图书格式 %s") % (mi.title, fmt),
+                    "book_id": b.get("id")
+                }
+            if book_id is None:
+                book_id = b.get("id")
+        logging.info("import [%s] with format %s", repr(mi.title), fmt)
+        if book_id is None:
+            return "new", False
+        return "existing", book_id
+
+
+class BookUploadChunk(BaseHandler):
+    """Handler for chunked file upload"""
+
+    def _import_new_book_to_calibre(self, mi, fpaths):
+        """只做解析 + calibre 入库，**不碰 users.db**，可以安全地丢进线程池。
+
+        见 `BookUpload._add_new_book_for_threadpool` 的说明：`self.sqlite_session`
+        属于 ioloop 线程，在工作线程里用会拿到另一个线程打开的 sqlite 连接
+        （`attempt to write a readonly database`）以及挂错 session 的 ORM 对象
+        （`already attached to session`）。所以线程池里只做这一段，
+        `_after_import` 留在 ioloop 执行。
+        """
+        dynamic_cover = False
+        mi.title_sort = utils.get_title_sort(mi.title)
+        detected_language = utils.detect_title_language(mi.title)
+        if detected_language:
+            mi.languages = detected_language
+        if not mi.languages:
+            mi.languages = CONF.get("DEFAULT_LANGUAGE", constants.DEFAULT_LANGUAGE_CODE)
+
+        if CONF.get("USE_DYNAMIC_COVER", False):
+            fmt, cover_data = mi.cover_data
+            # 与 BookUpload._add_new_book 对齐：封面缺失即生成兜底封面
+            if fmt is None or cover_data is None:
+                author = mi.authors[0] if mi.authors else _("佚名")
+                data = ImageGenerator.generate_cover(mi.title, author)
+                if data:
+                    mi.cover_data = ("jpeg", data)
+                    dynamic_cover = True
+        # cover_data 恒为二元组（无封面时是 (None, None)，真值），必须判 [1] 非空
+        if mi.cover_data and mi.cover_data[1] and mi.cover_data[1][:4] == b"RIFF":
+            mi.cover_data = ("jpeg", ImageHelper.convert_to_jpeg(mi.cover_data[1]))
+        book_id = self.calibre_db.import_book(mi, fpaths)
+        if book_id is not None and dynamic_cover:
+            try:
+                self.calibre_db_cache.set_field(CALIBRE_COLUMN_DYNAMIC_COVER, {book_id: 1})
+            except Exception as e:
+                logging.error(f"Failed to set dynamic cover field for book ID {book_id}: {e}")
+        return book_id
+
+    def _add_new_book(self, mi, fpaths, book_id=None):
+        """users.db 记账 + 新书通知，必须在 ioloop 线程里跑。
+
+        book_id 由调用方传入时直接用（calibre 那一步已经在
+        `_import_new_book_to_calibre` 里做完了）；不传就现场导入，保持
+        `_add_new_book(mi, fpaths)` 这个老签名可用。
+        """
+        if book_id is None:
+            book_id = self._import_new_book_to_calibre(mi, fpaths)
+        self.increase_history_count("upload_history")
+        item = Item()
+        item.book_id = book_id
+        item.collector_id = self.user_id()
+        self.sqlite_session.add(item)
+        self.sqlite_session.commit()
+        if CONF.get(AUTO_FILL_META, False):
+            AutoFillService().auto_fill_async(book_id)
+
+        if CONF.get("SEND_MAIL_FOR_NEW_BOOKS", False) and mi.title:
+            try:
+                emails = []
+                readers = self.sqlite_session.query(Reader).filter(Reader.active.is_(1)).all()
+                for r in readers:
+                    if not r.email:
+                        continue
+                    if r.extra and r.extra.get("allow_sending_mail", True) is True:
+                        emails.append(r.email)
+                if emails:
+                    site_url = self.site_url
+                    if not site_url:
+                        referer = self.request.headers.get("Referer", "")
+                        parsed = urllib.parse.urlsplit(referer)
+                        if parsed.scheme and parsed.netloc:
+                            site_url = f"{parsed.scheme}://{parsed.netloc}"
+                    MailService().send_new_book_notification(emails, [mi.title], site_url=site_url)
+                else:
+                    logging.info("No active readers with email found for new book notification.")
+            except Exception as e:
+                logging.error("Failed to trigger new book notification: %s", e)
+        return book_id
+
+    @staticmethod
+    def get_chunk_size():
+        """Get the configured chunk upload threshold size in bytes"""
+        size_str = CONF.get("CHUNK_UPLOAD_SIZE", "0MB").lower().strip()
+        if size_str == "0" or size_str == "0mb" or size_str == "0kb":
+            return 0
+
+        if size_str.endswith("mb"):
+            return int(size_str[:-2]) * 1024 * 1024
+        elif size_str.endswith("kb"):
+            return int(size_str[:-2]) * 1024
+        else:
+            return int(size_str)
+
+    @js
+    async def post(self):
+        """Handle chunked upload POST requests
+
+        4.6.0-19：改为 async。分片上传正是为大文件设计的——原实现是同步
+        handler，合并 GB 级文件、读 EPUB/PDF 元数据、calibre 入库全在
+        ioloop 上跑，上传期间全站请求被冻住；且不进 _upload_slot 信号量，
+        与单文件上传互不知晓。现在：分片落盘保持轻量，合并+解析进线程池，
+        calibre 操作走 run_calibre_async，合并导入全程持 _upload_slot。
+        """
+        if not BookAccessService.guest_upload_allowed():
+            if self.is_guest():
+                return {"err": "permission", "msg": _("无权操作，请先登录")}
+            if not (self.current_user.is_admin() or self.current_user.can_upload()):
+                return {"err": "permission", "msg": _("无权操作")}
+
+        # Get parameters from form data
+        filename = self.get_argument("filename", "")
+        file_hash = self.get_argument("file_hash", "")
+
+        if not filename:
+            return {"err": "params.filename", "msg": _("文件名不能为空")}
+        filename = re.sub(r"[\x80-\xFF]+", BookUpload.convert, filename)
+        filename = self._sanitize_uploaded_filename(filename)
+        if not filename:
+            return {"err": "params.filename", "msg": _("文件名不合法")}
+        logging.info("upload book name = " + repr(filename))
+        fmt = os.path.splitext(filename)[1]
+        fmt = fmt[1:] if fmt else None
+        if not fmt:
+            return {"err": "params.filename", "msg": _("文件名不合法，没有包含扩展名")}
+        fmt = fmt.lower()
+        if fmt not in ACCEPTED_BOOK_FORMATS:
+            return {"err": "params.format.unsupported", "msg": _("不支持的书籍格式: %s" % fmt)}
+
+        if not file_hash:
+            return {"err": "params.hash", "msg": _("文件hash不能为空")}
+        if not re.fullmatch(r"[a-fA-F0-9]{8,128}", file_hash):
+            return {"err": "params.hash", "msg": _("文件hash不合法")}
+
+        # 分片参数钳制：原来 int() 解析失败直接抛异常（@js 会把 traceback
+        # 回给客户端），total_chunks 传 10^9 会让合并循环做上亿次 exists
+        try:
+            chunk_index = int(self.get_argument("chunk_index", 0))
+            total_chunks = int(self.get_argument("total_chunks", 1))
+        except (TypeError, ValueError):
+            return {"err": "params.chunk", "msg": _("分块参数必须是数字")}
+        if total_chunks < 1 or total_chunks > 2000:
+            return {"err": "params.chunk", "msg": _("total_chunks 超出范围（1-2000）")}
+        if chunk_index < 0 or chunk_index >= total_chunks:
+            return {"err": "params.chunk", "msg": _("chunk_index 超出范围")}
+
+        # Get the chunk data
+        if "chunk" not in self.request.files:
+            return {"err": "params.chunk", "msg": _("未找到文件块数据")}
+
+        chunk_file = self.request.files["chunk"][0]
+        chunk_data = chunk_file["body"]
+
+        # Create temporary directory for chunks
+        chunk_root = os.path.join(CONF["upload_path"], "temp_chunks")
+        temp_dir = os.path.join(chunk_root, file_hash)
+        if not os.path.isdir(temp_dir):
+            # 新会话第一片：顺手清扫 24h 前的孤儿目录——客户端中途放弃上传
+            # 时没人再走到合并分支，原实现这些目录会永久残留直到磁盘吃满
+            self._sweep_stale_chunk_dirs(chunk_root)
+            os.makedirs(temp_dir, exist_ok=True)
+
+        # Save current chunk
+        chunk_path = os.path.join(temp_dir, f"chunk_{chunk_index}")
+        with open(chunk_path, "wb") as f:
+            f.write(chunk_data)
+
+        # Check if all chunks are received（一次 listdir 代替逐个 exists）
+        try:
+            received = len(os.listdir(temp_dir))
+        except OSError:
+            received = 0
+
+        if received >= total_chunks:
+            # All chunks received, merge them
+            # _upload_slot 定义在 BookUpload 上（两类共享同一把信号量：
+            # 分片合并与单文件导入互斥，暂存路径 upload_path/<filename> 才不会互踩）
+            async with BookUpload._upload_slot():
+                return await self._merge_chunks_and_import(filename, fmt, total_chunks, temp_dir)
+        else:
+            # Still waiting for more chunks
+            return {
+                "err": "ok",
+                "msg": _("分块上传成功"),
+                "received_chunks": received,
+                "total_chunks": total_chunks
+            }
+
+    @staticmethod
+    def _sweep_stale_chunk_dirs(root, max_age_hours=24):
+        """清扫中途放弃的分片上传残留（temp_chunks/<hash> 目录）。"""
+        import shutil
+        try:
+            now = time.time()
+            for name in os.listdir(root):
+                p = os.path.join(root, name)
+                if not os.path.isdir(p):
+                    continue
+                try:
+                    if now - os.path.getmtime(p) > max_age_hours * 3600:
+                        shutil.rmtree(p, ignore_errors=True)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+
+    def _merge_chunks_to_file(self, filename, fmt, total_chunks, temp_dir):
+        """合并分片并解析元数据（纯文件系统/解析，供线程池调用）。
+
+        返回 (final_path, mi, translators)。GB 级文件合并 + EPUB/PDF 解析
+        可能耗时分钟级，绝不能在 ioloop 上跑（4.6.0-19 前就是在 ioloop 上）。
+        """
+        final_path = self._safe_upload_path(filename)
+        try:
+            with open(final_path, "wb") as outfile:
+                for i in range(total_chunks):
+                    chunk_path = os.path.join(temp_dir, f"chunk_{i}")
+                    with open(chunk_path, "rb") as chunk_file:
+                        outfile.write(chunk_file.read())
+        except Exception:
+            # 合并中断时清掉半成品，避免 upload_path 根目录残留脏文件
+            if os.path.exists(final_path):
+                try:
+                    os.remove(final_path)
+                except OSError:
+                    pass
+            raise
+
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+        logging.info("Merged chunked upload file into [%s]", final_path)
+
+        validate_book_file(final_path, fmt)  # InvalidBookFileError 由调用方处理
+        mi = read_book_metadata(final_path, fmt, filename)
+        if mi.title and mi.title == CALIBRE_ERROR_FLAG:
+            if fmt == "pdf":
+                mi.title = utils.remove_zlibrary_suffix(filename.replace("." + fmt, ""))
+            else:
+                logger.error("Failed to get metadata for %s, reason:%s", final_path, mi.comments)
+                mi.title = ""
+        mi.title = utils.super_strip(mi.title)
+        if mi.authors:
+            _authors, _translators = guess_authors(mi.authors)
+        else:
+            _authors, _translators = guess_authors([utils.super_strip(mi.author_sort)])
+        # 4.6.0-9：分片上传入库同样归一化，与单文件上传保持一致
+        mi.authors = resolve_author_list(_authors) or _authors
+
+        # 4.6.0-16：与单文件上传对齐（原来这里 pdf 无条件覆盖标题为文件名、
+        # 作者无条件改成"佚名"，把文件里刚同步进去的元数据全丢了）
+        stem = filename[:-len(fmt) - 1] if fmt else filename
+        if fmt == "txt":
+            normalize_txt_meta(mi, stem)
+        elif fmt == "pdf":
+            normalize_pdf_meta(mi, stem)
+
+        logging.info("chunked upload mi.title = " + repr(mi.title))
+        return final_path, mi, _translators
+
+    async def _merge_chunks_and_import(self, filename, fmt, total_chunks, temp_dir):
+        """Merge all chunks and import the book（4.6.0-19 起为 async）
+
+        FS/解析阶段进线程池；calibre 操作走 run_calibre_async，不占 ioloop。
+        """
+        final_path = None
+        try:
+            filename = re.sub(r"[\x80-\xFF]+", BookUpload.convert, filename)
+            filename = self._sanitize_uploaded_filename(filename)
+            if not filename or not fmt:
+                return {"err": "params.filename", "msg": _("文件名不合法")}
+
+            try:
+                final_path, mi, _translators = await utils.run_in_threadpool(
+                    self._merge_chunks_to_file, filename, fmt, total_chunks, temp_dir)
+            except InvalidBookFileError as e:
+                return {"err": "book.invalid", "msg": _("文件校验失败：%s") % e}
+            if not mi.title:
+                return {"err": "book.invalid", "msg": _("此书籍文件无法识别, 或者受DRM保护无法导入")}
+
+            merged_fields = []
+
+            # Check for existing books
+            books = await self.run_calibre_async(self.calibre_db.books_with_same_title, mi)
+            if books and fmt in SCANNED_DOCUMENT_FORMATS and len(books) > 1:
+                # 扫描版作者多来自文件名、不可信：多个同名候选一律按新书入库，避免误并
+                logging.info("chunked upload: %d same-title candidates for scanned document, import as new book", len(books))
+                books = []
+            if books:
+                book_id = None
+                for id in books:
+                    b = await self.run_calibre_async(
+                        self.calibre_db.get_metadata, id, index_is_id=True)
+                    # 如果是实体书，则跳过
+                    if b.get(CALIBRE_COLUMN_BOOK_TYPE, BOOK_TYPE_EBOOK) == BOOK_TYPE_PHYSICAL:
+                        continue
+                    if b.get("authors", "") != mi.authors:
+                        # 与 BookUpload.post 对齐：作者不匹配的候选不可作为并入目标，
+                        # 否则扫描版（作者多来自文件名、不可信）会误并入同名不同作者的书
+                        continue
+                    if fmt.upper() in b.formats:
+                        return {
+                            "err": "samebook",
+                            "msg": _("同名书籍《%s》已存在这一图书格式 %s") % (mi.title, fmt),
+                            "book_id": b.get("id")
+                        }
+                    if book_id is None:
+                        book_id = b.get("id")
+                logging.info("import [%s] from %s with format %s", repr(mi.title), final_path, fmt)
+                if book_id is None:
+                    # New EBOOK（含封面兜底与新书通知；通知可能走 SMTP，放
+                    # blocking_pool 而不是 run_calibre_async，避免慢邮件占住 db_lock）
+                    #
+                    # 池里只跑「解析 + calibre 入库」，`_add_new_book`（要写
+                    # self.sqlite_session）必须回到 ioloop 线程 —— 理由见
+                    # BookUpload._add_new_book_for_threadpool 的说明。
+                    book_id = await utils.run_in_threadpool(
+                        self._import_new_book_to_calibre, mi, [final_path])
+                    book_id = self._add_new_book(mi, [final_path], book_id)
+                else:
+                    await self.run_calibre_async(
+                        self.calibre_db.add_format, book_id, fmt.upper(), final_path, True)
+                    # 4.6.0-16：并入既有书时，文件里的元数据不能白读——补进记录
+                    merged_fields = await self.run_calibre_async(
+                        merge_meta_from_file, self.calibre_db, book_id, mi,
+                        _merge_meta_force(self),
+                    ) or []
+            else:
+                book_id = await utils.run_in_threadpool(
+                    self._import_new_book_to_calibre, mi, [final_path])
+                book_id = self._add_new_book(mi, [final_path], book_id)
+                if _translators:
+                    translators = ",".join(_translators)
+                    await self.run_calibre_async(
+                        self.calibre_db_cache.set_field,
+                        CALIBRE_COLUMN_TRANSLATORS, {book_id: translators})
+
+            self.add_msg("success", _("导入书籍成功！"))
+            return {"err": "ok", "book_id": book_id, "merged_fields": merged_fields}
+
+        except Exception as e:
+            logging.error("Error in chunked upload: %s", str(e))
+            logging.error(traceback.format_exc())
+            # Clean up on error
+            if os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            # 原实现把 str(e) 原样回给客户端（内含服务器路径）；细节留日志
+            return {"err": "upload_error", "msg": _("文件上传处理失败：%s") % type(e).__name__}
+        finally:
+            # 上传的源文件已被 calibre 复制进书库，除非配置要求保留，否则清理暂存文件
+            # (无论导入成功、失败还是发现同名书籍，都要清理，避免残留)
+            if final_path and not CONF.get("KEEP_UPLOAD_SOURCE_FILE", False) and os.path.exists(final_path):
+                try:
+                    os.remove(final_path)
+                except Exception as e:
+                    logging.warning("Failed to remove uploaded source file %s: %s", final_path, e)
+
+
+class BookUploadBatch(BaseHandler):
+    """多文件/整个目录批量上传：暂存到 scan_upload_path 下的独立批次目录，交给 ScanService 扫描导入。
+       逐文件结果通过 BookUploadBatchStatus 按 import_id 轮询 ScanFile 表获得。"""
+
+    # import_id -> user_id(guest 为 0)，仅用于校验状态查询/取消请求的发起者身份；
+    # 进程重启后清空是预期行为(内存态，不持久化)。
+    _batch_owners: dict = {}
+    _batch_owners_order: list = []
+    _MAX_TRACKED_BATCHES = 500
+
+    @classmethod
+    def _remember_owner(cls, import_id, user_id):
+        cls._batch_owners[import_id] = user_id or 0
+        cls._batch_owners_order.append(import_id)
+        while len(cls._batch_owners_order) > cls._MAX_TRACKED_BATCHES:
+            old_id = cls._batch_owners_order.pop(0)
+            cls._batch_owners.pop(old_id, None)
+
+    @classmethod
+    def is_owner(cls, import_id, user_id, is_admin_user):
+        if is_admin_user:
+            return True
+        return cls._batch_owners.get(import_id, object()) == (user_id or 0)
+
+    @staticmethod
+    def _sanitize_relative_path(rel_path):
+        """去掉 . / .. / 空段，防止目录穿越；返回用 / 分隔的安全相对路径"""
+        parts = [p for p in rel_path.split("/") if p not in ("", ".", "..")]
+        return "/".join(parts)
+
+    @js
+    def post(self):
+        if not BookAccessService.guest_upload_allowed():
+            if self.is_guest():
+                return {"err": "permission", "msg": _("无权操作，请先登录")}
+            if not (self.current_user.is_admin() or self.current_user.can_upload()):
+                return {"err": "permission", "msg": _("无权操作")}
+
+        if ScanService.is_importing():
+            return {"err": "importing", "msg": _("有其它扫描任务正在运行，请稍后再试")}
+        if ScanService.is_bulk_deleting():
+            return {"err": "importing", "msg": _("已有批量删除任务正在运行，请稍后再试")}
+
+        files = self.request.files.get("ebooks", [])
+        if not files:
+            return {"err": "params.filename", "msg": _("文件不存在或未选择文件")}
+
+        # 目录上传时，前端为每个文件带上一份相对路径(webkitRelativePath)，与 files 顺序一一对应
+        rel_paths = self.get_arguments("relative_paths")
+
+        scan_upload_path = os.path.realpath(CONF.get("scan_upload_path", ""))
+        if not scan_upload_path or not os.path.isdir(scan_upload_path):
+            return {"err": "server.error", "msg": _("服务器扫描导入目录未配置")}
+
+        import_id = int(time.time() * 1000)
+
+        # 判断是否为"目录上传"(relative_paths 带有目录层级)。目录上传时直接把用户选择的
+        # 顶层目录名落地为 scan_upload_path 下的一级目录(重名则加后缀)，以保留
+        # IMPORT_CATEGORY_WITH_FOLDER 按一级目录识别分类的语义；多文件(无目录结构)上传
+        # 则退化为一个独立的 "_upload_<uid>_<id>" 暂存目录，不参与分类识别。
+        norm_rel_paths = [(p or "").replace("\\", "/") for p in rel_paths]
+        top_folder = None
+        if norm_rel_paths and any("/" in p for p in norm_rel_paths):
+            first_seg = self._sanitize_relative_path(next(p for p in norm_rel_paths if "/" in p)).split("/", 1)[0]
+            top_folder = first_seg or None
+
+        if top_folder:
+            candidate, suffix = top_folder, 1
+            while os.path.exists(os.path.join(scan_upload_path, candidate)):
+                candidate = f"{top_folder}_{import_id}_{suffix}"
+                suffix += 1
+            batch_dir = os.path.realpath(os.path.join(scan_upload_path, candidate))
+        else:
+            batch_dir = os.path.realpath(os.path.join(scan_upload_path, f"_upload_{self.user_id() or 0}_{import_id}"))
+
+        if os.path.commonpath([scan_upload_path, batch_dir]) != scan_upload_path:
+            return {"err": "server.error", "msg": _("非法的暂存路径")}
+
+        saved = 0
+        try:
+            os.makedirs(batch_dir, exist_ok=True)
+            for idx, fileinfo in enumerate(files):
+                filename = fileinfo["filename"]
+                filename = re.sub(r"[\x80-\xFF]+", BookUpload.convert, filename)
+                rel_path = norm_rel_paths[idx] if idx < len(norm_rel_paths) else ""
+                rel_path = rel_path if rel_path else filename
+                rel_path = self._sanitize_relative_path(rel_path)
+                if not rel_path:
+                    continue
+                if top_folder:
+                    prefix = top_folder + "/"
+                    rel_path = rel_path[len(prefix):] if rel_path.startswith(prefix) else rel_path
+                    if not rel_path:
+                        continue
+                fmt = rel_path.rsplit(".", 1)[-1].lower() if "." in rel_path else ""
+                if fmt not in SCAN_EXT:
+                    continue
+                target_path = os.path.realpath(os.path.join(batch_dir, rel_path))
+                if os.path.commonpath([batch_dir, target_path]) != batch_dir:
+                    continue
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                with open(target_path, "wb") as f:
+                    f.write(fileinfo["body"])
+                saved += 1
+        except Exception as e:
+            logging.error("[BATCH UPLOAD] Failed to stage files: %s", e)
+            shutil.rmtree(batch_dir, ignore_errors=True)
+            return {"err": "internal", "msg": _("保存上传文件失败, 请检查文件名是否过长或者书库所在路径空间不足!")}
+
+        if saved == 0:
+            shutil.rmtree(batch_dir, ignore_errors=True)
+            return {"err": "params.format.unsupported", "msg": _("未找到支持的书籍格式文件")}
+
+        self._remember_owner(import_id, self.user_id())
+        ScanService().do_import(batch_dir, self.user_id(), ImportOptions(import_id=import_id, cleanup_dir=batch_dir))
+        return {"err": "ok", "msg": _("已开始导入"), "import_id": import_id, "file_count": saved}
+
+
+class BookUploadBatchStatus(BaseHandler):
+    @js
+    def get(self):
+        import_id = int(self.get_argument("import_id", 0))
+        if not import_id:
+            return {"err": "params.error", "msg": _("参数错误")}
+        if not BookUploadBatch.is_owner(import_id, self.user_id(), self.is_admin()):
+            return {"err": "permission", "msg": _("无权限查看该导入任务")}
+
+        num = max(1, min(500, int(self.get_argument("num", 200))))
+        rows = (
+            self.sqlite_session.query(ScanFile)
+            .filter(ScanFile.import_id == import_id)
+            .order_by(ScanFile.id.asc())
+            .limit(num)
+            .all()
+        )
+        items = [{
+            "id": s.id,
+            "path": s.path,
+            "name": s.name,
+            "title": s.title,
+            "author": s.author,
+            "status": s.status,
+            "book_id": s.book_id,
+        } for s in rows]
+        running = ScanService.is_importing() and ScanService.importing_id() == import_id
+        return {"err": "ok", "items": items, "importing": running}
+
+
+class BookUploadBatchCancel(BaseHandler):
+    @js
+    @auth
+    def post(self):
+        req = tornado.escape.json_decode(self.request.body or b"{}")
+        import_id = int(req.get("import_id", 0))
+        if not ScanService.is_importing():
+            return {"err": "not_importing", "msg": _("当前没有正在运行的任务")}
+        if import_id and ScanService.importing_id() != import_id:
+            return {"err": "not_importing", "msg": _("当前没有正在运行的任务")}
+        if not ScanService.can_manage(self.user_id(), self.is_admin()):
+            return {"err": "permission", "msg": _("无权限操作该导入任务")}
+        ScanService.cancel()
+        return {"err": "ok", "msg": _("正在取消任务, 请稍后查看状态")}
+
+
+class BookRead(BaseHandler):
+    READABLE_FORMATS = ("epub", "pdf", "mobi", "azw3", "azw", "txt", "djvu", "cbz", "fb2")
+
+    async def get(self, bid):
+        if not self.current_user and not BookAccessService.guest_read_allowed(self, bid):
+            return self.redirect("/login")
+
+        if self.current_user and not BookAccessService.share_read_granted(self, bid):
+            if self.current_user.can_read():
+                if not self.current_user.is_active():
+                    raise web.HTTPError(403, reason=_("无权在线阅读，请先登录注册邮箱激活账号。"))
+            else:
+                raise web.HTTPError(403, reason=_("无权在线阅读"))
+
+        book = await self.get_book_async(bid, fully=True, raise_exception=False)
+        if not book:
+            raise web.HTTPError(404, reason=_("书籍已不存在"))
+        book_id = book["id"]
+
+        # 若指定了格式且书籍存在该格式，优先按指定格式处理
+        fmt_arg = self.get_argument("format", "").lower()
+        fpath_arg = book.get("fmt_%s" % fmt_arg, None) if fmt_arg else None
+
+        if self.current_user:
+            # 网页阅读器心跳不带阅读进度（epub.js 阅读器目前不回传阅读位置），格式取显式指定的
+            # format 参数，缺省时按优先级挑书籍里第一个存在的格式，分格式时长统计使用。
+            stat_fmt = fmt_arg or next((f for f in self.READABLE_FORMATS if book.get("fmt_%s" % f)), None)
+            ReadingStatsService.heartbeat(self.current_user.id, book_id, Reading.PROTOCOL_WEB, fmt=stat_fmt)
+
+        book_reader = CONF.get("EPUB_VIEWER", "MyReader")
+
+        # 用户在设置中选择了 MyReader 作为阅读器时，epub/pdf/cbz/fb2 直接跳转到 MyReader
+        # 的内嵌阅读入口；其余格式（mobi/azw3/txt 等）沿用下面既有的转换+内置阅读器逻辑，
+        # 因为 MyReader 侧目前只支持 epub/pdf/cbz/fb2（见 document/MyReader_Embedded_WebApp.md）。
+        if book_reader == "MyReader":
+            myreader_format = None
+            if fmt_arg:
+                if fmt_arg in ("epub", "pdf", "cbz", "fb2") and fpath_arg:
+                    myreader_format = fmt_arg
+            elif book.get("fmt_epub"):
+                myreader_format = "epub"
+            elif "fmt_pdf" in book:
+                myreader_format = "pdf"
+            elif "fmt_cbz" in book:
+                myreader_format = "cbz"
+            elif "fmt_fb2" in book:
+                myreader_format = "fb2"
+            if myreader_format:
+                return self.redirect(
+                    "/readerx/open?bookId=%s&format=%s" % (book_id, myreader_format)
+                )
+            # Fallback to the original reading logic if MyReader is not used or the format is not supported
+            book_reader = "epubjs.html"
+
+        if fpath_arg:
+            if fmt_arg == "txt":
+                return self.redirect(f'/book/{book_id}/readtxt')
+
+            if fmt_arg == "pdf":
+                if self.current_user and not self.current_user.can_save():
+                    raise web.HTTPError(403, reason=_("无权在线阅读"))
+
+                pdf_url = urllib.parse.quote_plus(self.api_url + "/api/book/%(id)d.pdf" % book)
+                pdf_reader_url = CONF["PDF_VIEWER"] % {"pdf_url": pdf_url}
+                return self.redirect(pdf_reader_url)
+
+            if fmt_arg == "djvu":
+                return self._redirect_djvu_reader(book)
+
+            if fmt_arg in ("epub", "mobi", "azw", "azw3"):
+                if fmt_arg != 'epub':
+                    service = ConverterService()
+                    if not service.is_book_converting(book):
+                        service.convert_and_save(self.user_id(), book, fpath_arg, "epub")
+
+                epub_dir = "/get/extract/%s" % book["id"]
+                return self.html_page("book/" + book_reader, {
+                    "book": book,
+                    "epub_dir": epub_dir,
+                    "is_ready": (fmt_arg == 'epub')
+                })
+
+        # 优先阅读epub/azw3/mobi/txt格式
+        for fmt in ["epub", "mobi", "azw", "azw3", "txt"]:
+            fpath = book.get("fmt_%s" % fmt, None)
+            if not fpath:
+                continue
+
+            if fmt == "txt":
+                # TXT 有专用阅读器，不能走下面的 EPUB 转换；否则这个循环会先
+                # 返回 EPUB 阅读器，令后面的 fmt_txt 兜底永远不可达。
+                return self.redirect(f"/book/{book_id}/readtxt")
+
+            if fmt != 'epub':
+                service = ConverterService()
+                if not service.is_book_converting(book):
+                    logging.info(f"[READ]Convert book {bid} to epub format, {fpath}")
+                    service.convert_and_save(self.user_id(), book, fpath, "epub")
+
+            # epub_dir is for javascript
+            epub_dir = "/get/extract/%s" % book["id"]
+            return self.html_page("book/" + book_reader, {
+                "book": book,
+                "epub_dir": epub_dir,
+                "is_ready": (fmt == 'epub')
+            })
+
+        has_converted_pdf = False
+        if 'fmt_docx' in book and 'fmt_pdf' not in book:
+            fpath = book.get("fmt_docx", None)
+            if fpath:
+                service = ConverterService()
+                if not service.is_book_converting(book):
+                    service.convert_and_save(self.user_id(), book, fpath, "pdf")
+                has_converted_pdf = True
+
+        if "fmt_pdf" in book or has_converted_pdf:
+            if self.current_user and not self.current_user.can_save():
+                raise web.HTTPError(403, reason=_("无权在线阅读PDF类书籍"))
+
+            pdf_url = urllib.parse.quote_plus(self.api_url + "/api/book/%(id)d.PDF" % book)
+            pdf_reader_url = CONF["PDF_VIEWER"] % {"pdf_url": pdf_url}
+            return self.redirect(pdf_reader_url)
+
+        if 'fmt_djvu' in book:
+            return self._redirect_djvu_reader(book)
+
+        if 'fmt_txt' in book:
+            # TXT有专门的阅读器
+            txt_reader_url = f'/book/{book_id}/readtxt'
+            return self.redirect(txt_reader_url)
+
+        raise web.HTTPError(404, reason=_("抱歉，在线阅读器暂不支持该格式的书籍，可以转为epub或者pdf后阅读"))
+
+    def _redirect_djvu_reader(self, book):
+        """跳转到 DjVu.js 阅读器（与 PDF 一样直接读取原文件，需下载权限）"""
+        if self.current_user and not self.current_user.can_save():
+            raise web.HTTPError(403, reason=_("无权在线阅读"))
+
+        djvu_url = urllib.parse.quote_plus(self.api_url + "/api/book/%(id)d.djvu" % book)
+        name = urllib.parse.quote_plus(book.get("title") or "")
+        return self.redirect(CONF["DJVU_VIEWER"] % {"djvu_url": djvu_url, "name": name})
+
+    def _epub_conversion_source(self, book, fmt_arg=""):
+        """返回需要转换为epub的源文件路径；如果无需转换（已就绪或该格式不需要转换）则返回None"""
+        if fmt_arg and fmt_arg not in ("epub"):
+            return None
+
+        for fmt in ["epub", "txt", "mobi", "azw", "azw3"]:
+            fpath = book.get("fmt_%s" % fmt, None)
+            if not fpath:
+                continue
+            if fmt in ("epub"):
+                return None
+            return None if book.get("fmt_epub") else fpath
+        return None
+
+    @js
+    async def post(self, bid):
+        """检测目标阅读格式是否就绪，如未就绪则按需启动转换任务"""
+        if not self.current_user and not BookAccessService.guest_read_allowed(self, bid):
+            return {"err": "user.need_login", "msg": _("请先登录")}
+
+        if self.current_user and not BookAccessService.share_read_granted(self, bid):
+            if self.current_user.can_read():
+                if not self.current_user.is_active():
+                    return {"err": "user.no_permission", "msg": _("无权在线阅读，请先登录注册邮箱激活账号。")}
+            else:
+                return {"err": "user.no_permission", "msg": _("无权在线阅读")}
+
+        book = await self.get_book_async(bid, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+
+        data = {}
+        if self.request.body:
+            try:
+                data = tornado.escape.json_decode(self.request.body)
+            except (ValueError, json.JSONDecodeError):
+                data = {}
+        fmt_arg = str(data.get("format") or self.get_argument("format", "")).lower()
+
+        fpath = self._epub_conversion_source(book, fmt_arg)
+        if not fpath:
+            # _epub_conversion_source 返回 None 有两种含义：已可直接阅读，或没有任何可读格式。
+            # 仅含 UVZ 的书籍不允许进入阅读流程（DJVU 有 DjVu.js 阅读器，CBZ 仅 MyReader 可读）。
+            readable = constants.SUPPORTED_EBOOK_FORMATS + ["djvu"]
+            if CONF.get("EPUB_VIEWER", "MyReader") == "MyReader":
+                readable.append("cbz")
+            if not any(book.get("fmt_%s" % f) for f in readable):
+                return {"err": "params.book.invalid", "msg": _("抱歉，在线阅读器暂不支持该格式的书籍，可以转为epub或者pdf后阅读")}
+            return {"err": "ok", "msg": _("可以直接打开"), "data": {"status": "ready", "path": fpath}}
+
+        service = ConverterService()
+        if not service.is_book_converting(book):
+            logging.info(f"[READ]Convert book {bid} to epub format, {fpath}")
+            service.convert_and_save(self.user_id(), book, fpath, "epub")
+        else:
+            logging.info("[READ]One converting task is running.")
+
+        return {"err": "ok", "msg": _("正在执行转换任务，请稍候..."), "data": {"status": "converting"}}
+
+
+class BookFilePath(BaseHandler):
+    # MyReader 嵌入阅读经 /api/mybooks/local-file 服务端到服务端取物理路径的格式白名单
+    STREAMABLE_FORMATS = ("epub", "pdf", "fb2")
+
+    @js
+    async def get(self, bid):
+        if not self.current_user and not BookAccessService.guest_read_allowed(self, bid):
+            return {"err": "user.need_login", "msg": _("请先登录")}
+
+        if self.current_user and not BookAccessService.share_read_granted(self, bid):
+            if self.current_user.can_read():
+                if not self.current_user.is_active():
+                    return {"err": "user.no_permission", "msg": _("无权在线阅读，请先登录注册邮箱激活账号。")}
+            else:
+                return {"err": "user.no_permission", "msg": _("无权在线阅读")}
+
+        book = await self.get_book_async(bid, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+
+        fmt_arg = self.get_argument("format", "").lower()
+        if fmt_arg not in self.STREAMABLE_FORMATS:
+            return {"err": "params.format.invalid", "msg": _("格式参数无效")}
+
+        fpath = book.get("fmt_%s" % fmt_arg)
+        if not fpath:
+            return {"err": "params.format.unavailable", "msg": _("该格式不存在")}
+        return {"err": "ok", "data": {"path": fpath}}
+
+
+class TxtRead(BaseHandler):
+    @js
+    def get(self, bid):
+        book = self.get_book(bid, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+        start = int(self.get_argument("start", "0"))
+        end = int(self.get_argument("end", "-1"))
+        fpath = book.get("fmt_txt", None)
+        if not fpath:
+            return {"err": "format error", "msg": _("非txt书籍")}
+        if not self.current_user and not BookAccessService.guest_read_allowed(self, bid):
+            return {"err": "user.need_login", "msg": _("请先登录")}
+        if self.current_user and not BookAccessService.share_read_granted(self, bid):
+            if self.current_user.can_read():
+                if not self.current_user.is_active():
+                    return {"err": "user.no_permission", "msg": _("无权在线阅读，请先登录注册邮箱激活账号。")}
+            else:
+                return {"err": "user.no_permission", "msg": _("无权在线阅读")}
+        with open(fpath, mode='rb') as file:
+            file.seek(start)
+            if end == -1:
+                content = file.read()
+            else:
+                # 读取从起始位置到结束位置的内容
+                content = file.read(end - start)
+        if not content:
+            return {"err": "format error", "msg": _("空文件")}
+        encode = get_content_encoding(content)
+        # 阅读器用 v-html 渲染；TXT 是纯文本，先转义再保留换行，避免正文里的
+        # HTML 事件处理器在读者浏览器执行。
+        content = html.escape(content.decode(encoding=encode, errors='ignore').replace("\r", ""), quote=False)
+        content = content.replace("\n", "<br>")
+        return {"err": "ok", "content": content}
+
+
+class BookTxtParser(BaseHandler):
+    @js
+    def get(self):
+        bid = self.get_argument("id", "")
+        test_ready = self.get_argument("test", "")
+        book = self.get_book(bid, raise_exception=False)
+        fpath = book.get("fmt_txt", None)
+        if not fpath:
+            return {"err": "format error", "msg": _("非text书籍")}
+        if not self.current_user and not BookAccessService.guest_read_allowed(self, bid):
+            return {"err": "user.need_login", "msg": _("请先登录")}
+        if self.current_user and not BookAccessService.share_read_granted(self, bid):
+            if self.current_user.can_read():
+                if not self.current_user.is_active():
+                    return {"err": "user.no_permission", "msg": _("无权在线阅读，请先登录注册邮箱激活账号。")}
+            else:
+                return {"err": "user.no_permission", "msg": _("无权在线阅读")}
+        # 解压后的目录
+        fdir = os.path.join(CONF["extract_path"], str(book["id"]))
+        # txt 解析出的目录文件
+        content_path = fdir + "/content.json"
+        # 坏索引（旧版本非原子写入 / 进程被杀 / 磁盘满）会在 load_txt_content_index
+        # 里被删掉并返回 None，于是这次读取退化成「没解析过」，由下面入队重建
+        cached = load_txt_content_index(content_path)
+        if cached:
+            return {"err": "ok", "msg": _("parsed"), "data": {
+                "content": cached["content"],
+                "encoding": cached["encoding"],
+                "name": book["title"]
+            }}
+        if test_ready != "0":
+            return {"err": "ok", "msg": _("not parsed")}
+
+        # 若未解析则计算预计等待时间，至少2分钟
+        wait = min(120, os.path.getsize(fpath) / (1024 * 1024) * 15)
+        ExtractService().parse_txt_content(bid, fpath)
+        que_len = ExtractService().get_queue('parse_txt_content').qsize()
+        return {
+            "err": "ok",
+            "msg": _("已加入队列"),
+            "data": {
+                "wait": wait,
+                "name": book["title"],
+                "path": content_path,
+                "que": que_len,
+            },
+        }
+
+
+class BookSuggestion(ListHandler):
+    def _related_books(self, book_id):
+        """Books from the recommendation engine with their reasons; None or [] falls back to the tag/author lookup."""
+        service = self.settings.get("recommend")
+        if service is None or not CONF.get("RECOMMEND_ENABLE", True):
+            return None
+        ctx = RecommendContext(reader_id=None, is_visible=self.is_features_visible)
+        try:
+            result = service.similar(book_id, ctx, SUGGESTION_COUNT + SUGGESTION_SPARE)
+        except Exception:
+            logging.exception("[recommend] related books for %s failed, fall back to legacy", book_id)
+            return None
+        if result is None:
+            return None
+        books = {b["id"]: b for b in self.load_books_by_ids(result.ids)}
+        formatted = []
+        for book_id in result.ids:
+            if book_id not in books or len(formatted) >= SUGGESTION_COUNT:
+                continue
+            data = self.fmt(books[book_id])
+            reason = result.reasons.get(book_id)
+            if reason:
+                data["reason"] = {"type": reason.type, "value": reason.value}
+            formatted.append(data)
+        return formatted
+
+    def _tag_author_books(self, book):
+        """Original lookup: one random tag, or the first author; also the fallback when the engine finds nothing."""
+        tags = book.get("tags", [])
+        similar_books, reason = [], None
+        if tags:
+            random_tag = random.choice(tags)
+            similar_books = [b for b in self.get_item_books("tags", random_tag, max_count=SUGGESTION_COUNT + 1) if b["id"] != book["id"]]
+            reason = {"type": "same_tag", "value": random_tag}
+
+        if not similar_books:
+            authors = book.get("authors", [])
+            if authors and authors[0] not in ("佚名", "未知", "Unknown", "unknown"):
+                similar_books = [b for b in self.get_item_books("authors", authors[0], max_count=SUGGESTION_COUNT + 1) if b["id"] != book["id"]]
+                reason = {"type": "same_author", "value": authors[0]}
+        result = []
+        for b in similar_books[:SUGGESTION_COUNT]:
+            data = self.fmt(b)
+            if reason:
+                data["reason"] = reason
+            result.append(data)
+        return result
+
+    @js
+    def get(self, id):
+        book = self.get_book(id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+        if perf.lite_on("LITE_NO_RECOMMEND"):
+            return {"err": "ok", "msg": _("推荐成功"), "books": []}
+        books = self._related_books(book["id"]) or self._tag_author_books(book)
+        return {"err": "ok", "msg": _("推荐成功"), "books": books}
+
+
+class BookSendToDevice(BaseHandler):
+    def _blocked_local_ip(self, device_url):
+        if not device_url:
+            return False
+        if device_url.startswith("127."):
+            return True
+        if device_url.lower().startswith("http://127.") or device_url.lower().startswith("https://127."):
+            return True
+        return False
+
+    @js
+    def post(self, bid):
+        """发送书籍到指定设备"""
+        book_id = int(bid)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "book.not_found", "msg": _("书籍已不存在")}
+
+        # 检查用户权限
+        if not BookAccessService.guest_push_allowed():
+            if not self.current_user:
+                return {"err": "user.need_login", "msg": _("请先登录")}
+            else:
+                if not self.current_user.can_push():
+                    return {"err": "permission", "msg": _("无权操作")}
+                elif not self.current_user.is_active():
+                    return {"err": "permission", "msg": _("无权操作，请先激活账号。")}
+
+        # 解析请求参数
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+            device_type = data.get("device_type", "").lower()
+            device_url = data.get("device_url", "")
+            mailbox = data.get("mailbox", "")
+            ftp_username = data.get("ftp_username", "")
+            ftp_password = data.get("ftp_password", "")
+            ftp_path = data.get("ftp_path", "")
+        except Exception:
+            return {"err": "params.invalid", "msg": _("请求参数格式错误")}
+
+        # 支持的设备类型
+        supported_types = ["duokan", "ireader", "hanwang", "boox", "dangdang", "kindle", "purelibro", "ftp", "koreader"]
+        if device_type not in supported_types:
+            return {"err": "device.unsupported", "msg": _("不支持的设备类型: %s") % device_type}
+
+        # 各设备类型参数校验
+        if device_type == "kindle":
+            if not mailbox:
+                return {"err": "params.missing", "msg": _("Kindle设备需要提供邮箱地址")}
+        elif device_type == "ftp":
+            if not device_url:
+                return {"err": "params.missing", "msg": _("设备类型和设备地址不能为空")}
+            if not ftp_path:
+                return {"err": "params.missing", "msg": _("FTP路径不能为空")}
+        else:
+            if not device_type or not device_url:
+                return {"err": "params.missing", "msg": _("设备类型和设备地址不能为空")}
+
+        if device_type == "kindle":
+            return self._send_to_kindle(book, book_id, mailbox)
+        elif device_type == "ftp":
+            if self._blocked_local_ip(device_url):
+                return {"err": "params.invalid", "msg": _("不允许直接发送到本机")}
+            return self._send_to_ftp(book, book_id, device_url, ftp_username, ftp_password, ftp_path)
+        else:
+            if self._blocked_local_ip(device_url):
+                return {"err": "params.invalid", "msg": _("不允许直接发送到本机")}
+            return self._send_to_other_device(book, book_id, device_type, device_url)
+
+    def _send_to_kindle(self, book, book_id, mail_to):
+        """通过邮件发送书籍到Kindle设备"""
+        if self.current_user:
+            ReadingStatsService.record_push(self.current_user.id, book_id, Reading.PROTOCOL_DEVICE)
+
+        # epub、pdf、txt格式可以直接发送，不需要转换
+        for fmt in ["epub", "pdf", "txt"]:
+            fmt_key = "fmt_%s" % fmt
+            if fmt_key in book:
+                fpath = book[fmt_key]
+                logging.info(f"[SEND_TO_KINDLE] 找到可直接发送的格式: {fmt}, 路径: {fpath}")
+                MailService().send_book(self.user_id(), self.site_url, book, mail_to, fmt, fpath)
+                self.add_msg(
+                    "success",
+                    _("服务器正在推送《%(title)s》到%(email)s") % {"title": book["title"], "email": mail_to},
+                )
+                return {"err": "ok", "msg": _("服务器后台正在推送。您可关闭此窗口，继续浏览其他书籍。")}
+
+        # 如果没有可直接发送的格式，检查是否有azw3或mobi格式需要转换
+        if "fmt_azw3" in book or "fmt_mobi" in book:
+            fmt = "azw3" if "fmt_azw3" in book else "mobi"
+            logging.info(f"[SEND_TO_KINDLE] 找到{fmt}格式，需要转换为epub后发送")
+            ConverterService().convert_and_send(self.user_id(), self.site_url, book, mail_to)
+            self.add_msg(
+                "success",
+                _("服务器正在推送《%(title)s》到%(email)s") % {"title": book["title"], "email": mail_to},
+            )
+            return {"err": "ok", "msg": _("服务器正在转换格式，稍后将自动推送。您可关闭此窗口，继续浏览其他书籍。")}
+
+        # 没有Kindle支持的格式
+        return {
+            "err": "format.not_supported",
+            "msg": _("书籍没有Kindle支持的格式!")
+        }
+
+    def _send_to_other_device(self, book, book_id, device_type, device_url):
+        """通过WiFi上传发送书籍到其他设备"""
+
+        # 查找合适的文件格式（优先级：epub > azw3 > pdf > txt）
+        file_path = None
+        file_format = None
+        format_priority = ["epub", "azw3", "pdf", "txt"]
+        for fmt in format_priority:
+            fmt_key = "fmt_%s" % fmt
+            if fmt_key in book:
+                file_path = book[fmt_key]
+                file_format = fmt
+                break
+
+        if not file_path:
+            return {"err": "file.not_found", "msg": _("书籍没有支持的文件格式（epub/azw3/pdf/txt）")}
+
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            return {"err": "file.missing", "msg": _("书籍文件不存在: %s") % file_path}
+
+        # 导入对应的上传器
+        try:
+            from webserver.plugins.sending.uploader import DuokanUploader, IReaderUploader, HanwangUploader
+            from webserver.plugins.sending.uploader import BooxUploader, DangdangUploader, PureLibroUploader
+            from webserver.plugins.sending.koreader_uploader import KoReaderUploader
+
+            uploader_map = {
+                "duokan": DuokanUploader,
+                "ireader": IReaderUploader,
+                "hanwang": HanwangUploader,
+                "boox": BooxUploader,
+                "dangdang": DangdangUploader,
+                "purelibro": PureLibroUploader,
+                "koreader": KoReaderUploader,
+            }
+
+            uploader_class = uploader_map.get(device_type)
+            if not uploader_class:
+                return {"err": "uploader.not_found", "msg": _("找不到对应的上传器: %s") % device_type}
+
+            # 创建上传器实例
+            book_name = book.get("title", "")
+            if len(book_name) > 120:
+                book_name = ""
+            if not book_name:
+                book_name = None
+            else:
+                book_name += os.path.splitext(file_path)[-1]
+            uploader = uploader_class(file_path, file_name=book_name)
+
+            # 构建设备上传URL
+            if not device_url.startswith(('http://', 'https://')):
+                device_url = 'http://' + device_url
+
+            # 使用uploader的get_upload_url方法构建完整URL
+            upload_url = uploader.get_upload_url(device_url)
+
+            # 执行上传
+            logging.info(f"[SEND_TO_DEVICE] 开始发送书籍 {book_id} ({file_format}) 到设备 {device_type}: {upload_url}")
+            result = uploader.upload(device_url)
+
+            if result.get('success'):
+                logging.info(f"[SEND_TO_DEVICE] 发送成功: {book_id} -> {device_type}")
+                return {"err": "ok", "msg": _("书籍发送成功")}
+            else:
+                error_type = result.get('error_type', 'unknown')
+                error_msg = result.get('message', '发送失败')
+
+                if error_type == 'connection':
+                    return {"err": "connection.failed", "msg": _("无法连接到设备。请确认IP地址正确，且设备已开启WiFi上传功能")}
+                elif error_type == 'timeout':
+                    return {"err": "upload.timeout", "msg": _("上传超时。请检查网络连接和设备状态")}
+                elif error_type == 'http':
+                    status_code = result.get('status_code', 0)
+                    return {"err": "upload.failed", "msg": _("上传失败 (HTTP %d)。请查看日志获取详细信息") % status_code}
+                else:
+                    return {"err": "upload.error", "msg": _("上传过程出错: %s。请查看日志获取详细信息") % error_msg}
+
+        except ImportError as e:
+            logging.error(f"[SEND_TO_DEVICE] 导入上传器失败: {e}")
+            return {"err": "uploader.import_error", "msg": _("设备上传功能不可用")}
+        except Exception as e:
+            logging.error(f"[SEND_TO_DEVICE] 发送失败: {e}")
+            return {"err": "upload.error", "msg": _("发送过程出错，请查看日志获取详细信息")}
+
+    def _send_to_ftp(self, book, book_id, device_url, ftp_username, ftp_password, ftp_path):
+        """通过FTP上传发送书籍。每次调用创建独立FTP连接，多个并发请求互不影响。"""
+        # 查找合适的文件格式（优先级：epub > azw3 > pdf > txt）
+        file_path = None
+        file_format = None
+        for fmt in ["epub", "azw3", "pdf", "txt"]:
+            fmt_key = "fmt_%s" % fmt
+            if fmt_key in book:
+                file_path = book[fmt_key]
+                file_format = fmt
+                break
+
+        if not file_path:
+            return {"err": "file.not_found", "msg": _("书籍没有支持的文件格式（epub/azw3/pdf/txt）")}
+
+        if not os.path.exists(file_path):
+            return {"err": "file.missing", "msg": _("书籍文件不存在: %s") % file_path}
+
+        try:
+            from webserver.plugins.sending.uploader import FtpUploader
+
+            # 优先使用 title_sort（已转为拼音，无中文兼容问题）
+            book_name = book.get("sort", "") or book.get("title", "")
+            if book_name:
+                book_name = book_name.replace(" ", "_")
+            if len(book_name) > 120:
+                book_name = f"{book_id}"
+            else:
+                book_name = f"{book_id}_{book_name}"
+            if book_name:
+                book_name += os.path.splitext(file_path)[-1]
+            else:
+                book_name = None
+
+            # 每次实例化都创建独立连接对象，并发请求之间无共享状态
+            uploader = FtpUploader(
+                file_path,
+                file_name=book_name,
+                username=ftp_username,
+                password=ftp_password,
+                path=ftp_path,
+            )
+
+            logging.info(
+                "[SEND_TO_FTP] 开始发送书籍 %s (%s) 到 %s%s",
+                book_id, file_format, device_url, ftp_path,
+            )
+            result = uploader.upload(device_url)
+
+            if result.get("success"):
+                logging.info("[SEND_TO_FTP] 发送成功: %s -> %s", book_id, device_url)
+                return {"err": "ok", "msg": _("书籍发送成功")}
+
+            error_type = result.get("error_type", "other")
+            error_msg = result.get("message", "发送失败")
+            logging.warning("[SEND_TO_FTP] 发送失败 book=%s error_type=%s msg=%s", book_id, error_type, error_msg)
+
+            if error_type == "auth":
+                return {"err": "ftp.auth_failed", "msg": _("FTP认证失败")}
+            if error_type == "ftp_perm":
+                return {"err": "ftp.path_not_found", "msg": _("FTP路径不存在: %s") % ftp_path}
+            if error_type == "connection":
+                return {"err": "connection.failed", "msg": _("FTP连接失败: %s") % device_url}
+            if error_type == "timeout":
+                return {"err": "upload.timeout", "msg": _("上传超时。请检查网络连接和设备状态")}
+            return {"err": "ftp.upload_failed", "msg": _("FTP上传失败: %s") % error_msg}
+
+        except ImportError as e:
+            logging.error("[SEND_TO_FTP] 导入FTP上传器失败: %s", e)
+            return {"err": "uploader.import_error", "msg": _("设备上传功能不可用")}
+        except Exception as e:
+            logging.error("[SEND_TO_FTP] 发送失败: %s", e)
+            return {"err": "ftp.upload_failed", "msg": _("FTP上传失败: %s") % str(e)}
+
+
+class BookSendToMail(BaseHandler):
+    @js
+    def post(self, bid):
+        """发送书籍到指定邮箱"""
+        book_id = int(bid)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "book.not_found", "msg": _("书籍已不存在")}
+
+        if not BookAccessService.guest_push_allowed():
+            if not self.current_user:
+                return {"err": "user.need_login", "msg": _("请先登录")}
+            else:
+                if not self.current_user.can_push():
+                    return {"err": "permission", "msg": _("无权限进行推送，请联系管理员检查权限")}
+                elif not self.current_user.is_active():
+                    return {"err": "permission", "msg": _("无权限进行操作，请先激活账号。")}
+
+        # 解析请求参数
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+            mail_to = data.get("email", "").strip()
+            requested_format = (data.get("format") or "").strip().lower()
+        except:
+            return {"err": "params.invalid", "msg": _("没有指定邮箱地址")}
+
+        if not mail_to:
+            return {"err": "params.missing", "msg": _("邮箱地址不能为空")}
+
+        # 验证邮箱地址格式
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, mail_to):
+            return {"err": "email.invalid", "msg": _("邮箱地址格式不正确")}
+
+        # 按优先级查找可用格式: EPUB > AZW3 > PDF > MOBI > TXT
+        format_priority = ["epub", "azw3", "pdf", "mobi", "txt"]
+        file_path = None
+        file_format = None
+
+        if requested_format:
+            # 书籍有多个格式时，客户端（发送到邮箱对话框）会让用户指定其中一个格式；
+            # 仍然只允许邮件兼容的格式，避免绕过前端选项发送任意格式。
+            if requested_format not in format_priority:
+                return {"err": "format.not_found", "msg": _("书籍没有支持的文件格式（EPUB/AZW3/PDF/MOBI/TXT）")}
+            fmt_key = "fmt_%s" % requested_format
+            if fmt_key in book:
+                file_path = book[fmt_key]
+                file_format = requested_format
+        else:
+            for fmt in format_priority:
+                fmt_key = "fmt_%s" % fmt
+                if fmt_key in book:
+                    file_path = book[fmt_key]
+                    file_format = fmt
+                    break
+
+        if not file_path:
+            return {"err": "format.not_found", "msg": _("书籍没有支持的文件格式（EPUB/AZW3/PDF/MOBI/TXT）")}
+
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            return {"err": "file.missing", "msg": _("书籍文件不存在")}
+
+        # 检查文件大小（50MB = 52428800 bytes）
+        file_size = os.path.getsize(file_path)
+        max_size = 50 * 1024 * 1024  # 50MB
+        if file_size > max_size:
+            size_mb = file_size / (1024 * 1024)
+            return {
+                "err": "file.too_large",
+                "msg": _("附件过大（%.1fMB），邮件附件大小不能超过50MB") % size_mb
+            }
+
+        # 记录推送历史和增加统计
+        if self.current_user:
+            ReadingStatsService.record_push(self.current_user.id, book_id, Reading.PROTOCOL_EMAIL)
+        logging.info(f"[SEND_TO_MAIL] 发送书籍 {book_id} ({file_format}, {file_size} bytes) 到邮箱 {mail_to}")
+        MailService().send_book(self.user_id(), self.site_url, book, mail_to, file_format, file_path)
+
+        self.add_msg(
+            "success",
+            _("已开始推送《%(title)s》到%(email)s") % {"title": book["title"], "email": mail_to},
+        )
+
+        # 记住本次分享邮箱（Reader.extra 按用户区分；游客推送无 current_user
+        # 不记忆）。send_book 挂 @AsyncService 入队即返回，故语义是"入队即
+        # 记"——SMTP 结果在后台线程产生，失败邮箱同样留痕，重发即覆盖。
+        # best-effort：推送已入队，记忆写失败不应让用户误判发送失败而重发
+        # （参照 base.py 登录处 user.save() 的 try/except 先例）
+        if self.current_user:
+            try:
+                extra = self.current_user.extra or {}
+                extra["last_share_email"] = mail_to
+                self.current_user.extra = extra
+                self.sqlite_session.commit()
+            except Exception as e:
+                logging.warning("[SEND_TO_MAIL] 保存 last_share_email 失败: %s", e)
+
+        return {"err": "ok", "msg": _("后台正在推送，稍后可以刷新页面，在通知消息中查看结果。")}
+
+
+class BookSperate(BaseHandler):
+    @js
+    @auth
+    def post(self, bid):
+        """将指定格式从书籍中分离并创建为新的独立书籍"""
+        from calibre.ebooks.metadata.meta import get_metadata
+
+        book_id = int(bid)
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "params.book.invalid", "msg": _("书籍已不存在")}
+
+        if isinstance(book["collector"], dict):
+            cid = book["collector"]["id"]
+        else:
+            cid = book["collector"].id
+        if not self.current_user.can_edit() or not (self.is_admin() or self.is_book_owner(book_id, cid)):
+            return {"err": "permission", "msg": _("无权操作")}
+
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+            fmt = data.get("format", "").strip().lower()
+        except Exception:
+            return {"err": "params.invalid", "msg": _("请求参数格式错误")}
+
+        if not fmt:
+            return {"err": "params.missing", "msg": _("格式参数不能为空")}
+
+        fmt_key = "fmt_%s" % fmt
+        if fmt_key not in book:
+            return {"err": "format.not_found", "msg": _("书籍不包含 %s 格式") % fmt.upper()}
+
+        original_path = book[fmt_key]
+        if not os.path.exists(original_path):
+            return {"err": "file.missing", "msg": _("格式文件不存在: %s") % original_path}
+
+        # 检查书籍是否只有一个格式
+        available_formats = book.get("available_formats", "")
+        available_formats = [f.strip() for f in available_formats if f.strip()]
+        if len(available_formats) <= 1:
+            return {"err": "last.format", "msg": _("书籍只有一个格式，无法分离")}
+
+        try:
+            # 复制文件到上传目录
+            filename = os.path.basename(original_path)
+            upload_path = os.path.join(CONF["upload_path"], filename)
+
+            # 如果目标文件已存在，添加时间戳避免冲突
+            if os.path.exists(upload_path):
+                timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                name, ext = os.path.splitext(filename)
+                upload_path = os.path.join(CONF["upload_path"], f"{name}_{timestamp}{ext}")
+
+            shutil.copy2(original_path, upload_path)
+            logging.info(f"[SEPARATE] Copied format file from {original_path} to {upload_path}")
+
+            # 读取元数据
+            failed = False
+            with open(upload_path, "rb") as stream:
+                mi = get_metadata(stream, stream_type=fmt, use_libprs_metadata=True)
+                if mi.title and mi.title == CALIBRE_ERROR_FLAG:
+                    logger.error("Failed to get metadata for %s, reason:%s", upload_path, mi.comments)
+                    failed = True
+                mi.title = utils.super_strip(mi.title)
+                if mi.author_sort == "Unknown" and mi.authors and len(mi.authors) > 0:
+                    mi.authors = [utils.super_strip(a) for a in mi.authors]
+                else:
+                    mi.authors = [utils.super_strip(mi.author_sort)]
+
+            if failed:
+                return {"err": "book.invalid", "msg": _("此书籍文件无法识别, 或者受DRM保护无法处理")}
+
+            # 对于txt和pdf格式，从文件名提取信息（4.6.0-16：走统一口径，
+            # 不再无条件覆盖成文件名+佚名）
+            stem = filename[:-len(fmt) - 1] if fmt else filename
+            if fmt == "txt":
+                normalize_txt_meta(mi, stem)
+            elif fmt == "pdf":
+                normalize_pdf_meta(mi, stem)
+
+            # 创建新书籍
+            fpaths = [upload_path]
+            mi.title_sort = utils.get_title_sort(mi.title)
+            new_book_id = self.calibre_db.import_book(mi, fpaths)
+
+            if new_book_id is None:
+                # 清理临时文件
+                if os.path.exists(upload_path):
+                    os.remove(upload_path)
+                return {"err": "book.create.failed", "msg": _("创建新书籍失败")}
+
+            # 创建Item记录
+            item = Item()
+            item.book_id = new_book_id
+            item.collector_id = self.user_id()
+            self.sqlite_session.add(item)
+            self.sqlite_session.commit()
+
+            # 从原书籍中删除该格式
+            self.calibre_db_cache.remove_formats({book_id: [fmt.upper()]})
+
+            logging.info(f"[SEPARATE] Successfully separated format {fmt} from book {book_id} to new book {new_book_id}")
+            self.add_msg("success", _("成功将 %s 格式分离为新书籍") % fmt.upper())
+            return {
+                "err": "ok",
+                "msg": _("格式分离成功"),
+                "original_book_id": book_id,
+                "new_book_id": new_book_id
+            }
+
+        except Exception as e:
+            logging.error(f"[SEPARATE] Failed to separate format {fmt} from book {book_id}: {e}")
+            traceback.print_exc()
+            # 清理可能存在的临时文件
+            if 'upload_path' in locals() and os.path.exists(upload_path):
+                try:
+                    os.remove(upload_path)
+                except Exception as err:
+                    logging.error(f"[SEPARATE] Failed to clean up temporary file {upload_path}: {err}")
+
+            return {"err": "internal", "msg": _("分离格式时发生错误: %s") % str(e)}
+
+
+class BookSaveMeta(BaseHandler):
+    @js
+    @auth
+    def post(self, bid):
+        """将书籍的元数据保存到文件中（支持 META_WRITABLE_FORMATS 中 calibre 可写回的格式）"""
+        book_id = int(bid)
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限，非管理员或书籍所有者无法操作")}
+
+        fmt = self.get_argument("fmt", None)
+        return self.save_book_meta(book_id, fmt=fmt)
+
+
+class BookAddStamp(BaseHandler):
+    @js
+    @auth
+    def post(self, bid):
+        """为书籍封面加盖图章"""
+        book_id = int(bid)
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": _("无权限，非管理员或书籍所有者无法操作")}
+
+        # 检查功能是否启用
+        if not CONF.get("ENABLE_STAMP_FEATURE", False):
+            return {"err": "feature.disabled", "msg": _("图章功能未启用")}
+
+        # 检查图章文件是否存在
+        stamp_path = os.path.join(CONF["static_path"], "logo", "stamp.png")
+        if not os.path.exists(stamp_path):
+            return {"err": "stamp.not_found", "msg": _("图章文件不存在，请先在设置中上传图章图片")}
+
+        # 获取书籍信息
+        book = self.get_book(book_id, raise_exception=False)
+        if not book:
+            return {"err": "book.not_found", "msg": _("书籍不存在")}
+
+        # 检查是否有支持的格式
+        supported_formats = []
+        for f in ["epub", "azw3", "pdf"]:
+            fmt_key = f"fmt_{f}"
+            if fmt_key in book:
+                supported_formats.append(f)
+
+        if not supported_formats:
+            return {
+                "err": "format.not_supported",
+                "msg": _("书籍没有支持的格式（需要 EPUB、AZW3 或 PDF）"),
+            }
+
+        try:
+            # 获取当前封面
+            cover_data = self.calibre_db.cover(book_id, index_is_id=True)
+            if not cover_data:
+                return {"err": "cover.not_found", "msg": _("书籍没有封面")}
+
+            # 获取图章位置（从请求参数或配置中获取）
+            args = tornado.escape.json_decode(self.request.body)
+            stamp_position = args.get("position", CONF.get("STAMP_POSITION", "bottom-right"))
+
+            new_cover_data = ImageHelper().add_stamp_to_image(cover_data, stamp_path, stamp_position)
+            if not new_cover_data:
+                return {"err": "stamp.failed", "msg": _("添加图章失败")}
+
+            # 更新元数据到文件
+            result = self.save_book_meta(book_id, fmt=None, cover=new_cover_data)
+            if result.get("err") != "ok":
+                # 即使保存到文件失败，封面已经更新到数据库
+                logging.warning(f"Failed to save metadata to file: {result.get('msg')}")
+                return {
+                    "err": "ok",
+                    "msg": _("图章已添加到封面，但保存到文件时部分失败: %s") % result.get("msg", ""),
+                }
+
+            return {"err": "ok", "msg": _("图章已成功添加到封面")}
+
+        except Exception as e:
+            logging.error(f"Error adding stamp to cover: {e}")
+            logging.error(traceback.format_exc())
+            return {"err": "error", "msg": _("添加图章时发生错误: %s") % str(e)}
+
+
+class ClearRareTags(ListHandler):
+    @js
+    @auth
+    def post(self):
+        """清理稀少标签, 对少于3本书的标签所对应的书籍重新更新标签"""
+        if not self.is_admin():
+            return {"err": "user.not_admin", "msg": _("无权限")}
+
+        ids = list(self.calibre_db_cache.all_book_ids())
+        if not ids or len(ids) < 100:
+            return {"err": "ok", "msg": _("书籍数量较少，无需清理标签")}
+
+        try:
+            # 使用SQL直接批量查询：找出所有count < 3的tag对应的所有书籍ID
+            sql = """
+                SELECT DISTINCT l.book
+                FROM books_tags_link l
+                INNER JOIN (
+                    SELECT A.id, COUNT(DISTINCT B.book) as book_count
+                    FROM tags A
+                    LEFT JOIN books_tags_link B ON A.id = B.tag
+                    GROUP BY A.id
+                    HAVING COUNT(DISTINCT B.book) < 3 AND COUNT(DISTINCT B.book) > 0
+                ) rare_tag_ids ON l.tag = rare_tag_ids.id
+            """
+
+            with self.db_lock:
+                rows = self.calibre_db_cache.backend.conn.get(sql)
+
+            if not rows:
+                return {"err": "ok", "msg": _("没有找到稀少标签对应的书籍")}
+
+            book_ids = [row[0] for row in rows]
+
+            # 同时获取稀少标签的数量用于返回信息
+            count_sql = """
+                SELECT COUNT(*)
+                FROM (
+                    SELECT A.id
+                    FROM tags A
+                    LEFT JOIN books_tags_link B ON A.id = B.tag
+                    GROUP BY A.id
+                    HAVING COUNT(DISTINCT B.book) < 3 AND COUNT(DISTINCT B.book) > 0
+                )
+            """
+            with self.db_lock:
+                tag_count_rows = self.calibre_db_cache.backend.conn.get(count_sql)
+            rare_tag_count = tag_count_rows[0][0] if tag_count_rows else 0
+
+            if not book_ids:
+                return {"err": "ok", "msg": _("没有找到需要更新的书籍")}
+
+            # 调用自动填充服务，只更新标签
+            service = AutoFillService()
+            service.auto_fill_all(book_ids, only_tags=True)
+
+            return {
+                "err": "ok",
+                "msg": _("开始更新 %d 本书的标签，涉及 %d 个稀少标签") % (len(book_ids), rare_tag_count),
+                "book_count": len(book_ids),
+                "tag_count": rare_tag_count
+            }
+
+        except Exception as e:
+            logging.error(f"Clear rare tags error: {e}")
+            return {"err": "error", "msg": _("处理失败：%s") % str(e)}
+
+
+class BookExchangeType(BaseHandler):
+    @js
+    @auth
+    def post(self):
+        """批量转换书籍类型, 电子书与实体书互转"""
+        if not self.is_admin():
+            return {"err": "user.no_permission", "msg": _("无权限")}
+
+        data = tornado.escape.json_decode(self.request.body)
+        idlist = data.get("idlist", [])
+
+        if not idlist:
+            return {"err": "params.invalid", "msg": _("请提供书籍ID列表")}
+
+        success_count = 0
+        skip_count = 0
+        results = []
+
+        skip_checking = CONF.get("ENABLE_BOOKS_TYPE_CONVERT_DIRECT", False)
+
+        for book_id in idlist:
+            try:
+                book = self.get_book(book_id, raise_exception=False)
+                if not book:
+                    results.append({"book_id": book_id, "status": "not_found", "msg": _("书籍已不存在")})
+                    skip_count += 1
+                    continue
+
+                # 获取或创建Item记录
+                item = self.sqlite_session.query(Item).filter(Item.book_id == book_id).first()
+                if not item:
+                    item = Item()
+                    item.book_id = book_id
+                    item.collector_id = self.user_id()
+                    self.sqlite_session.add(item)
+
+                current_type = book.get(CALIBRE_COLUMN_BOOK_TYPE)
+                if current_type is None:
+                    current_type = item.book_type
+
+                # 如果是电子书，转为实体书
+                if current_type == BOOK_TYPE_EBOOK:
+                    if not skip_checking:
+                        # 检查是否有ISBN
+                        isbn = book.get("isbn", "")
+                        if not isbn:
+                            results.append({"book_id": book_id, "status": "skip", "msg": _("无ISBN，跳过")})
+                            skip_count += 1
+                            continue
+
+                        # 检查是否有任何电子书格式
+                        has_formats = False
+                        for fmt in ["epub", "mobi", "azw", "azw3", "txt", "pdf"]:
+                            if book.get("fmt_%s" % fmt):
+                                has_formats = True
+                                break
+
+                        if has_formats:
+                            results.append({"book_id": book_id, "status": "skip", "msg": _("已有电子书格式，跳过")})
+                            skip_count += 1
+                            continue
+
+                    # 转换为实体书
+                    item.book_type = BOOK_TYPE_PHYSICAL
+                    item.book_count = 1
+                    results.append({"book_id": book_id, "status": "success", "msg": _("已转为实体书")})
+                    success_count += 1
+
+                    self.calibre_db_cache.set_field(CALIBRE_COLUMN_BOOK_TYPE, {book_id: BOOK_TYPE_PHYSICAL})
+                    self.calibre_db_cache.set_field(CALIBRE_COLUMN_PHY_COUNT, {book_id: 1})
+
+                # 如果是实体书，转为电子书
+                elif current_type == BOOK_TYPE_PHYSICAL:
+                    item.book_type = BOOK_TYPE_EBOOK
+                    item.book_count = 1
+                    results.append({"book_id": book_id, "status": "success", "msg": _("已转为电子书")})
+                    success_count += 1
+                    self.calibre_db_cache.set_field(CALIBRE_COLUMN_BOOK_TYPE, {book_id: BOOK_TYPE_EBOOK})
+
+                else:
+                    results.append({"book_id": book_id, "status": "skip", "msg": _(f"未知类型:{current_type}, item.type:{item.book_type}")})
+                    skip_count += 1
+
+            except Exception as e:
+                logging.error(f"Exchange type error for book {book_id}: {e}")
+                results.append({"book_id": book_id, "status": "error", "msg": str(e)})
+                skip_count += 1
+
+        # 提交所有更改
+        if success_count > 0:
+            self.reset_physical_books_count_cache()
+        try:
+            self.sqlite_session.commit()
+        except Exception as e:
+            self.sqlite_session.rollback()
+            return {"err": "db.error", "msg": _("数据库错误：%s") % str(e)}
+
+        return {
+            "err": "ok",
+            "msg": _("处理完成：成功 %d 本，跳过 %d 本") % (success_count, skip_count),
+            "success_count": success_count,
+            "skip_count": skip_count,
+            "results": results
+        }
+
+
+class PrintBookImportBase(BaseHandler):
+    """实体书 CSV 批量导入的公共逻辑。
+
+    CSV 列（UTF-8，Excel 可直接打开）：
+        书名,作者,ISBN,数量,存放位置,分类,简介
+    书名必填，其余可选；ISBN 存在时先按 ISBN 查重；每条成功后在
+    calibre（含 #book_type/#book_count/#location 自定义列）与业务库
+    items 表双写，与「单本添加」保持同一套落库口径。
+    """
+
+    CSV_HEADER = ["书名", "作者", "ISBN", "数量", "存放位置", "分类", "简介"]
+
+    def _decode_csv(self, raw):
+        # 兼容 Excel 导出的 UTF-8 BOM / GBK 文件
+        for enc in ("utf-8-sig", "utf-8", "gb18030"):
+            try:
+                return raw.decode(enc)
+            except (UnicodeDecodeError, AttributeError):
+                continue
+        raise ValueError("无法识别文件编码，请另存为 UTF-8 的 CSV 文件")
+
+    def _template_response(self):
+        import csv as _csv
+        import io as _io
+        buf = _io.StringIO()
+        writer = _csv.writer(buf)
+        writer.writerow(self.CSV_HEADER)
+        writer.writerow(["三体", "刘慈欣", "9787536692930", "1", "书架A-01", "科幻小说", "地球往事三部曲之一"])
+        writer.writerow(["活着", "余华", "", "2", "书架B-03", "文学", ""])
+        body = b"\xef\xbb\xbf" + buf.getvalue().encode("utf-8")
+        self.set_header("Content-Type", "text/csv; charset=utf-8")
+        self.set_header("Content-Disposition", "attachment; filename=physical-books-template.csv")
+        self.write(body)
+        self.finish()
+
+    def _parse_rows(self, text):
+        import csv as _csv
+        import io as _io
+        reader = _csv.reader(_io.StringIO(text))
+        rows = []
+        for lineno, row in enumerate(reader, 1):
+            if not row or not any((c or "").strip() for c in row):
+                continue
+            row = [(c or "").strip() for c in row]
+            # 跳过与模板表头相同的行（避免用户没删示例表头导致导入失败）
+            if lineno == 1 and row[0] in ("书名", "title", "Title"):
+                continue
+            while len(row) < len(self.CSV_HEADER):
+                row.append("")
+            rows.append(row[: len(self.CSV_HEADER)])
+        return rows
+
+    def _import_one(self, row):
+        from calibre.ebooks.metadata.book.base import Metadata
+        from calibre.utils.date import now as nowf
+
+        title, author, isbn, count_s, location, category, comments = row
+        title = title.strip()
+        if not title:
+            return None, _("书名为空")
+        if len(title) > 100 or len(author) > 200:
+            return None, _("书名或作者过长")
+        if re.search(r"['\"\x00-\x1f\x7f]", title + author):
+            return None, _("书名或作者包含非法字符")
+
+        isbn = re.sub(r"[-\s]", "", isbn).upper()
+        if isbn and not re.match(r"^([0-9]{9}[0-9X]|[0-9]{13})$", isbn):
+            return None, _("无效的ISBN号：%s") % isbn
+        if isbn and self.find_phy_books_by_isbn(isbn):
+            return None, _("该ISBN对应的图书已存在：%s") % isbn
+
+        try:
+            count = max(1, int(count_s)) if count_s.strip() else 1
+        except ValueError:
+            return None, _("数量不是数字：%s") % count_s
+
+        authors = [a.strip() for a in re.split(r"[,，/]", author) if a.strip()]
+        mi = Metadata(title, authors if authors else [_("佚名")])
+        if isbn:
+            mi.isbn = isbn
+        if comments.strip():
+            mi.comments = comments.strip()
+        if category.strip():
+            mi.tags = [t.strip() for t in re.split(r"[,，]", category) if t.strip()]
+        mi.title_sort = utils.get_title_sort(title)
+        mi.timestamp = nowf()
+
+        book_id = self.calibre_db.create_book_entry(mi)
+        if book_id is None:
+            return None, _("创建图书失败（可能已存在同名同作者书目）：%s" % title)
+
+        try:
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_BOOK_TYPE, {book_id: BOOK_TYPE_PHYSICAL})
+            self.calibre_db_cache.set_field(CALIBRE_COLUMN_PHY_COUNT, {book_id: count})
+            if location.strip():
+                try:
+                    self.calibre_db_cache.set_field(CALIBRE_COLUMN_LOCATION, {book_id: location.strip()})
+                except Exception as e:
+                    logging.warning("Set #location failed for book %s: %s", book_id, e)
+            BaseHandler._physical_books_count_cache_time = 0
+        except Exception as e:
+            logging.error("Failed to set custom fields for book ID %s: %s", book_id, e)
+
+        item = Item()
+        item.book_id = book_id
+        item.collector_id = self.user_id()
+        item.book_type = BOOK_TYPE_PHYSICAL
+        item.book_count = count
+        self.sqlite_session.add(item)
+        self.sqlite_session.commit()
+        return book_id, None
+
+
+class PrintBookImportTemplate(PrintBookImportBase):
+    # 不加 @js：模板是文件下载，@js 会把返回值强制转 JSON
+    @auth
+    def get(self):
+        if not (self.current_user.is_admin() or self.current_user.can_upload()):
+            return {"err": "permission", "msg": _("无权操作")}
+        self._template_response()
+
+
+class PrintBookImport(PrintBookImportBase):
+    @js
+    @auth
+    def post(self):
+        if not (self.current_user.is_admin() or self.current_user.can_upload()):
+            return {"err": "permission", "msg": _("无权操作")}
+        f = self.request.files.get("csvfile")
+        if not f:
+            return {"err": "params.invalid", "msg": _("请选择CSV文件")}
+        try:
+            text = self._decode_csv(f[0]["body"])
+        except ValueError as e:
+            return {"err": "params.invalid", "msg": str(e)}
+
+        rows = self._parse_rows(text)
+        if not rows:
+            return {"err": "params.invalid", "msg": _("CSV中没有可导入的数据行")}
+
+        ok_count, fail_count, errors = 0, 0, []
+        for lineno, row in enumerate(rows, 1):
+            try:
+                book_id, err = self._import_one(row)
+                if err:
+                    fail_count += 1
+                    errors.append("第%d行：%s" % (lineno, err))
+                else:
+                    ok_count += 1
+            except Exception as e:
+                fail_count += 1
+                errors.append("第%d行：%s" % (lineno, e))
+                logging.error("PrintBookImport row %d failed: %s", lineno, e)
+
+        return {"err": "ok", "msg": _("导入完成：成功 %d 条，失败 %d 条") % (ok_count, fail_count),
+                "ok_count": ok_count, "fail_count": fail_count, "errors": errors[:50]}
+
+
+def routes():
+    return [
+        (r"/api/index", Index),
+        (r"/api/homepage", HomepageConfig),
+        (r"/api/search", SearchBook),
+        (r"/api/recent", RecentBook),
+        (r"/api/all", RecentBook),
+        (r"/api/hot", HotBook),
+        (r"/api/printbooks", PrintBooks),
+        (r"/api/printbooks/import", PrintBookImport),
+        (r"/api/printbooks/import-template", PrintBookImportTemplate),
+        (r"/api/soledbooks", BookSoled),
+        (r"/api/book/nav", BookNav),
+        (r"/api/book/add", BookAddByISBN),
+        (r"/api/book/add/manual", BookAddManual),
+        (r"/api/book/upload", BookUpload),
+        (r"/api/book/upload/chunk", BookUploadChunk),
+        (r"/api/book/upload/batch", BookUploadBatch),
+        (r"/api/book/upload/batch/status", BookUploadBatchStatus),
+        (r"/api/book/upload/batch/cancel", BookUploadBatchCancel),
+        (r"/api/book/([0-9]+)", BookDetail),
+        (r"/api/book/([0-9]+)/delete", BookDelete),
+        (r"/api/book/([0-9]+)/delete_format", BookDeleteFormat),
+        (r"/api/book/([0-9]+)/edit", BookEdit),
+        (r"/api/book/download_quota", BookDownloadQuota),
+        (r"/api/book/([0-9]+)/download_sign", BookDownloadSign),
+        (r"/api/book/([0-9]+\..+)", BookDownload),
+        (r"/api/book/([0-9]+)/refer", BookRefer),
+        (r"/api/book/([0-9]+)/send_to_device", BookSendToDevice),
+        (r"/api/book/([0-9]+)/mailto", BookSendToMail),
+        (r"/read/([0-9]+)", BookRead),
+        (r"/api/book/([0-9]+)/read", BookRead),
+        (r"/api/book/([0-9]+)/filepath", BookFilePath),
+        (r"/api/read/txt/([0-9]+)", TxtRead),
+        (r"/api/book/txt/parser", BookTxtParser),
+        (r"/api/book/([0-9]+)/convert", BookConverter),
+        (r"/api/book/([0-9]+)/topdf", BookToPDF),
+        (r"/api/book/([0-9]+)/setsole", BookSetSole),
+        (r"/api/book/([0-9]+)/cover", BookCover),
+        (r"/api/book/crop_cover", BookCropCover),
+        (r"/api/book/([0-9]+)/favorite", BookFavorite),
+        (r"/api/book/([0-9]+)/wants", BookWantToRead),
+        (r"/api/book/([0-9]+)/readstate", BookReadingState),
+        (r"/api/book/([0-9]+)/reading_stats", BookFormatReadingStats),
+        (r"/api/book/([0-9]+)/reading_time", BookReadingTimeCorrection),
+        (r"/api/favorites", BookFavorite),
+        (r"/api/visits", BookVisits),
+        (r"/api/visits/clear", BookVisitsClear),
+        (r"/api/wants", BookWantToRead),
+        (r"/api/reading", BookReading),
+        (r"/api/read-done", BookReadDone),
+        (r"/api/reading/stats", BookReadingStats),
+        (r"/api/books/batch-remove-state", BookStateBatch),
+        (r"/api/book/([0-9]+)/tags", BookTags),
+        (r"/api/book/([0-9]+)/aifill", BookAIFill),
+        (r"/api/book/update_tags", BookUpdateTags),
+        (r"/api/book/category", BookCategoryBatch),
+        (r"/api/book/([0-9]+)/category", BookCategory),
+        (r"/api/book/([0-9]+)/location", BookLocation),
+        (r"/api/book/([0-9]+)/catalog", BookCatalog),
+        (r"/api/book/catalog/batch", BookCatalogBatch),
+        (r"/api/categories", BookCategories),
+        (r"/api/tags/search", TagSearch),
+        (r"/api/authors/search", AuthorSearch),
+        (r"/api/book/([0-9]+)/suggestion", BookSuggestion),
+        (r"/api/book/([0-9]+)/separate", BookSperate),
+        (r"/api/book/([0-9]+)/savemeta", BookSaveMeta),
+        (r"/api/book/([0-9]+)/addstamp", BookAddStamp),
+        (r"/api/book/exchange_type", BookExchangeType),
+        (r"/api/clear_rare_tags", ClearRareTags),
+    ]

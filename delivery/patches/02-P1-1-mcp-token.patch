@@ -1,0 +1,248 @@
+From 6b49fa0a983175a2bf60963966acbb5626aabfcb Mon Sep 17 00:00:00 2001
+From: wxgoo <wxgoo@gitee.com>
+Date: Fri, 6 Nov 2026 20:27:49 +0800
+Subject: [PATCH 02/14] =?UTF-8?q?fix(mcp):=20token=20=E6=94=B9=E8=B5=B0=20?=
+ =?UTF-8?q?Authorization=20=E5=A4=B4=E5=B9=B6=E7=A7=BB=E9=99=A4=E6=97=A5?=
+ =?UTF-8?q?=E5=BF=97=E4=B8=AD=E7=9A=84=E5=87=AD=E6=8D=AE=EF=BC=88P1-1?=
+ =?UTF-8?q?=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- mcp_client：不再把 token 拼进 URL；请求统一带 Authorization: Bearer；删除 print，工具参数不再入日志
+
+- handlers/mcp：优先读取 Bearer 头；URL token 默认拒绝（可用 ALLOW_MCP_TOKEN_IN_URL 临时兼容）；请求体日志递归脱敏
+
+- mcp_service：生成 token 的日志不再输出 token 本身
+
+- settings/tests：新增兼容开关与两条回归用例
+---
+ tests/test_ai_assistant_agent.py  | 28 +++++++++++++++++++
+ webserver/assistant/mcp_client.py | 26 ++++++++++-------
+ webserver/handlers/mcp.py         | 46 +++++++++++++++++++++++++++++--
+ webserver/mcp/mcp_service.py      |  4 ++-
+ webserver/settings.py             |  3 ++
+ 5 files changed, 93 insertions(+), 14 deletions(-)
+
+diff --git a/tests/test_ai_assistant_agent.py b/tests/test_ai_assistant_agent.py
+index 2fd6472..c62c15f 100644
+--- a/tests/test_ai_assistant_agent.py
++++ b/tests/test_ai_assistant_agent.py
+@@ -162,6 +162,34 @@ def test_react_graph_builds_from_an_mcp_tool_definition(monkeypatch):
+     assert callable(graph.astream_events)
+ 
+ 
++def test_mcp_token_is_sent_as_bearer_header_not_in_url():
++    client = MCPStreamClient("http://localhost/mcp", "secret-token")
++
++    assert client.base_url == "http://localhost/mcp"
++    assert "secret-token" not in client.base_url
++    assert client.auth_headers == {"Authorization": "Bearer secret-token"}
++
++
++def test_mcp_request_log_redacts_credentials():
++    from webserver.handlers.mcp import redact
++
++    redacted = redact({
++        "method": "tools/call",
++        "params": {
++            "token": "abc",
++            "password": "p",
++            "nested": {"api_key": "k", "name": "keep-me"},
++        },
++        "list": [{"authorization": "Bearer x"}],
++    })
++
++    assert redacted["params"]["token"] == "***"
++    assert redacted["params"]["password"] == "***"
++    assert redacted["params"]["nested"] == {"api_key": "***", "name": "keep-me"}
++    assert redacted["list"] == [{"authorization": "***"}]
++    assert redacted["method"] == "tools/call"
++
++
+ def test_mcp_tool_listing_failure_is_reported_instead_of_using_fake_tools():
+     client = MCPStreamClient("http://localhost/mcp", "")
+     client._send_request = AsyncMock(return_value={"error": {"message": "not available"}})
+diff --git a/webserver/assistant/mcp_client.py b/webserver/assistant/mcp_client.py
+index 4bc9cad..f248640 100644
+--- a/webserver/assistant/mcp_client.py
++++ b/webserver/assistant/mcp_client.py
+@@ -18,11 +18,17 @@ class MCPStreamClient:
+     """
+ 
+     def __init__(self, base_url: str, token: str, cookies: Optional[Dict] = None):
+-        self.base_url = f'{base_url}?token={token}' if token is not None else base_url
++        # 安全：token 一律走 Authorization 请求头，不再拼进 URL。
++        # URL（含 query）会进 nginx/Tornado 的 access log，token 一旦入日志就无法回收。
++        self.base_url = base_url
++        self.token = token or ""
++        self.auth_headers = (
++            {"Authorization": "Bearer %s" % self.token} if self.token else {}
++        )
+         self.session: Optional["aiohttp.ClientSession"] = None
+         self.tools_cache: Optional[List[Dict]] = None
+         self.cookies = cookies
+-        print(f"MCP Tool: {self.base_url}")
++        logging.debug("MCP client initialized: %s", base_url)
+ 
+     async def connect(self):
+         """连接到MCP服务器"""
+@@ -53,13 +59,14 @@ class MCPStreamClient:
+             response = await self._send_request(init_request)
+             return response
+         except Exception as e:
+-            print(f"MCP初始化失败: {e}")
++            logging.warning("MCP 初始化失败: %s", e)
+             return None
+ 
+     async def _send_request(self, request_data: Dict) -> Dict:
+         """发送请求到MCP服务器（支持流式和普通响应）"""
+         try:
+             headers = {"Content-Type": "application/json"}
++            headers.update(self.auth_headers)
+             kwargs = {
+                 "json": request_data,
+                 "headers": headers
+@@ -80,7 +87,7 @@ class MCPStreamClient:
+                     return await response.json()
+ 
+         except Exception as e:
+-            print(f"请求MCP服务器失败: {e}")
++            logging.warning("请求 MCP 服务器失败: %s", e)
+             raise
+ 
+     async def _read_stream_response(self, response) -> Dict:
+@@ -146,24 +153,23 @@ class MCPStreamClient:
+                 }
+             }
+ 
+-            print(f"调用MCP工具: {tool_name}")
+-            if arguments:
+-                print(f"   参数: {arguments}")
++            # 只记录工具名：参数里可能含用户搜索词、笔记正文等隐私信息
++            logging.debug("调用 MCP 工具: %s", tool_name)
+ 
+             response = await self._send_request(call_request)
+ 
+             if "result" in response:
+                 result = response["result"]
+-                print("工具调用成功")
++                logging.debug("MCP 工具调用成功: %s", tool_name)
+                 return result
+             else:
+                 error = response.get("error", {})
+                 error_msg = error.get("message", "未知错误")
+-                print(f"工具调用失败: {error_msg}")
++                logging.warning("MCP 工具调用失败: %s (%s)", tool_name, error_msg)
+                 return {"error": error_msg}
+ 
+         except Exception as e:
+-            print(f"调用工具异常: {e}")
++            logging.warning("MCP 工具调用异常: %s (%s)", tool_name, e)
+             return {
+                 "error": f"Failed to call the tool: {tool_name}",
+                 "message": str(e)
+diff --git a/webserver/handlers/mcp.py b/webserver/handlers/mcp.py
+index 20a0b29..490b31e 100644
+--- a/webserver/handlers/mcp.py
++++ b/webserver/handlers/mcp.py
+@@ -16,6 +16,24 @@ from webserver.version import VERSION
+ 
+ CONF = loader.get_settings()
+ 
++# 日志脱敏：JSON-RPC 请求体里可能出现 token / password / cookie 等字段
++SENSITIVE_FIELDS = {
++    "token", "access_token", "refresh_token", "password", "api_key",
++    "apikey", "authorization", "cookie", "secret", "ai_mcp_token",
++}
++
++
++def redact(value):
++    """递归脱敏，用于日志输出。"""
++    if isinstance(value, dict):
++        return {
++            k: ("***" if str(k).lower() in SENSITIVE_FIELDS else redact(v))
++            for k, v in value.items()
++        }
++    if isinstance(value, (list, tuple)):
++        return [redact(v) for v in value]
++    return value
++
+ 
+ class MCPHandler(ListHandler):
+     mcp_service_single = None
+@@ -59,12 +77,34 @@ class MCPHandler(ListHandler):
+         }
+         self.write(response)
+ 
++    def _bearer_token(self):
++        """从 Authorization: Bearer 头取 token（推荐方式，不会进 access log）。"""
++        header = self.request.headers.get("Authorization", "")
++        if header[:7].lower() == "bearer ":
++            return header[7:].strip() or None
++        return None
++
+     @js
+     def post(self):
+         """Handle MCP over HTTP streaming."""
+         logging.info("New HTTP stream connection from MCP client")
+-        # get token parameter from query string
+-        token = self.get_argument("token", None)
++        # 优先 Authorization 头；URL query 只在显式打开兼容开关时接受
++        token = self._bearer_token()
++        if not token:
++            query_token = self.get_argument("token", None)
++            if query_token:
++                if CONF.get("ALLOW_MCP_TOKEN_IN_URL", False):
++                    logging.warning(
++                        "MCP token 通过 URL 传入已弃用，请改用 Authorization: Bearer 头")
++                    token = query_token
++                else:
++                    logging.warning(
++                        "拒绝 URL 携带 MCP token 的请求（已默认关闭，"
++                        "如需兼容请开启 ALLOW_MCP_TOKEN_IN_URL）")
++                    self.set_status(401)
++                    return {"err": "auth",
++                            "msg": "MCP token must be sent via Authorization: Bearer header"}
++
+         mcp_service = self.create_mcp_service(self, token=token)
+         try:
+             # Read request body
+@@ -74,7 +114,7 @@ class MCPHandler(ListHandler):
+                 return {"err": "params", "msg": _("No request body")}
+ 
+             request_data = json.loads(body)
+-            logging.info(f"HTTP stream request: {request_data}")
++            logging.info("HTTP stream request: %s", redact(request_data))
+ 
+             response = mcp_service.handle_request(request_data)
+             return response
+diff --git a/webserver/mcp/mcp_service.py b/webserver/mcp/mcp_service.py
+index 8992a42..b5d7987 100644
+--- a/webserver/mcp/mcp_service.py
++++ b/webserver/mcp/mcp_service.py
+@@ -224,7 +224,9 @@ class MCPService:
+             # 生成新token
+             token = self._generate_token_with_user_info(user)
+ 
+-            logging.info(f"Generated new token for user {username}: {token}, total tokens: {len(self.authenticated_tokens)}")
++            # 安全：token 本身不写日志（只记录用户名与数量）
++            logging.info("Generated new MCP token for user %s, total tokens: %s",
++                         username, len(self.authenticated_tokens))
+ 
+             result = {
+                 "status": "success",
+diff --git a/webserver/settings.py b/webserver/settings.py
+index 5523d6e..47a537e 100644
+--- a/webserver/settings.py
++++ b/webserver/settings.py
+@@ -94,6 +94,9 @@ settings = {
+     "AI_ENABLED": False,
+     "AI_MODEL": "deepseek-chat",
+     "AI_MCP_TOKEN": "",
++    # MCP 鉴权默认只接受 Authorization: Bearer 头；旧客户端若仍把 token 放 URL，
++    # 需显式打开此项（不推荐，URL 会进 access log）
++    "ALLOW_MCP_TOKEN_IN_URL": False,
+     "AI_DEEPSEEK_API_KEY": "",
+     "AI_API_URL": "https://api.deepseek.com",
+     "AI_ALLOW_SET_CATEGORY": True,
