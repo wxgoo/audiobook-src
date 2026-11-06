@@ -5,6 +5,29 @@ import json
 import logging
 import tornado.websocket
 
+import urllib.parse
+
+
+def is_same_host_origin(origin, host):
+    """Origin 的主机部分是否等于本次请求的 Host。
+
+    - 浏览器发起 WebSocket 一定带 Origin，跨站页面拿用户 Cookie 建连即为
+      CSWSH（跨站 WebSocket 劫持），必须校验；
+    - 非浏览器客户端（脚本、原生 App）通常不带 Origin，放行——它们的鉴权
+      仍依赖 secure cookie，且没有"被第三方页面驱动"的攻击面；
+    - scheme 不参与比较：容器内是 http，外部可能经 nginx 终止 HTTPS，
+      只比较 host:port 才能同时兼容两种入口。
+    """
+    if not origin:
+        return True
+    try:
+        parts = urllib.parse.urlsplit(origin)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            return False
+        return parts.netloc.lower() == (host or "").lower()
+    except Exception:
+        return False
+
 
 class AssistantWebSocketHandler(tornado.websocket.WebSocketHandler):
     # 保存连接的实例，以便后台服务管理
@@ -20,8 +43,14 @@ class AssistantWebSocketHandler(tornado.websocket.WebSocketHandler):
         return user_id
 
     def check_origin(self, origin):
-        logging.info(f"WebSocket check_origin called from: {origin}")
-        return True
+        # 原实现无条件 return True，等于允许任意网站借用户 Cookie 建立 AI 会话。
+        allowed = is_same_host_origin(origin, self.request.host)
+        if allowed:
+            logging.info("WebSocket origin accepted: %s", origin or "(none)")
+        else:
+            logging.warning("WebSocket origin rejected: %s (host=%s)",
+                            origin, self.request.host)
+        return allowed
 
     async def open(self):
         logging.info(f"WebSocket open called, user: {self.get_current_user()}")
