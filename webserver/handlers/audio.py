@@ -22,6 +22,7 @@ from tornado.iostream import StreamClosedError
 
 from webserver import loader
 from webserver.base.formatter import BookFormatter
+from webserver.base.pagination import encode_cursor, parse_id_cursor
 from webserver.base.audio_dir import (
     audio_dir_for_read,
     audio_dir_for_write,
@@ -505,17 +506,41 @@ class AudioDetail(BaseHandler):
 class AudioBooks(BaseHandler):
     @js
     def get(self):
-        """获取有音频的书籍列表"""
+        """获取有音频的书籍列表。
+
+        键集分页：`after` 游标（兼容旧的 `start`/`size`），响应带 `next_cursor`。
+        书籍 ID 来自 AudioBooksCache（事件驱动 + 兜底刷新），请求路径不再全库扫盘；
+        每个请求只对当前页的书目录做 listdir 统计音频数量。
+        """
         try:
-            # 获取启动参数
             start = self.get_argument_start()
             size = int(self.get_argument("size", 60))
+            size = max(size, 1)
+            cursor = self.get_argument("after", "") or self.get_argument("cursor", "")
 
-            # 扫描 library 里带 .audio/ 的书（4.6.0-15 起唯一布局）
+            audio_book_ids = sorted(AudioBooksCache.get_audio_book_ids(), reverse=True)
+            total = len(audio_book_ids)
+
+            pos = start
+            last_id = parse_id_cursor(cursor, "audio")
+            if last_id is not None:
+                pos = total
+                for i, v in enumerate(audio_book_ids):
+                    if v < last_id:
+                        pos = i
+                        break
+
+            paginated_ids = audio_book_ids[pos : pos + size]
+            next_cursor = None
+            if paginated_ids and pos + size < total:
+                next_cursor = encode_cursor({"k": "audio", "id": paginated_ids[-1]})
+
+            # 只统计当前页的音频数量，不扫全库
             audios_cnt_map = {}
-            audio_book_ids = []
-            for book_id, audio_dir in find_audios_by_scanning_library().items():
-                audio_book_ids.append(book_id)
+            for book_id in paginated_ids:
+                audio_dir, _legacy = resolve_audio_dir(self.calibre_db_cache, book_id)
+                if not audio_dir:
+                    continue
                 try:
                     audios_cnt_map[book_id] = len([
                         f for f in os.listdir(audio_dir)
@@ -523,10 +548,6 @@ class AudioBooks(BaseHandler):
                     ])
                 except OSError:
                     audios_cnt_map[book_id] = 0
-
-            # 分页处理
-            total = len(audio_book_ids)
-            paginated_ids = audio_book_ids[start : start + size]
 
             # 获取书籍信息，参考 base.py 中的 get_books 函数进行权限过滤
             books = []
@@ -548,6 +569,7 @@ class AudioBooks(BaseHandler):
                 "title": _("有声书"),
                 "books": books_result,
                 "total": total,
+                "next_cursor": next_cursor,
             }
 
         except Exception as e:

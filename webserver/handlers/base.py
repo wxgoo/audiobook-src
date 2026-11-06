@@ -2,6 +2,7 @@
 # -*- coding: UTF-8 -*-
 
 import asyncio
+import bisect
 import contextlib
 import base64
 import datetime
@@ -26,6 +27,7 @@ from webserver import loader, perf, site_time, utils
 from webserver.base import calibre_fast
 from webserver.base.book_data_cascade import cascade_delete_book_data
 from webserver.base.formatter import BookFormatter
+from webserver.base.pagination import decode_cursor, encode_cursor, parse_id_cursor
 from webserver.base.query_cache import VersionedCache, library_version
 from webserver.base.global_state import get_global_state
 from webserver.base.sidebar import get_sidebar_items
@@ -2133,11 +2135,24 @@ class ListHandler(BaseHandler):
         sort_map = self.calibre_db_cache.all_field_for("sort", ids, "")
         return sorted(ids, key=lambda i: sort_map.get(i) or "")
 
+    def _sort_keys_by_title(self, ids):
+        """返回 (排序键, id) 升序对，供键集分页定位下一页边界。"""
+        sort_map = self.calibre_db_cache.all_field_for("sort", ids, "")
+        return sorted((sort_map.get(i) or "", i) for i in ids)
+
     async def get_book_list(
         self, all_books, ids=None, title=None, sort_fields=None, include_comments=True
     ):
-        """Get a list of books."""
+        """Get a list of books.
+
+        分页兼容两种方式：
+        - 旧：`start`/`size`（offset），不传游标时行为完全不变；
+        - 新：`after`（不透明游标，也接受 `cursor` 作为别名），响应带 `next_cursor`。
+        键集分页只在按 id / title 排序时生效，因为它们有稳定的全序。
+        """
         start = self.get_argument_start()
+        cursor = self.get_argument("after", "") or self.get_argument("cursor", "")
+        next_cursor = None
         page_size = CONF.get("DEFAULT_PAGE_SIZE", 60)
         max_size = int(CONF.get("MAX_PAGE_SIZE", 200))
         if perf.lite_on("LITE_PAGE_SIZE"):
@@ -2159,17 +2174,43 @@ class ListHandler(BaseHandler):
                 sort_fields = "id"
 
             if sort_fields == "id":
-                # 按照id从大到小排列（降序），直接对ids排序后再获取当前页
-                books = await self.get_books_for_list_async(ids=ids[start : start + delta])
+                # 按照id从大到小排列（降序）
+                ids.sort(reverse=True)
+                pos = start
+                last_id = parse_id_cursor(cursor, "id")
+                if last_id is not None:
+                    # ids 降序，找第一个小于上一页末尾的 id
+                    pos = len(ids)
+                    for i, v in enumerate(ids):
+                        if v < last_id:
+                            pos = i
+                            break
+                page_ids = ids[pos : pos + delta]
+                books = await self.get_books_for_list_async(ids=page_ids)
                 self.do_sort(books, "id", False)
+                if books and pos + delta < len(ids):
+                    next_cursor = encode_cursor({"k": "id", "id": books[-1]["id"]})
             elif sort_fields == "title":
-                # 获取所有books，排序后再抽取当前页
-                sorted_ids = await self.run_calibre_read_async(self._sort_ids_by_title, ids)
-                page_ids = sorted_ids[start : start + delta]
+                # 按 (排序键, id) 升序排列，排序键相同的书也能稳定翻页
+                pairs = await self.run_calibre_read_async(self._sort_keys_by_title, ids)
+                pos = start
+                cur = decode_cursor(cursor)
+                if cur and cur.get("k") == "title":
+                    try:
+                        last_key = (cur.get("s") or "", int(cur.get("id")))
+                    except (TypeError, ValueError):
+                        last_key = None
+                    if last_key is not None:
+                        pos = bisect.bisect_right(pairs, last_key)
+                page_pairs = pairs[pos : pos + delta]
+                page_ids = [pid for _key, pid in page_pairs]
                 by_id = {b["id"]: b for b in await self.get_books_for_list_async(ids=page_ids)}
                 books = [by_id[i] for i in page_ids if i in by_id]
+                if page_pairs and pos + delta < len(pairs):
+                    key, pid = page_pairs[-1]
+                    next_cursor = encode_cursor({"k": "title", "s": key, "id": pid})
             else:
-                # 按照输入的ids顺序排序
+                # 按照输入的ids顺序排序（相关度等无稳定全序的场景，不支持游标）
                 page_ids = ids[start : start + delta]
                 by_id = {b["id"]: b for b in await self.get_books_for_list_async(ids=page_ids)}
                 books = [by_id[i] for i in page_ids if i in by_id]
@@ -2181,6 +2222,7 @@ class ListHandler(BaseHandler):
             "err": "ok",
             "title": title,
             "total": count,
+            "next_cursor": next_cursor,
             "books": [self.fmt(b, include_comments=include_comments, strip_comments=True) for b in books],
         }
 
