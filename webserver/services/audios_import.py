@@ -688,6 +688,13 @@ class AudioBookImporter(AsyncService):
                         except Exception as err:
                             logging.warning("[AUDIO_IMPORT] add_format 失败(%s): %s",
                                             ebook_file, err)
+                    # 事件驱动：这本书现在有音频了，只更新它自己的标志，不扫全库
+                    try:
+                        from webserver.handlers.audio import AudioBooksCache
+                        AudioBooksCache.mark_has_audio(book_id)
+                    except Exception:
+                        logging.warning("[AUDIO_IMPORT] 更新音频缓存失败: book_id=%s", book_id, exc_info=True)
+
                     if linked_to_existing:
                         AudioBookImporter.static_status["linked"] += 1
                         logging.info("[AUDIO_IMPORT] 音频已挂到已有书籍 book_id=%s 的目录 %s",

@@ -606,7 +606,9 @@ class MimoTTSTool(BaseTool):
                     "chapter_title": chapter.get("title", ""),
                 })
 
-            AudioBooksCache.async_update()
+            # 事件驱动：有产物才标记这本书有音频，不再全库扫描
+            if completed_parts > 0:
+                AudioBooksCache.mark_has_audio(book_id)
 
             self.update_task_progress(task_id, 100, {
                 "status": "completed",
