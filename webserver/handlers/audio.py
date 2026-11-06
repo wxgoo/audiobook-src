@@ -18,6 +18,7 @@ from webserver.version import VERSION
 
 import tornado
 from tornado import web
+from tornado.iostream import StreamClosedError
 
 from webserver import loader
 from webserver.base.formatter import BookFormatter
@@ -920,7 +921,33 @@ class AudioDelete(BaseHandler):
 
 
 class AudioFile(BaseHandler):
-    def get(self, book_id, filename):
+    # 异步读盘的分块大小：太大占用内存，太小增加线程池往返次数
+    STREAM_CHUNK_SIZE = 128 * 1024
+
+    async def _stream_file(self, file_path, start, length):
+        """把文件片段分块读出并异步写回客户端。
+
+        历史实现是在 Tornado 事件循环里同步 `f.read(8192)` + `self.write`：
+        一个慢客户端（手机端缓冲、跨公网拖动进度条）就能把整个站点的主循环
+        卡住。这里把「读盘」放进线程池，并按块 await flush() 施加背压，
+        每连接只保留一个块的内存。
+        """
+        loop = tornado.ioloop.IOLoop.current()
+        with open(file_path, "rb") as fh:
+            fh.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = await loop.run_in_executor(
+                    None, fh.read, min(self.STREAM_CHUNK_SIZE, remaining)
+                )
+                if not chunk:
+                    break
+                self.write(chunk)
+                remaining -= len(chunk)
+                # 客户端读得慢时停在这里，避免把整个文件堆进内存
+                await self.flush()
+
+    async def get(self, book_id, filename):
         """提供音频文件的静态文件服务"""
         logging.info(f"AudioFile requested: book_id={book_id}, filename={filename}")
         if not BookAccessService.guest_read_allowed(self, book_id):
@@ -1047,26 +1074,16 @@ class AudioFile(BaseHandler):
                     self.set_header("Content-Range", f"bytes {start}-{end}/{file_size}")
                     self.set_header("Content-Length", str(end - start + 1))
 
-                    with open(file_path, "rb") as f:
-                        f.seek(start)
-                        remaining = end - start + 1
-                        while remaining > 0:
-                            chunk_size = min(8192, remaining)
-                            chunk = f.read(chunk_size)
-                            if not chunk:
-                                break
-                            self.write(chunk)
-                            remaining -= len(chunk)
+                    await self._stream_file(file_path, start, end - start + 1)
                     return
 
             # 正常文件传输
             self.set_header("Content-Length", str(file_size))
-            with open(file_path, "rb") as f:
-                while True:
-                    chunk = f.read(8192)
-                    if not chunk:
-                        break
-                    self.write(chunk)
+            await self._stream_file(file_path, 0, file_size)
+        except StreamClosedError:
+            # 客户端拖动进度条/切歌时会主动断开，写失败属正常现象，不必报错
+            logging.debug("AudioFile client closed early: book_id=%s", book_id)
+            return
         except ValueError:
             raise web.HTTPError(400, "Invalid book ID")
         except Exception as e:
