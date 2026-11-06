@@ -108,7 +108,13 @@
             <div class="track-number">{{ index + 1 }}</div>
             <div class="track-info">
               <div class="track-title">{{ getDisplayName(audio.filename) }}</div>
-              <div class="track-duration">{{ formatFileSize(audio.size) }}</div>
+              <div class="track-duration">
+                {{ formatFileSize(audio.size) }}
+                <!-- 上次听到哪：与详情页弹窗同一份每集记忆 -->
+                <span v-if="resumeHintOf(index) > 1
+                            && !(currentTrackIndex === index && isPlaying)"
+                      class="resume-hint">· 上次 {{ formatTime(resumeHintOf(index)) }}</span>
+              </div>
             </div>
             <v-chip
               v-if="!isPaid && index >= 5"
@@ -389,6 +395,11 @@ export default {
       duration: 0,
       progress: 0,
       isDragging: false,
+      // 每集记忆（与详情页弹窗同一套 key）：{集序号: 相对秒}。
+      // 弹窗是「每集一条」，播放页此前只有「整本一条」（audio_progress_*），
+      // 切集就会把上一集的恢复点覆盖掉，两边也因此对不上。现在播放页
+      // 切集/心跳时同步写每集 key，弹窗打开时即可读到（反之亦然）。
+      trackResumeMap: {},
 
       // 音频设置
       playbackRate: 1,
@@ -505,6 +516,8 @@ export default {
     if (!restored) {
       this.loadTrack(0);
     }
+    // 每集记忆（与弹窗互通）：进页读一次，之后随保存实时更新
+    this._loadTrackResumeMap();
     // 4.6.0-19：服务端进度（跨设备续播）。本地没有记录、或本地的比服务端
     // 旧时，跳到服务端保存的位置——两台设备轮流听也能接上。
     this.tryRestoreFromServer(restored);
@@ -1218,6 +1231,40 @@ export default {
       return `audio_progress_${userId}_${this.bookId}`;
     },
 
+    // §每集记忆键§ 与详情页弹窗（AudioListDialog._keyOf）完全同算法同格式：
+    // audiobook_preview_<用户>_<书>_<url哈希>，值 { t: 相对该文件的秒 }。
+    // url 带时效签名也没关系——同一次会话内 url 稳定，弹窗与本页读到的
+    // 是同一个 key；跨会话签名变了会导致旧记忆失效，这与弹窗的现状一致。
+    _trackKeyOf(index) {
+      const item = this.audioFiles[index] || {};
+      const s = String(item.url || item.filename || index);
+      let h = 0;
+      for (let i = 0; i < s.length; i++) {
+        h = (h * 31 + s.charCodeAt(i)) | 0;
+      }
+      const userId = this.$store.state.user?.id || 'guest';
+      return `audiobook_preview_${userId}_${this.bookId}_${Math.abs(h)}`;
+    },
+
+    // 进页时把所有集的已有记忆读出来，列表上显示「上次听到哪」
+    _loadTrackResumeMap() {
+      if (!process.client) return;
+      const map = {};
+      this.audioFiles.forEach((item, idx) => {
+        try {
+          const raw = localStorage.getItem(this._trackKeyOf(idx));
+          if (!raw) return;
+          const v = JSON.parse(raw);
+          if (typeof v.t === 'number' && v.t > 1) map[idx] = v.t;
+        } catch (e) { /* 坏数据忽略 */ }
+      });
+      this.trackResumeMap = map;
+    },
+
+    resumeHintOf(index) {
+      return this.trackResumeMap[index] || 0;
+    },
+
     savePlaybackPosition() {
       if (!process.client || !this.bookId) return;
 
@@ -1232,6 +1279,31 @@ export default {
 
         localStorage.setItem(this.getStorageKey(), JSON.stringify(progressData));
         this._localProgressTs = progressData.timestamp;
+
+        // §每集记忆§ 与弹窗同一套 key。注意 this.currentTime 是相对该文件
+        // 的秒（不含 start_time 偏移），与弹窗存的语义一致。听完（差 3 秒内）
+        // 清掉——下次从头听；不足 5 秒视为「没真听」，不记。
+        const d = this.duration;
+        const t = this.currentTime || 0;
+        if (d && isFinite(d)) {
+          const key = this._trackKeyOf(this.currentTrackIndex);
+          try {
+            if (t >= d - 3) {
+              localStorage.removeItem(key);
+              if (this.trackResumeMap[this.currentTrackIndex] !== undefined) {
+                const map = { ...this.trackResumeMap };
+                delete map[this.currentTrackIndex];
+                this.trackResumeMap = map;
+              }
+            } else if (t > 5) {
+              localStorage.setItem(key, JSON.stringify({ t: t }));
+              if (this.trackResumeMap[this.currentTrackIndex] !== t) {
+                this.trackResumeMap = { ...this.trackResumeMap, [this.currentTrackIndex]: t };
+              }
+            }
+          } catch (e) { /* 隐私模式写不进去，忽略 */ }
+        }
+
         // 4.6.0-19：同步到服务端（内部 15s 节流），换设备/换浏览器也能续播
         this.pushServerProgress();
       } catch (error) {
@@ -1899,6 +1971,12 @@ export default {
 .track-duration {
   font-size: 0.875rem;
   color: #cccccc;
+}
+
+.resume-hint {
+  color: #ff9800;
+  font-size: 0.75rem;
+  margin-left: 4px;
 }
 
 .no-audio-message {
