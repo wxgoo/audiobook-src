@@ -6,6 +6,7 @@
 2. 缓存过期时，读请求立即返回旧值，扫描只能发生在后台线程。
 """
 
+import threading
 import time
 
 import pytest
@@ -71,7 +72,14 @@ def test_audio_flag_updates_are_incremental(monkeypatch):
 
 
 def test_stale_cache_returns_immediately_and_refreshes_in_background(monkeypatch):
+    # §必须可复现§ 假扫描若是直接返回的纯内存操作，后台刷新线程会抢在断言
+    # 之前把新值写进缓存，「立即返回旧值」就变成猜运气（实测有的机器 5/5
+    # 必红）。用 Event 把扫描卡在半路：先证明读请求不等扫描就能拿到旧值
+    # 返回，再放行证明后台线程最终会把新值补上。
+    release = threading.Event()
+
     def fake_scan(cls):
+        release.wait(5)
         return {1, 2}
 
     monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(fake_scan))
@@ -83,8 +91,9 @@ def test_stale_cache_returns_immediately_and_refreshes_in_background(monkeypatch
 
     started = time.time()
     assert AudioBooksCache.get_audio_book_ids() == set()
-    assert time.time() - started < 0.5  # 不阻塞
+    assert time.time() - started < 0.5  # 不阻塞：扫描还卡着，读请求已拿旧值返回
 
+    release.set()
     deadline = time.time() + 2
     while AudioBooksCache._book_ids != {1, 2} and time.time() < deadline:
         time.sleep(0.02)
