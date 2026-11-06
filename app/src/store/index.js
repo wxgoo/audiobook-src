@@ -2,6 +2,9 @@ export const state = () => ({
     nav: true, loading: true, count: 0, searchLoading: false, user: {
         is_admin: false,
         is_login: false,
+        // 后端 /user/info 下发：上传能力由用户 u 权限位决定（管理员恒为 true），
+        // 与 sys.allow.upload（只表示访客能否上传）是两回事
+        can_upload: false,
         nickname: "",
         kindle_email: "",
         avatar: "",
@@ -94,6 +97,7 @@ export const mutations = {
         state.user = {
             is_admin: false,
             is_login: false,
+            can_upload: false,
             nickname: "",
             kindle_email: "",
             avatar: "",

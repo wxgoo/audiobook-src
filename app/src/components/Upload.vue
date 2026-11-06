@@ -5,7 +5,7 @@
         <v-menu v-if="hasServerImport" top left offset-y>
             <template v-slot:activator="{ on, attrs }">
                 <v-btn
-                    v-show="showUploadButtons && ($store.state.sys.allow.upload || $store.state.user.is_login)"
+                    v-show="showUploadButtons && canUpload"
                     bottom
                     color="pink"
                     dark
@@ -33,7 +33,7 @@
         </v-menu>
         <v-btn
             v-else
-            v-show="showUploadButtons && ($store.state.sys.allow.upload || $store.state.user.is_login)"
+            v-show="showUploadButtons && canUpload"
             bottom
             color="pink"
             dark
@@ -49,7 +49,7 @@
 
         <!-- 添加实体书按钮 -->
         <v-btn
-            v-show="showUploadButtons && ($store.state.sys.allow.upload || $store.state.user.is_login) && $store.state.sys.allow.physical_books"
+            v-show="showUploadButtons && canUpload && $store.state.sys.allow.physical_books"
             bottom
             color="green"
             dark
@@ -73,7 +73,7 @@
 
         <!-- 添加实体书对话框 -->
         <AppDialog
-            v-if="($store.state.sys.allow.upload || $store.state.user.is_login) && $store.state.sys.allow.physical_books"
+            v-if="canUpload && $store.state.sys.allow.physical_books"
             v-model="isbn_dialog"
             type="action"
             :title="$t('upload.addPhysicalBook')"
@@ -211,6 +211,14 @@ export default {
                 return localStorage.getItem('max_upload_size') || '100MB';
             }
             return '100MB';
+        },
+        // 能否上传：以 user.can_upload（用户 u 权限位，管理员恒 true）为准；
+        // 未登录访客仅在站点开启「允许访客上传」时可上传。
+        // 不能用 sys.allow.upload 判断登录用户——它只表示访客口径。
+        canUpload() {
+            const u = this.$store.state.user;
+            if (u && u.is_login) return !!(u.can_upload || u.is_admin);
+            return !!(this.$store.state.sys.allow && this.$store.state.sys.allow.upload);
         },
         hasServerImport() {
             return !!(this.$store.state.user.is_admin && this.$store.state.sys.allow.server_import);

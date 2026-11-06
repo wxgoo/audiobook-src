@@ -617,6 +617,10 @@ class UserInfo(BaseHandler):
                 "is_login": True,
                 "is_guest": False,
                 "is_admin": user.is_admin(),
+                # 上传能力真正由用户自己的 u 权限位决定（管理员无条件放行）。
+                # 站点开关 sys.allow.upload 只表示「访客能否上传」，与登录用户无关，
+                # 前端不能拿它判断登录用户能不能上传，否则会与后端 can_upload() 不一致。
+                "can_upload": user.is_admin() or user.can_upload(),
                 "is_active": user.is_active(),
                 "nickname": user.name or "",
                 "username": user.username,

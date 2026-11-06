@@ -153,9 +153,11 @@ export default {
       return this.$route.path === '/printbooks';
     },
     canUpload() {
-      // 站点关掉「允许上传」时管理员仍要能导入实体书；普通用户无权限时后端会拒绝
-      const st = this.$store.state;
-      return st.user && st.user.is_login && (st.user.is_admin || (st.sys.allow && st.sys.allow.upload));
+      // 上传能力看后端下发的 user.can_upload（由用户 u 权限位决定，管理员恒 true）。
+      // 不能用 sys.allow.upload——那只是「访客能否上传」，站点开了必须登录后它恒为 false，
+      // 拿它判断会把已登录用户的可上传状态判错。
+      const u = this.$store.state.user;
+      return !!(u && u.is_login && (u.can_upload || u.is_admin));
     },
     isSelectablePage() {
       return Object.prototype.hasOwnProperty.call(SELECTABLE_ACTIONS, this.$route.path);

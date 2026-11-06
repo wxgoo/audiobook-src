@@ -3030,7 +3030,7 @@ class BookAddByISBN(BaseHandler):
     @js
     @auth
     async def post(self):
-        if not self.current_user.can_upload():
+        if not (self.current_user.is_admin() or self.current_user.can_upload()):
             return {"err": "permission", "msg": _("无权操作")}
         data = tornado.escape.json_decode(self.request.body)
         isbn = data.get("isbn", "").strip()
@@ -3112,7 +3112,7 @@ class BookAddManual(BaseHandler):
     @js
     @auth
     def post(self):
-        if not self.current_user.can_upload():
+        if not (self.current_user.is_admin() or self.current_user.can_upload()):
             return {"err": "permission", "msg": _("无权操作")}
         data = tornado.escape.json_decode(self.request.body)
         title = (data.get("title") or "").strip()
@@ -3436,7 +3436,7 @@ class BookUpload(BaseHandler):
         if not BookAccessService.guest_upload_allowed():
             if self.is_guest():
                 return {"err": "permission", "msg": _("无权操作，请先登录")}
-            if not self.current_user.can_upload():
+            if not (self.current_user.is_admin() or self.current_user.can_upload()):
                 return {"err": "permission", "msg": _("无权操作")}
 
         target_book_id = self.get_argument("bid", None)
@@ -3704,7 +3704,7 @@ class BookUploadChunk(BaseHandler):
         if not BookAccessService.guest_upload_allowed():
             if self.is_guest():
                 return {"err": "permission", "msg": _("无权操作，请先登录")}
-            if not self.current_user.can_upload():
+            if not (self.current_user.is_admin() or self.current_user.can_upload()):
                 return {"err": "permission", "msg": _("无权操作")}
 
         # Get parameters from form data
@@ -3991,7 +3991,7 @@ class BookUploadBatch(BaseHandler):
         if not BookAccessService.guest_upload_allowed():
             if self.is_guest():
                 return {"err": "permission", "msg": _("无权操作，请先登录")}
-            if not self.current_user.can_upload():
+            if not (self.current_user.is_admin() or self.current_user.can_upload()):
                 return {"err": "permission", "msg": _("无权操作")}
 
         if ScanService.is_importing():
@@ -5358,7 +5358,7 @@ class PrintBookImportTemplate(PrintBookImportBase):
     # 不加 @js：模板是文件下载，@js 会把返回值强制转 JSON
     @auth
     def get(self):
-        if not self.current_user.can_upload():
+        if not (self.current_user.is_admin() or self.current_user.can_upload()):
             return {"err": "permission", "msg": _("无权操作")}
         self._template_response()
 
@@ -5367,7 +5367,7 @@ class PrintBookImport(PrintBookImportBase):
     @js
     @auth
     def post(self):
-        if not self.current_user.can_upload():
+        if not (self.current_user.is_admin() or self.current_user.can_upload()):
             return {"err": "permission", "msg": _("无权操作")}
         f = self.request.files.get("csvfile")
         if not f:
