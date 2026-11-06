@@ -16,53 +16,7 @@
                 </v-card>
             </v-dialog>
 
-            <AppDialog
-                v-model="dialog_epub2audio"
-                type="action"
-                :title="$t('book.convertToAudio')"
-                color="#003153"
-                confirm-dark
-                width="380"
-                :confirm-text="$t('common.start')"
-                @confirm="generateAudio()"
-            >
-                <p v-if="audios.status === AUDIO_STATUS.FAILED" style="color: red; font-weight: bold;">{{ $t('book.conversionFailed') }} <br/>
-                    {{ audios.progress && audios.progress.error_message ? audios.progress.error_message : $t('book.defaultFailedReason') }}
-                </p>
-                <p style="margin: 16px 0 10px 0;">{{ $t('book.convertToAudioNote') }}</p>
-                <v-select style="margin-top: 3px;"
-                    :items="voice_options"
-                    outlined
-                    dense
-                    v-model="voice_name"
-                    :label="$t('book.chooseVoice')"
-                    item-text="display_name"
-                    item-value="voice_name"
-                    required
-                >
-                    <template v-slot:selection="{ item }">
-                        {{ item.display_name }}
-                    </template>
-                    <template v-slot:item="{ item }">
-                        <v-list-item-content>
-                            <v-list-item-title style="font-size: 15px;">{{ item.display_name }}</v-list-item-title>
-                        </v-list-item-content>
-                        <v-list-item-action>
-                            <v-btn
-                                icon
-                                small
-                                @click.stop="playSampleVoice(item)"
-                                :loading="playing_sample === item.voice_name"
-                            >
-                                <v-icon>mdi-play</v-icon>
-                            </v-btn>
-                        </v-list-item-action>
-                    </template>
-                </v-select>
-            </AppDialog>
-
-
-            <AppDialog
+<AppDialog
                 v-model="dialog_download"
                 type="action"
                 :title="$t('book.downloadBook')"
@@ -827,7 +781,7 @@
         <v-col cols="12" sm="6" class="book-action-col">
             <v-card outlined>
                 <v-list>
-                    <v-list-item @click="switchAudioDialog" :disabled="!hasEBooks && !hasAudio">
+                    <v-list-item @click="switchToAudioPlayer" :disabled="!hasEBooks && !hasAudio">
                         <v-list-item-avatar large :color="(!hasEBooks && !hasAudio) ? 'grey' : (audios.status === AUDIO_STATUS.FAILED ? 'red' : 'primary')">
                             <v-icon dark>{{ audios.status === AUDIO_STATUS.FAILED ? 'mdi-alert-circle' : 'mdi-playlist-music' }}</v-icon>
                         </v-list-item-avatar>
@@ -1585,94 +1539,6 @@ export default {
         // 检查是否有兼容邮箱发送的文件格式（EPUB/AZW3/PDF/MOBI/TXT）
         hasCompatibleEmailFormats: function() {
             return this.compatibleEmailFormatFiles.length > 0;
-        },
-
-        voice_options() {
-            return [
-                {
-                    voice_name: "zh-CN-liaoning-XiaobeiNeural",
-                    display_name: this.$t('voice.xiaobei'),
-                    gender: "female",
-                    sample_file: "chinese/female/zh-CN-liaoning-XiaobeiNeural.mp3"
-                },
-                {
-                    voice_name: "zh-CN-XiaoxiaoNeural",
-                    display_name: this.$t('voice.xiaoxiao'),
-                    gender: "female",
-                    sample_file: "chinese/female/zh-CN-XiaoxiaoNeural.mp3"
-                },
-                {
-                    voice_name: "zh-CN-XiaoyiNeural",
-                    display_name: this.$t('voice.xiaoyi'),
-                    gender: "female",
-                    sample_file: "chinese/female/zh-CN-XiaoyiNeural.mp3"
-                },
-                {
-                    voice_name: "zh-HK-HiuGaaiNeural",
-                    display_name: this.$t('voice.xiaojia'),
-                    gender: "female",
-                    sample_file: "chinese/female/zh-HK-HiuGaaiNeural.mp3"
-                },
-                {
-                    voice_name: "zh-CN-YunjianNeural",
-                    display_name: this.$t('voice.yunjian'),
-                    gender: "male",
-                    sample_file: "chinese/male/zh-CN-YunjianNeural.mp3"
-                },
-                {
-                    voice_name: "zh-CN-YunxiNeural",
-                    display_name: this.$t('voice.yunxi'),
-                    gender: "male",
-                    sample_file: "chinese/male/zh-CN-YunxiNeural.mp3"
-                },
-                {
-                    voice_name: "zh-CN-YunyangNeural",
-                    display_name: this.$t('voice.yunyang'),
-                    gender: "male",
-                    sample_file: "chinese/male/zh-CN-YunyangNeural.mp3"
-                },
-                {
-                    voice_name: "zh-HK-WanLungNeural",
-                    display_name: this.$t('voice.yunlong'),
-                    gender: "male",
-                    sample_file: "chinese/male/zh-HK-WanLungNeural.mp3"
-                },
-                {
-                    voice_name: "en-US-AndrewNeural",
-                    display_name: this.$t('voice.andrew'),
-                    gender: "male",
-                    lang: "en-US",
-                    sample_file: "english/male/en-US-AndrewNeural.mp3"
-                },
-                {
-                    voice_name: "en-GB-RyanNeural",
-                    display_name: this.$t('voice.ray'),
-                    gender: "male",
-                    lang: "en-US",
-                    sample_file: "english/male/en-GB-RyanNeural.mp3"
-                },
-                {
-                    voice_name: "en-GB-SoniaNeural",
-                    display_name: this.$t('voice.sonia'),
-                    gender: "female",
-                    lang: "en-GB",
-                    sample_file: "english/female/en-GB-SoniaNeural.mp3"
-                },
-                {
-                    voice_name: "en-US-AnaNeural",
-                    display_name: this.$t('voice.ana'),
-                    gender: "female",
-                    lang: "en-US",
-                    sample_file: "english/female/en-US-AnaNeural.mp3"
-                },
-                {
-                    voice_name: "en-US-EmmaNeural",
-                    display_name: this.$t('voice.emma'),
-                    gender: "female",
-                    lang: "en-US",
-                    sample_file: "english/female/en-US-EmmaNeural.mp3"
-                }
-            ];
         }
     },
     data: () => ({
@@ -1712,7 +1578,6 @@ export default {
             PHYSICAL: 1
         },
         debug: false,
-        loaded: false,
         mynexusPollTimer: null,
         mynexusRequesting: false,
         mynexusChecking: false,
@@ -1738,8 +1603,6 @@ export default {
         converting_poll_timer: null,
         converting_target_href: '',
         converting_format: '',
-        dialog_epub2audio: false,
-        dialog_audiolist: false,
         dialog_refer: false,
         dialog_msg: false,
         dialog_set_cover: false,
@@ -1801,12 +1664,6 @@ export default {
         refer_books_loading: false,
         referSettingId: null,
         refer_books: [],
-        epub2audio_processing: false,
-        voice_name: "", // 语音名称，将从localStorage加载
-        playing_sample: null,
-        currentAudio: null,
-        // Progress polling timer
-        progressTimer: null,
         languageOptions,
         email_rules: function (email) {
             var re = /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
@@ -1830,9 +1687,6 @@ export default {
 
         if (process.client) {
             this.mail_to = this.$cookies.get("last_mailto");
-            // 从localStorage获取上次使用的语音名称
-            const lastUsedVoice = localStorage.getItem("last_used_voice_name");
-            this.voice_name = lastUsedVoice || "zh-CN-XiaoxiaoNeural"; // 如果没有保存的语音，使用默认的晓晓
 
             // 检查URL参数，如果有continue_adding=true则自动弹出添加对话框
             if (this.$route.query.continue_adding === 'true' && this.$store.state.sys.allow.physical_books) {
@@ -1841,9 +1695,6 @@ export default {
                     this.continueAdding = true;
                 });
             }
-        } else {
-            // 服务端渲染时使用默认语音
-            this.voice_name = "zh-CN-XiaoxiaoNeural";
         }
     },
     async mounted() {
@@ -1858,21 +1709,6 @@ export default {
         else this.loadMyNexusAvailability();
     },
     watch: {
-        // 监听audios数据变化，当数据加载完成后检查是否需要启动进度轮询
-        audios: {
-            handler(newValue, oldValue) {
-                if (!newValue || (oldValue && newValue && newValue.status === oldValue.status)) return;
-                if (!process.client) return;
-                if (this.loaded) return;
-                this.loaded = true;
-                if (newValue && newValue.status === this.AUDIO_STATUS.PROCESSING) {
-                    // 如果音频状态是正在处理中，启动进度轮询
-                    this.startAudioProgressPolling();
-                }
-            },
-            immediate: true, // 立即执行一次，用于初始数据检查
-            deep: true // 深度监听对象变化
-        },
         // 监听用户登录状态变化，当用户登录后重新加载设置
         '$store.state.user.is_login': {
             handler(newValue) {
@@ -1891,9 +1727,6 @@ export default {
     });
     },
     beforeDestroy() {
-        // 清理音频资源
-        this.stopCurrentAudio();
-        this.stopAudioProgressPolling();
         this.stopConvertingPolling();
         clearInterval(this.mynexusPollTimer);
     },
@@ -2218,27 +2051,17 @@ export default {
         onShareChanged(shared) {
             this.$set(this.book, "shared", shared);
         },
+        // 有声书唯一入口（顶部按钮与菜单项共用）。
+        // §入口统一（用户拍板：彻底取消弹窗）§
+        // 弹窗与播放页是两套独立播放器、两套进度逻辑，修了多少轮仍有细枝末节
+        // 对不上（见 docs/上游跟进清单.md #C8~#C11）。根治办法只有一个：
+        // 只留播放页这一套。弹窗原有的「删除 / 取消生成 / 重新生成」已全部
+        // 移到播放页，所以这里不再按状态分流——不管有音频、转换中还是失败，
+        // 一律进播放页；没有音频时播放页自己会显示「重新生成有声书」。
         switchToAudioPlayer() {
-            if (this.audios.status === this.AUDIO_STATUS.CONVERTED && this.audios.count > 0) {
-                // 切换到音频播放页面, /audio/<bid>
-                this.$router.push("/audio/" + this.book.id);
-            } else {
-                this.switchAudioDialog();
-            }
-        },
-        switchAudioDialog() {
-            // 纯音频书（没有 epub）也能打开列表；只有「什么都没有」才拦下
             if (!this.hasEBooks && !this.hasAudio) {
                 return;
             }
-
-            // §入口统一（用户拍板：彻底取消弹窗）§
-            // 弹窗与播放页是两套独立播放器、两套进度逻辑，进度粒度/时间语义
-            // 修了多少轮仍有细枝末节对不上（见 docs/上游跟进清单.md #C9）。
-            // 根治办法只有一个：只留播放页这一套。弹窗原有的「清除音频 /
-            // 恢复生成」已移到播放页（与「删除当前有声书」并列）。
-            // 所以这里不再分状态：不管有没有音频、转换中还是失败，一律进
-            // 播放页——没有音频时播放页会显示「重新生成」和语音选择。
             this.$router.push('/audio/' + this.book.id);
         },
         truncateText(value, maxLength = 14) {
@@ -2258,37 +2081,10 @@ export default {
                     "Content-Type": "application/x-www-form-urlencoded",
                 },
             }).then((rsp) => {
-                this.dialog_epub2audio = false;
                 if (rsp.err === "ok") {
                     this.$alert("success", rsp.msg, "#");
                 } else {
                     this.$alert("error", rsp.msg, "#");
-                }
-            });
-        },
-        generateAudio() {
-            // 保存选择的语音名称到localStorage
-            if (process.client) {
-                localStorage.setItem("last_used_voice_name", this.voice_name);
-            }
-
-            // Get the voice in voiceOptions according to the voice name
-            const selectedVoice = this.voice_options.find(v => v.voice_name === this.voice_name);
-            const voiceLang = (selectedVoice && selectedVoice.lang) || "zh-CN";
-
-            this.$backend(`/audio/${this.book.id}/conversion`, {
-                method: "POST",
-                body: JSON.stringify({voice: this.voice_name, language: voiceLang}),
-            }).then((rsp) => {
-                if (rsp.err === "ok") {
-                    this.epub2audio_processing = true;
-                    this.dialog_epub2audio = false;
-                    this.dialog_audiolist = false;
-                    this.startAudioProgressPolling();
-                    this.$alert("success", this.$t('book.audioGenerated'));
-                } else {
-                    this.stopAudioProgressPolling();
-                    this.$alert("error", rsp.msg);
                 }
             });
         },
@@ -2706,65 +2502,6 @@ export default {
                 this.deleting_book = false;
             });
         },
-        playSampleVoice(voiceOption) {
-            if (this.playing_sample === voiceOption.voice_name) {
-                // 如果正在播放相同的样本，则停止播放
-                this.stopCurrentAudio();
-                return;
-            }
-
-            // 停止当前播放的音频
-            this.stopCurrentAudio();
-
-            // 设置正在播放状态
-            this.playing_sample = voiceOption.voice_name;
-
-            // 创建音频对象并播放
-            const audioUrl = `/static/epub_to_audio/samples/${voiceOption.sample_file}`;
-            this.currentAudio = new Audio(audioUrl);
-
-            this.currentAudio.addEventListener('ended', () => {
-                this.playing_sample = null;
-                this.currentAudio = null;
-            });
-
-            this.currentAudio.addEventListener('error', () => {
-                this.playing_sample = null;
-                this.currentAudio = null;
-                this.$alert("error", this.$t('message.audioLoadFailed'));
-            });
-
-            this.currentAudio.play().catch(() => {
-                this.playing_sample = null;
-                this.currentAudio = null;
-                this.$alert("error", this.$t('message.audioPlayFailed'));
-            });
-        },
-        stopCurrentAudio() {
-            // §幂等§ 没有试听在播时直接返回，不改 playing_sample。
-            // 音列表弹窗每次开始播放都会 emit stop-sample-audio，若这里无条件
-            // `this.playing_sample = null`，Vue 会因数据「看似变化」重新渲染
-            // 整个详情页，进而触发子组件 props 更新 → 子组件 watch → 再 emit，
-            // 播放中表现为 timeupdate/canplay 互抢、currentTime 卡死不动。
-            if (!this.currentAudio && this.playing_sample === null) return;
-            if (this.currentAudio) {
-                this.currentAudio.pause();
-                this.currentAudio = null;
-            }
-            this.playing_sample = null;
-        },
-        startAudioProgressPolling() {
-            this.stopAudioProgressPolling(); // Clear any existing timer
-            this.progressTimer = setInterval(() => {
-                this.updateAudioProgress();
-            }, 10000); // Poll every 10 seconds
-        },
-        stopAudioProgressPolling() {
-            if (this.progressTimer) {
-                clearInterval(this.progressTimer);
-                this.progressTimer = null;
-            }
-        },
         // 启动目标格式的解析/转换任务（如已就绪则后端直接返回就绪状态）
         async startReadConversion(formatKey) {
             try {
@@ -2864,75 +2601,6 @@ export default {
             this.dialog_converting = false;
             this.converting_target_href = '';
             this.converting_format = '';
-        },
-        async updateAudioProgress() {
-            try {
-                const response = await this.$backend(`/book/${this.book.id}`);
-                if (response.audios) {
-                    this.audios = response.audios;
-
-                    // Stop polling if conversion is complete or failed
-                    if (this.audios.status !== this.AUDIO_STATUS.PROCESSING) {
-                        this.stopAudioProgressPolling();
-                    }
-                }
-            } catch (error) {
-                console.error('Failed to update audio progress:', error);
-                // Continue polling even if one request fails
-            }
-        },
-        async clearConversion() {
-            this.stopCurrentAudio();
-            // §二次确认§ 删除音频是物理删除 .audio/ 里的文件，无法恢复；
-            // 误点代价太大，必须明确确认一次。
-            const isDeleteConfirm = this.audios.status === this.AUDIO_STATUS.CONVERTED;
-            const confirmed = window.confirm(
-                isDeleteConfirm
-                    ? this.$t('book.clearAudioConfirm')
-                    : this.$t('book.cancelConversionConfirm')
-            );
-            if (!confirmed) return;
-            try {
-                let endpoint;
-                let successMessage;
-                let isDelete = false;
-
-                if (this.audios.status === this.AUDIO_STATUS.PROCESSING) {
-                    // Cancel the conversion
-                    endpoint = `/audio/${this.book.id}/cancel`;
-                    successMessage = this.$t('book.conversionCancelled');
-                } else if (this.audios.status === this.AUDIO_STATUS.CONVERTED) {
-                    // Delete the audio files
-                    endpoint = `/audio/${this.book.id}/delete`;
-                    successMessage = this.$t('book.audioFilesDeleted');
-                    isDelete = true;
-                } else {
-                    return; // No action needed for other statuses
-                }
-
-                const response = await this.$backend(endpoint, {
-                    method: "POST"
-                });
-
-                if (response.err === 'ok') {
-                    this.$alert('success', successMessage);
-                    // Stop any ongoing polling
-                    this.stopAudioProgressPolling();
-                    // Close the dialog
-                    this.dialog_audiolist = false;
-                    if (isDelete) {
-                        // Reset audio status
-                        this.audios = {count: 0, files: [], status: "unavailable"};
-                    } else {
-                        this.audios.status = this.AUDIO_STATUS.CONVERTED;
-                    }
-                } else {
-                    this.$alert("error", response.msg || this.$t('message.operationFailed'));
-                }
-            } catch (error) {
-                console.error('Failed to clear conversion:', error);
-                this.$alert("error", this.$t('message.operationFailed'));
-            }
         },
         uploadCover() {
           this.cover_error = '';

@@ -531,7 +531,7 @@ export default {
       deleteLoading: false,
       showDeleteDialog: false,
 
-      // 生成 / 取消生成相关（原详情页 AudioListDialog 的能力，弹窗废弃后搬来这里）
+      // 生成 / 取消生成相关（原详情页弹窗的能力，弹窗下线后收归这里，#C11）
       hasEBooks: false,
       audioProgressData: null,
       showCancelDialog: false,
@@ -1397,10 +1397,12 @@ export default {
       return `audio_progress_${userId}_${this.bookId}`;
     },
 
-    // §每集记忆键§ 与详情页弹窗（AudioListDialog._keyOf）完全同算法同格式：
-    // audiobook_preview_<用户>_<书>_<url哈希>，值 { t: 相对该文件的秒 }。
-    // url 带时效签名也没关系——同一次会话内 url 稳定，弹窗与本页读到的
-    // 是同一个 key；跨会话签名变了会导致旧记忆失效，这与弹窗的现状一致。
+    // §每集记忆键§ audiobook_preview_<用户>_<书>_<哈希>，值 { t: 绝对秒 }。
+    // 前缀沿用弹窗时代的名字：弹窗已下线（见 docs/上游跟进清单.md #C11），
+    // 但用户浏览器里已经存着这个前缀的历史进度，改前缀等于把所有人的记忆清零，
+    // 所以名字保留、语义统一为「相对整份音频文件的秒」。
+    // url 带时效签名也没关系——同一次会话内 url 稳定；跨会话签名变了会导致
+    // 旧记忆失效，兜底由服务端 audio_playback（整本一条）负责。
     _trackKeyOf(index) {
       const item = this.audioFiles[index] || {};
       // §必须带上该集的起始偏移§ m4b 这类「一个文件多章节」的书，所有章节
@@ -1812,7 +1814,7 @@ export default {
     },
 
     // ===== 取消生成 / 重新生成 =====
-    // 详情页那个 AudioListDialog 已整体下线（它与播放页各存一套进度、口径还对不上，
+    // 详情页那个有声书弹窗已整体下线（它与播放页各存一套进度、口径还对不上，
     // 反复修都在互相打架）。生成、取消、删除三种操作统一收到播放页这一处。
     openCancelDialog() {
       this.showCancelDialog = true;

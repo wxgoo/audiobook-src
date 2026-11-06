@@ -154,6 +154,42 @@ socket 所以能恢复。
    仍卡就停手打日志）——即使将来再出现其它成因的环境性卡死，也会在 6 秒内
    自愈而不是永远卡住
 
+### 八、第四轮（同版本补充）：有声书弹窗彻底下线，双播放器架构收口
+
+> 用户实测：#C8~#C10 修完后，两侧进度仍能看出差异（播放页 02:05 vs 弹窗 0:24）。
+> 结论是**结构性问题**，不是某字段没对齐——用户拍板「彻底取消弹窗」。
+
+**为什么修不好**：详情页弹窗与播放页是两套完全独立的实现：两个 `<audio>` 元素、
+两套 `timeupdate` 处理、两套 key 计算与取整、两套「距结尾几秒算听完」的判定，
+m4b 章节偏移还要各算一遍。任何一侧改一点另一侧就偏一点，逐点对齐没有终点。
+
+**处置**：删除 `app/src/components/AudioListDialog.vue`，能力全部收归播放页。
+
+| 原弹窗能力 | 现在位置 |
+|---|---|
+| 播放 / 续播 | 播放页（每集独立记忆，见 `docs/上游跟进清单.md` #C9/#C10） |
+| 删除全部音频 | 播放页「删除当前有声书」 |
+| 取消正在进行的转换 | 播放页「取消生成」（`processing` 时，带百分比） |
+| 重新生成（含 13 个音色） | 播放页「重新生成有声书」（`unavailable`/`failed` 且有 EPUB/TXT 时） |
+
+**配套改动**：
+
+- 详情页入口收成一个 `switchToAudioPlayer()`：不再按 `audios.status` 分流到不同
+  对话框，一律 `$router.push('/audio/<id>')`；原来那个只负责弹语音框的
+  `switchAudioDialog()` 随之合并删除
+- 详情页清掉整条死链路：语音选择对话框模板、`voice_options` computed、
+  `generateAudio` / `clearConversion` / `playSampleVoice` / `stopCurrentAudio` /
+  `startAudioProgressPolling` / `stopAudioProgressPolling` / `updateAudioProgress`，
+  以及 `audios` 的 watch 和 `voice_name` / `playing_sample` / `currentAudio` /
+  `progressTimer` / `epub2audio_processing` / `loaded` 等孤儿 state
+- `AudioDetail.get()` 补返回 `status`（`converted`/`processing`/`failed`）。该接口
+  此前**根本不返回 status**，前端只能靠 `audios.length` 猜，按钮判断不准
+- 播放页 `processing` 时每 5 秒轮询 `/audio/<id>/conversion`，转完自动刷新列表
+- 两个新按钮仅管理员可见（后端 `/conversion` 与 `/cancel` 都带 `@is_admin`）
+- m4b 进度串台：key 参与哈希的字段补 `start_time` + `filename`，进度统一存绝对秒，
+  恢复时按章节区间 `[start+5, end-3]` 判定
+- 三语 locale 清掉随弹窗一起失效的 16 个键
+
 ---
 
 ## 4.6.0-18
