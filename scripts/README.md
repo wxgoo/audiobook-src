@@ -14,6 +14,7 @@
 | [`protect-custom.sh`](protect-custom.sh) | 跟随上游合并前后，保护 BOOK_NAV 与三语文案 | 不改运行环境，只读写源码文件 |
 | [`upgrade-upstream.sh`](upgrade-upstream.sh) | 上游 mybooks 发了新版，要跟 | 会。全链路，最后调 `upgrade.sh` 上线 |
 | [`watch-upstream.py`](watch-upstream.py) | 日常盯上游改动，**不等发版**。`--tags` 看有没有新版，`--between` 看两版之间改了什么 | 只读，只拉取上游仓库 |
+| [`upstream/patch_tool.py`](upstream/patch_tool.py) | **把本地改动按 A/B/C/D 主题导出成上游补丁**：`export A --upstream <上游检出> --out <目录>`；`status` 检查上游是否已修。主题说明见 [docs/上游跟进](../docs/上游跟进/README.md) | 只读，写 patch 文件 |
 | [`hotfix.sh`](hotfix.sh) | **只改 Python 时用它，省掉十几分钟的镜像重建**。覆盖容器内 `webserver/` 并自动语法预检、可回滚。文件来源是**部署包**，不是源码目录（见下表） | 不动数据，只换代码文件 |
 | [`migrate-audio-dirs.py`](migrate-audio-dirs.py) | 有声书音频从 `audios/<id>/` 搬进书目录 `.audio/`。默认预演，`--apply` 才动 | **会**。搬文件不可逆，先看清单再决定 |
 | [`test-audio-dirs.py`](test-audio-dirs.py) | 音频路径逻辑自测（假 cache + 临时目录，47 项） | 不改数据，只在 /tmp 里折腾 |
