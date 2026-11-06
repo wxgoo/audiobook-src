@@ -675,7 +675,8 @@ export default {
       }
 
       if (index !== this.currentTrackIndex) {
-        // 保存当前播放位置
+        // 保存当前播放位置：此刻元素与 index 仍指向旧集，先 flush 再切
+        this.flushCurrentTrackProgress();
         this.savePlaybackPosition();
 
         this.loadTrack(index);
@@ -756,6 +757,7 @@ export default {
     previousTrack() {
       if (this.currentTrackIndex > 0) {
         // 保存当前播放位置
+        this.flushCurrentTrackProgress();
         this.savePlaybackPosition();
 
         const prev = this.currentTrackIndex - 1;
@@ -769,7 +771,11 @@ export default {
 
     nextTrack(forcePlay = false) {
       if (this.currentTrackIndex < this.audioFiles.length - 1) {
-        // 保存当前播放位置
+        // §切集前先落盘旧集§ 只调一次、且在 index 改变之前。旧代码在
+        // loadTrack 之后又保存一次：那时 index 已是新集、元素还是旧集数据，
+        // 于是「旧集的秒数」被写进「新集的 key」——表现为上一集记忆消失、
+        // 新集一打开就是旧集的位置（或反过来从头）。
+        this.flushCurrentTrackProgress();
         this.savePlaybackPosition();
 
         const next = this.currentTrackIndex + 1;
@@ -880,8 +886,10 @@ export default {
     },
 
     onTrackEnded() {
-      // 保存播放位置
-      this.savePlaybackPosition();
+      // §播完这一集：只清它自己的记忆§ 这里不调 savePlaybackPosition()——
+      // 它会把「已到结尾」写进共享键，随后 nextTrack 又按新 index 覆盖，
+      // 产生跨集污染。直接按元素真实集号清掉每集 key 即可。
+      this._clearTrackMemoryByElement();
 
       // 检查定时器
       if (this.sleepTimer && this.sleepTimer.type === 'current') {
@@ -1269,8 +1277,15 @@ export default {
       if (!process.client || !this.bookId) return;
 
       try {
+        const idx = this.currentTrackIndex;
+        // §以元素真实加载的文件为准§ 自动连播时 loadTrack 在切换中途
+        // （index 已切到下一集、元素里还是上一集的数据），此时按 idx 写会把
+        // 上一集的秒数记到下一集头上。用元素 src 反查真实集号，查不到才回退。
+        const realIdx = this._indexOfSrc(this.$refs.audioPlayer);
+        const writeIdx = realIdx >= 0 ? realIdx : idx;
+
         const progressData = {
-          trackIndex: this.currentTrackIndex,
+          trackIndex: writeIdx,
           currentTime: this.currentTime,
           timestamp: Date.now(),
           bookTitle: this.book.title || '',
@@ -1283,22 +1298,23 @@ export default {
         // §每集记忆§ 与弹窗同一套 key。注意 this.currentTime 是相对该文件
         // 的秒（不含 start_time 偏移），与弹窗存的语义一致。听完（差 3 秒内）
         // 清掉——下次从头听；不足 5 秒视为「没真听」，不记。
+        // 切集途中（元素文件与 writeIdx 不符）不写，避免污染新集。
         const d = this.duration;
         const t = this.currentTime || 0;
-        if (d && isFinite(d)) {
-          const key = this._trackKeyOf(this.currentTrackIndex);
+        if (d && isFinite(d) && realIdx === writeIdx) {
+          const key = this._trackKeyOf(writeIdx);
           try {
             if (t >= d - 3) {
               localStorage.removeItem(key);
-              if (this.trackResumeMap[this.currentTrackIndex] !== undefined) {
+              if (this.trackResumeMap[writeIdx] !== undefined) {
                 const map = { ...this.trackResumeMap };
-                delete map[this.currentTrackIndex];
+                delete map[writeIdx];
                 this.trackResumeMap = map;
               }
             } else if (t > 5) {
               localStorage.setItem(key, JSON.stringify({ t: t }));
-              if (this.trackResumeMap[this.currentTrackIndex] !== t) {
-                this.trackResumeMap = { ...this.trackResumeMap, [this.currentTrackIndex]: t };
+              if (this.trackResumeMap[writeIdx] !== t) {
+                this.trackResumeMap = { ...this.trackResumeMap, [writeIdx]: t };
               }
             }
           } catch (e) { /* 隐私模式写不进去，忽略 */ }
@@ -1309,6 +1325,61 @@ export default {
       } catch (error) {
         console.error('Error saving playback position:', error);
       }
+    },
+
+    // 按元素的 src 反查集号（-1 表示查不到/未加载）
+    _indexOfSrc(player) {
+      const el = player || this.$refs.audioPlayer;
+      if (!el) return -1;
+      const src = el.getAttribute('src') || el.src || '';
+      if (!src) return -1;
+      const clean = (u) => String(u || '').split('?')[0].replace(/^https?:\/\/[^/]+/, '');
+      const target = clean(src);
+      if (!target) return -1;
+      for (let i = 0; i < this.audioFiles.length; i++) {
+        if (clean(this.audioFiles[i].url) === target) return i;
+      }
+      return -1;
+    },
+
+    // 按元素真实集号清掉「每集记忆」（听完时用）
+    _clearTrackMemoryByElement() {
+      const idx = this._indexOfSrc(this.$refs.audioPlayer);
+      if (idx < 0) return;
+      try {
+        localStorage.removeItem(this._trackKeyOf(idx));
+      } catch (e) { /* 忽略 */ }
+      if (this.trackResumeMap[idx] !== undefined) {
+        const map = { ...this.trackResumeMap };
+        delete map[idx];
+        this.trackResumeMap = map;
+      }
+    },
+
+    // 切集前：把「正在播的那一集」的进度落盘（此时元素与 index 仍一致）
+    flushCurrentTrackProgress() {
+      const el = this.$refs.audioPlayer;
+      if (!el || !el.getAttribute('src')) return;
+      const realIdx = this._indexOfSrc(el);
+      if (realIdx < 0) return;
+      const d = el.duration;
+      const t = el.currentTime || 0;
+      if (!d || !isFinite(d)) return;
+      try {
+        const key = this._trackKeyOf(realIdx);
+        if (t >= d - 3) {
+          localStorage.removeItem(key);
+          if (this.trackResumeMap[realIdx] !== undefined) {
+            const map = { ...this.trackResumeMap };
+            delete map[realIdx];
+            this.trackResumeMap = map;
+          }
+        } else if (t > 5) {
+          const rel = Math.max(0, t - ((this.audioFiles[realIdx] || {}).start_time || 0));
+          localStorage.setItem(key, JSON.stringify({ t: rel }));
+          this.trackResumeMap = { ...this.trackResumeMap, [realIdx]: rel };
+        }
+      } catch (e) { /* 忽略 */ }
     },
 
     // 返回 true 表示成功把播放器指到了上次的位置（调用方不要再 loadTrack(0)）
