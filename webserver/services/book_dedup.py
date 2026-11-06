@@ -743,6 +743,16 @@ class DuplicateBookMerger(object):
         except Exception as err:
             logging.error("[DEDUP] 搬音频 %s -> %s 失败: %s", from_id, to_id, err)
             raise
+        # 事件驱动缓存：搬完就把「有音频」标志挪过去（build.20 复审补）。
+        # 原来要等 6 小时兜底扫描：期间保留书不进有声书列表、被合并书还挂在列表里。
+        if moved:
+            try:
+                from webserver.handlers.audio import AudioBooksCache
+                AudioBooksCache.mark_has_audio(to_id)
+                AudioBooksCache.mark_no_audio(from_id)
+            except Exception:
+                logging.warning("[DEDUP] 更新音频缓存失败: %s -> %s", from_id, to_id,
+                                exc_info=True)
         return moved, skipped
 
     def _repoint_records(self, from_id, to_id):
