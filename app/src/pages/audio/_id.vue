@@ -1250,7 +1250,15 @@ export default {
     // 是同一个 key；跨会话签名变了会导致旧记忆失效，这与弹窗的现状一致。
     _trackKeyOf(index) {
       const item = this.audioFiles[index] || {};
-      const s = String(item.url || item.filename || index);
+      // §必须带上该集的起始偏移§ m4b 这类「一个文件多章节」的书，所有章节
+      // 的 url 完全相同、只是 start_time 不同。只按 url 算哈希会让全书共用
+      // 一个 key：各集互相覆盖，记忆看起来永远错乱。把 start_time 与章节名
+      // 一起参与哈希，才是唯一的一集一 key。
+      const s = [
+        String(item.url || item.filename || index),
+        String(item.start_time === undefined ? '' : item.start_time),
+        String(item.filename || ''),
+      ].join('|');
       let h = 0;
       for (let i = 0; i < s.length; i++) {
         h = (h * 31 + s.charCodeAt(i)) | 0;

@@ -297,8 +297,15 @@ export default {
         _keyOf(index) {
             const item = (this.audios.audios || [])[index];
             if (!this.bookId || !item) return null;
-            // 用 url 生成短哈希，避免把整条路径塞进 key
-            const s = String(item.url || item.filename || index);
+            // §必须带上该集的起始偏移§ m4b 这类「一个文件多章节」的书，所有章节
+            // 的 url 完全相同、只有 start_time 不同。只按 url 算哈希会让全书共用
+            // 一个 key，各集互相覆盖 —— 表观现象就是「两边时间对不上、跳来跳去」。
+            // start_time + 章节名一起参与哈希（与播放页 _id.vue 同算法）。
+            const s = [
+                String(item.url || item.filename || index),
+                String(item.start_time === undefined ? '' : item.start_time),
+                String(item.filename || ''),
+            ].join('|');
             let h = 0;
             for (let i = 0; i < s.length; i++) {
                 h = (h * 31 + s.charCodeAt(i)) | 0;
@@ -476,6 +483,12 @@ export default {
             // 新一集从 0 开始算周期保存，第一拍不必等满 5 秒
             this._lastSaveAt = 0;
 
+            // §章节偏移（本集在文件内的起点/终点）§ m4b 这类「一个文件多章节」的
+            // 书，所有章节 url 相同，仅 start_time/end_time 不同。界面上的时间、
+            // 进度条、续播定位全部要基于这个偏移换算，否则会跨章错位。
+            const chapterStart = (audioItem && audioItem.start_time) || 0;
+            const chapterEnd = (audioItem && audioItem.end_time) || 0;
+
             const el = new Audio();
             this._el = el;
             el.preload = 'auto';
@@ -494,7 +507,13 @@ export default {
                 if (!alive() || ready) return;
                 ready = true;
                 this.audio_loading = false;
-                this.duration = el.duration || 0;
+                // §展示的时长取章节长度§ 多章节单一文件（m4b）时 el.duration
+                // 是整个文件的长度，直接显示会让「00:22 / 22:30」这类进度条
+                // 与章节内容对不上（第 3 章显示出几小时的时长）。
+                this.duration = (audioItem && audioItem.start_time !== undefined
+                    && audioItem.end_time !== undefined)
+                    ? Math.max(0, audioItem.end_time - audioItem.start_time)
+                    : (el.duration || 0);
 
                 // §续播位置在这里落地，不等 canplay§（4.6.0-19 r7）
                 // 旧实现把 seek 拖到 canplay：先从头开播，播出声之后再跳到
@@ -507,7 +526,14 @@ export default {
                 // 它 seek 完又用 timer/事件把 currentTime 改回去，两边互相打断。
                 // 当前实现每次播放都新建独立元素，不存在这种干扰。
                 const saved = this.resumeMap[index];
-                if (saved && el.duration && saved >= 5 && saved < el.duration - 3) {
+                // §章节偏移§ m4b 这类「一个文件多章节」的书，每集的 start_time
+                // 就是它在文件里的起点；记忆里存的是文件内绝对秒，直接赋给
+                // currentTime 即可落到该章节内。这里必须读 item.start_time，
+                // 否则会把「第 3 章的第 20 秒」错当成「文件第 20 秒」——听感
+                // 就是每次打开都跳到前面（或跳到上一章）。
+                const lo = chapterStart + 5;
+                const hi = (chapterEnd || el.duration || 0) - 3;
+                if (saved && el.duration && saved >= lo && saved < hi) {
                     const pos = Math.floor(saved);   // 对齐整秒，避免 AAC 从帧中间解码爆音
                     try {
                         el.currentTime = pos;
@@ -519,6 +545,15 @@ export default {
                     pendingSeek = pos;
                     this.currentTime = pos;
                     this.sliderPct = (pos / el.duration) * 100;
+                } else if (!saved && chapterStart > 0) {
+                    // 没记忆、但这是「文件中间的某章」：必须从章节起点开始，
+                    // 否则会从文件 0:00 播（听起来就是「跳到第一章」）。
+                    try {
+                        el.currentTime = Math.floor(chapterStart);
+                    } catch (e) { /* 忽略 */ }
+                    pendingSeek = Math.floor(chapterStart);
+                    this.currentTime = chapterStart;
+                    this.sliderPct = (chapterStart / el.duration) * 100;
                 }
 
                 this._safePlay(index);
@@ -575,12 +610,15 @@ export default {
 
             el.addEventListener('timeupdate', () => {
                 if (!alive()) return;
-                const t = el.currentTime || 0;
+                const abs = el.currentTime || 0;
                 const d = el.duration || 0;
+                // §按章节显示§ 多章节单一文件时，元素时间是文件内的绝对位置，
+                // 界面要显示「本章第几秒」。chapterStart 见下方常量声明。
+                const t = Math.max(0, abs - chapterStart);
                 this.currentTime = t;
-                if (d && d !== this.duration) this.duration = d;
-                if (!this.seekDragging && d) {
-                    this.sliderPct = (t / d) * 100;
+                // 时长固定用章节长度，不要被 el.duration（整文件长度）覆盖
+                if (!this.seekDragging && this.duration > 0) {
+                    this.sliderPct = Math.min(100, (t / this.duration) * 100);
                 }
                 // §周期落盘§（r9）以前进度只在「关弹窗 / 暂停 / 切章 / 离开页面」
                 // 时才保存，正在播的时候什么都不写。于是用户在弹窗里听了几分钟，
