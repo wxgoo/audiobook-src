@@ -162,6 +162,34 @@ def test_react_graph_builds_from_an_mcp_tool_definition(monkeypatch):
     assert callable(graph.astream_events)
 
 
+def test_mcp_token_is_sent_as_bearer_header_not_in_url():
+    client = MCPStreamClient("http://localhost/mcp", "secret-token")
+
+    assert client.base_url == "http://localhost/mcp"
+    assert "secret-token" not in client.base_url
+    assert client.auth_headers == {"Authorization": "Bearer secret-token"}
+
+
+def test_mcp_request_log_redacts_credentials():
+    from webserver.handlers.mcp import redact
+
+    redacted = redact({
+        "method": "tools/call",
+        "params": {
+            "token": "abc",
+            "password": "p",
+            "nested": {"api_key": "k", "name": "keep-me"},
+        },
+        "list": [{"authorization": "Bearer x"}],
+    })
+
+    assert redacted["params"]["token"] == "***"
+    assert redacted["params"]["password"] == "***"
+    assert redacted["params"]["nested"] == {"api_key": "***", "name": "keep-me"}
+    assert redacted["list"] == [{"authorization": "***"}]
+    assert redacted["method"] == "tools/call"
+
+
 def test_mcp_tool_listing_failure_is_reported_instead_of_using_fake_tools():
     client = MCPStreamClient("http://localhost/mcp", "")
     client._send_request = AsyncMock(return_value={"error": {"message": "not available"}})

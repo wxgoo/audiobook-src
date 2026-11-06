@@ -94,6 +94,9 @@ settings = {
     "AI_ENABLED": False,
     "AI_MODEL": "deepseek-chat",
     "AI_MCP_TOKEN": "",
+    # MCP 鉴权默认只接受 Authorization: Bearer 头；旧客户端若仍把 token 放 URL，
+    # 需显式打开此项（不推荐，URL 会进 access log）
+    "ALLOW_MCP_TOKEN_IN_URL": False,
     "AI_DEEPSEEK_API_KEY": "",
     "AI_API_URL": "https://api.deepseek.com",
     "AI_ALLOW_SET_CATEGORY": True,

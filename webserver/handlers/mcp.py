@@ -16,6 +16,24 @@ from webserver.version import VERSION
 
 CONF = loader.get_settings()
 
+# 日志脱敏：JSON-RPC 请求体里可能出现 token / password / cookie 等字段
+SENSITIVE_FIELDS = {
+    "token", "access_token", "refresh_token", "password", "api_key",
+    "apikey", "authorization", "cookie", "secret", "ai_mcp_token",
+}
+
+
+def redact(value):
+    """递归脱敏，用于日志输出。"""
+    if isinstance(value, dict):
+        return {
+            k: ("***" if str(k).lower() in SENSITIVE_FIELDS else redact(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [redact(v) for v in value]
+    return value
+
 
 class MCPHandler(ListHandler):
     mcp_service_single = None
@@ -59,12 +77,34 @@ class MCPHandler(ListHandler):
         }
         self.write(response)
 
+    def _bearer_token(self):
+        """从 Authorization: Bearer 头取 token（推荐方式，不会进 access log）。"""
+        header = self.request.headers.get("Authorization", "")
+        if header[:7].lower() == "bearer ":
+            return header[7:].strip() or None
+        return None
+
     @js
     def post(self):
         """Handle MCP over HTTP streaming."""
         logging.info("New HTTP stream connection from MCP client")
-        # get token parameter from query string
-        token = self.get_argument("token", None)
+        # 优先 Authorization 头；URL query 只在显式打开兼容开关时接受
+        token = self._bearer_token()
+        if not token:
+            query_token = self.get_argument("token", None)
+            if query_token:
+                if CONF.get("ALLOW_MCP_TOKEN_IN_URL", False):
+                    logging.warning(
+                        "MCP token 通过 URL 传入已弃用，请改用 Authorization: Bearer 头")
+                    token = query_token
+                else:
+                    logging.warning(
+                        "拒绝 URL 携带 MCP token 的请求（已默认关闭，"
+                        "如需兼容请开启 ALLOW_MCP_TOKEN_IN_URL）")
+                    self.set_status(401)
+                    return {"err": "auth",
+                            "msg": "MCP token must be sent via Authorization: Bearer header"}
+
         mcp_service = self.create_mcp_service(self, token=token)
         try:
             # Read request body
@@ -74,7 +114,7 @@ class MCPHandler(ListHandler):
                 return {"err": "params", "msg": _("No request body")}
 
             request_data = json.loads(body)
-            logging.info(f"HTTP stream request: {request_data}")
+            logging.info("HTTP stream request: %s", redact(request_data))
 
             response = mcp_service.handle_request(request_data)
             return response
