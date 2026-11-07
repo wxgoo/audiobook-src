@@ -134,7 +134,7 @@
             </v-row>
         </v-card-actions>
         <v-progress-linear
-            v-if="importing || batchAdding || audioImporting || bulkDeleting"
+            v-if="importing || audioImporting || bulkDeleting"
             :value="progressPercent"
             height="24"
             color="green"
@@ -286,10 +286,7 @@ export default {
         total: 0,
         loading: false,
         importing: false,
-        batchAdding: false,
         audioImporting: false,
-        batchAddDialog: false,
-        csvFile: null,
         dirDialog: false,
         dirsLoading: false,
         availableDirs: [],
@@ -382,7 +379,6 @@ export default {
         },
         progressPrefix() {
             if (this.importing) return this.$t('imports.progressImporting');
-            if (this.batchAdding) return this.$t('imports.progressBatchAdding');
             if (this.audioImporting) return this.$t('imports.progressAudioImporting');
             if (this.bulkDeleting) return this.$t('imports.progressBulkDeleting');
             return "";
@@ -467,7 +463,7 @@ export default {
                         this.applyBulkVisualSelection();
                     }
                 }).finally(() => {
-                    if (!this.importing && !this.audioImporting && !this.batchAdding && !this.bulkDeleting) {
+                    if (!this.importing && !this.audioImporting && !this.bulkDeleting) {
                         this.loading = false;
                     }
                 });
@@ -775,35 +771,6 @@ export default {
                     }
                 });
 
-            // Check batch add status
-            this.$backend("/admin/batch_add/status")
-                .then((rsp) => {
-                    if (rsp.err !== "ok") {
-                        return;
-                    }
-
-                    if (rsp.batch_adding) {
-                        this.batchAdding = true;
-                        this.loading = true;
-                        this.loopCheckStatus("/admin/batch_add/status", (rsp) => {
-                            this.count_total = rsp.status.total || 0;
-                            this.count_processed = rsp.status.processed || 0;
-                            this.count_done = rsp.summary.done;
-                            this.count_todo = rsp.summary.todo;
-                            this.batchAdding = rsp.batch_adding || false;
-
-                            if (!rsp.batch_adding) {
-                                this.loading = false;
-                                return false;
-                            }
-                            this.loading = true;
-                            return true;
-                        });
-                    } else {
-                        this.batchAdding = false;
-                    }
-                });
-
             // Check bulk delete status (刷新后恢复轮询)
             this.$backend("/admin/import/bulk_delete/status")
                 .then((rsp) => {
@@ -874,10 +841,6 @@ export default {
                         return true;
                     });
                 });
-        },
-        showBatchAddDialog() {
-            // 实体书批量导入已合并到「实体书」页（/printbooks）的「导入实体书」；
-            // 保留空方法避免历史引用报错（build.22 入口合并）。
         },
     },
 };
