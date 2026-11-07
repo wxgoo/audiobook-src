@@ -69,18 +69,8 @@
                         <v-icon>mdi-headphones</v-icon>
                         <span v-if="!$vuetify.breakpoint.xs">{{ $t('imports.import_audiobooks') }}</span>
                     </v-btn>
-                    <v-btn
-                        v-if="allowPhysicalBooks"
-                        :disabled="loading || bulkDeleting"
-                        :outlined="$vuetify.breakpoint.xs"
-                        color="secondary"
-                        @click="showBatchAddDialog"
-                        class="flex-shrink-0"
-                        :icon="$vuetify.breakpoint.xs"
-                    >
-                        <v-icon>mdi-book-plus-multiple</v-icon>
-                        <span v-if="!$vuetify.breakpoint.xs">{{ $t('imports.batch_add_books') }}</span>
-                    </v-btn>
+                    <!-- 实体书批量导入已合并到「实体书」页（/printbooks）的「导入实体书」，
+                         本页不再保留重复入口（build.22 入口合并）。 -->
                     <v-btn
                         v-if="importing || bulkDeleting"
                         :outlined="$vuetify.breakpoint.xs"
@@ -228,35 +218,7 @@
             </v-alert>
         </v-card-text>
 
-        <!-- Batch Add Dialog -->
-        <AppDialog
-            v-model="batchAddDialog"
-            :persistent="false"
-            type="action"
-            :title="$t('imports.batch_add_dialog_title')"
-            max-width="600px"
-            :dismiss-disabled="batchAdding"
-            confirm-icon="mdi-upload"
-            :confirm-text="batchAdding ? $t('imports.batch_add_processing') : $t('imports.batch_add_start')"
-            :confirm-loading="batchAdding"
-            :confirm-disabled="!csvFile || batchAdding"
-            @confirm="startBatchAdd"
-        >
-            <p>{{ $t('imports.batch_add_dialog_description') }}</p>
-            <ul>
-                <li>{{ $t('imports.batch_add_dialog_rule1') }}</li>
-                <li>{{ $t('imports.batch_add_dialog_rule2') }}</li>
-                <li>{{ $t('imports.batch_add_dialog_rule3') }}</li>
-                <li>{{ $t('imports.batch_add_dialog_rule4') }}</li>
-            </ul>
-            <v-file-input
-                v-model="csvFile"
-                :label="$t('imports.batch_add_select_file')"
-                accept=".csv"
-                prepend-icon="mdi-file-delimited"
-                :disabled="batchAdding"
-            ></v-file-input>
-        </AppDialog>
+        <!-- Batch Add Dialog：实体书批量导入已合并到「实体书」页，本弹窗下线（build.22） -->
 
         <!-- Import by dirs dialog -->
         <AppDialog
@@ -914,61 +876,8 @@ export default {
                 });
         },
         showBatchAddDialog() {
-            this.batchAddDialog = true;
-            this.csvFile = null;
-        },
-        startBatchAdd() {
-            if (!this.csvFile) {
-                this.$alert("error", this.$t('imports.batch_add_no_file'));
-                return;
-            }
-
-            this.batchAdding = true;
-            this.loading = true;
-
-            // 立即创建 FormData，避免文件引用问题
-            const formData = new FormData();
-            // 确保文件名被正确传递
-            formData.append('csv_file', this.csvFile, this.csvFile.name);
-            // 不要设置 Content-Type，让浏览器自动设置 multipart/form-data 边界
-            this.$backend("/admin/batch_add/run", {
-                method: "POST",
-                body: formData,
-            })
-                .then((rsp) => {
-                    if (rsp.err !== "ok") {
-                        this.$alert("error", rsp.msg);
-                        this.batchAdding = false;
-                        this.loading = false;
-                        return;
-                    }
-
-                    this.batchAddDialog = false;
-                    this.csvFile = null;
-
-                    // 开始轮询状态
-                    this.loopCheckStatus("/admin/batch_add/status", (rsp) => {
-                        this.count_total = rsp.status.total || 0;
-                        this.count_processed = rsp.status.processed || 0;
-                        this.count_done = rsp.summary.done;
-                        this.count_todo = rsp.summary.todo;
-                        this.batchAdding = rsp.batch_adding || false;
-
-                        if (!rsp.batch_adding) {
-                            this.loading = false;
-                            this.getDataFromApi();
-                            return false;
-                        }
-                        this.loading = true;
-                        return true;
-                    });
-                })
-                .catch((err) => {
-                    console.error("Batch add error:", err);
-                    this.$alert("error", err.message || "上传失败");
-                    this.batchAdding = false;
-                    this.loading = false;
-                });
+            // 实体书批量导入已合并到「实体书」页（/printbooks）的「导入实体书」；
+            // 保留空方法避免历史引用报错（build.22 入口合并）。
         },
     },
 };

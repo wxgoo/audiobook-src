@@ -2518,6 +2518,9 @@ class BookDownload(BaseHandler, web.StaticFileHandler):
 
     def prepare(self):
         BaseHandler.prepare(self)
+        # OPDS 服务关闭后，带 from=opds 的旧直链也一并失效，避免绕过开关继续下载（上游 c0245c78）。
+        if self.is_opds and not CONF.get("ENABLE_OPDS_SERVICE", True):
+            raise web.HTTPError(404, reason="OPDS service is not enabled")
         bid = self.requested_book_id()
         if not self.current_user and not BookAccessService.guest_download_allowed(self, bid):
             self.login_by_download_sign()

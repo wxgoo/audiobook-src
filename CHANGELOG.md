@@ -60,7 +60,46 @@
 
 ---
 
-## 4.6.0-build.21（当前）
+## 4.6.0-build.22（当前）
+
+> 相对 build.21 的增量：**交付前换行修复（CRLF→LF 全包 3644 文件）、dist 语言包补 4 键
+> （作者归一化指引 openClean、设置页归堆标签）、上游 develop（至 fdf982a6）按主题移植 6 组**。
+
+1. **换行纪律**：全包文本 CRLF→LF（修复 build.21 交付包容器 `start.sh` shebang 带 `\r`
+   无法启动的交付事故）；新增 `.gitattributes` 强制 LF；`pack.sh --check` 增加换行检查
+   与 dist/src 同步抽查（`openClean` 键）。
+2. **EPUB 修复页 i18n 修复**（上游 `d7dd8af1`）：扁平点键→嵌套结构（`op.*`/`stage.*`），
+   修复整页语言失效；检测结果/阶段文案分隔符不再硬编码；检测完成后进度条复位；
+   后端新书上标 `（精修）` 走 i18n。
+3. **OPDS 两处**（上游 `8ccab741`/`c0245c78` 适配）：必须登录时 `from=opds` 下载直链回
+   401 挑战（原 200 JSON 会被阅读器存成假书）；`ENABLE_OPDS_SERVICE` 关闭后 OPDS 直链
+   一并 404。
+4. **「即将读完」三项修复**（上游 `606a5031`/`26509dd7`/`2b231705`）：手动标记读完的书
+   不再占名额；排除用相关 NOT EXISTS（避免全表扫已读集合）；明细查询复查堵并发窗口。
+5. **依赖升级**：tornado 6.5.9→6.6、social-auth-core 5.0.0→6.2.0（需重建镜像生效）。
+6. **设置页**：新增「作者重名 / 别名归一」指路条目（三语）；dist 语言包补
+   `authorNorm.openClean` 与设置页归堆标签（作者归一化功能本体 build.21 已有）。
+7. **源码包内层缺陷修复**：`audiobook-nas-release.tar.gz` 的 overlay MANIFEST 有 27 行
+   引用了内层未携带的文件（CHANGELOG.md、Dockerfile、app/locales/*、settings.vue 等，
+   它们只在外层 overlay/files 里）——无 git 覆盖部署会漏掉这 27 个文件。本轮已从外层
+   overlay 补齐进内层，内层三份清单（SHA256SUMS / overlay 两件）随之全量重生成；
+   overlay 现在与清单逐行对账 0 差异。
+8. **作者归一化指路升级**（用户反馈"一直说作者清理很突兀"）：设置页指路条目改为
+   **可点击直达**（subtitle 字段新增 `to` 支持）；归一化页内链接文案标明
+   「工具箱 → 作者清理」；设置页 tips 说明两个入口的分工。
+9. **反馈弹窗内容管理员可改**：新增 `FEEDBACK_QR_URL` / `FEEDBACK_NOTICE` /
+   `FEEDBACK_GITHUB_URL` 三个设置项（站点信息组），siteinfo 下发，反馈弹窗读配置；
+   默认值保持上游行为，管理员可换自己的二维码/文案，仓库链接填 `-` 可隐藏按钮
+   （不再指向上游）。
+10. **实体书导入入口合并**：导入图书页的「批量导入实体书」按钮与弹窗下线
+    （后端 `/admin/batch_add/run` 接口保留），实体书导入统一走「实体书」页的
+    「导入实体书」（模板下载 + 逐行错误反馈）。
+
+版本锁九处载体已由 `check-version-lock.py --set` 同步升号；CHANGELOG 本条为人工补写。
+
+---
+
+## 4.6.0-build.21
 
 > 相对 build.20 的增量：**1 个性能修复、1 个测试修复、2 个缓存标记缺口、
 > 备份脚本 3 个 fail-closed 缺口 + 版本锁七处载体升号**。共 6 个提交

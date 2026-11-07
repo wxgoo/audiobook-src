@@ -60,6 +60,28 @@ if [ "${1:-}" = "--check" ]; then
             [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
         done
 
+        # 换行纪律（fix2 事故防复发，2026-11-07）：容器/宿主要执行的文本必须 LF。
+        # CRLF 进镜像后 start.sh 的 shebang 变成 "#!/bin/sh\r" → exec 报 no such file。
+        # POSIX sh 没有 $'\r'，用 printf 造。
+        CR=$(printf '\r')
+        crhit=$(grep -rlI "$CR" "$D/docker" "$D/conf" "$D/scripts" \
+                      "$D/Dockerfile" "$D/Dockerfile.base" "$D/docker-compose.yml" \
+                      "$D/run_webserver.sh" 2>/dev/null | head -5)
+        if [ -n "$crhit" ]; then
+            echo "  !! 以下文件含 CR（CRLF 换行），容器/宿主脚本会无法执行："
+            echo "$crhit" | sed 's/^/     /'
+            fail=1
+        fi
+
+        # dist 与 src 同步粗检：dist 语言包里必须能找到较新的键（抽查归一化指引 openClean）。
+        # 缺了说明 dist 早于 src —— 先 npm run build-spa 再打包，或人工补键。
+        if [ -d "$D/app/dist/_nuxt" ]; then
+            if ! grep -lq "openClean" "$D"/app/dist/_nuxt/*.js 2>/dev/null; then
+                echo "  !! app/dist 落后于 app/src（语言包缺 authorNorm.openClean）—— 重建前端后再打包"
+                fail=1
+            fi
+        fi
+
         # __pycache__ / .pytest_cache：允许零星几个（比如解压后又跑过脚本），但不该整片带进来
         npc=$(find "$D" -name '__pycache__' -type d 2>/dev/null | wc -l)
         if [ "$npc" -gt 5 ]; then

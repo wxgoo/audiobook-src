@@ -1,0 +1,31 @@
+# 换行纪律（fix2 事故后的防复发，2026-11-07）
+# 背景：Windows 检出默认 core.autocrlf=true 会把全部文本变 CRLF，
+# 直接从工作树打包导致容器 start.sh shebang 带 \r 起不来。
+# 本文件强制仓库内文本一律 LF，检出后也保持 LF（eol=lf）。
+* -text
+*.sh text eol=lf
+*.py text eol=lf
+*.conf text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.tsv text eol=lf
+*.patch text eol=lf
+Dockerfile text eol=lf
+Dockerfile.base text eol=lf
+Makefile text eol=lf
+.gitattributes text eol=lf
+# 二进制一律不转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.mp3 binary
+*.wav binary
+*.db binary
+*.epub binary
+*.pdf binary
+*.tar.gz binary
+*.zip binary

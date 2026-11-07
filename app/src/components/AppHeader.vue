@@ -392,20 +392,22 @@
         >
             <div class="text-center pt-2 pb-2">
                 <v-img
-                    src="/logo/link_gongzhonghao.jpg"
+                    :src="sys.feedback_qr_url || '/logo/link_gongzhonghao.jpg'"
                     max-width="200"
                     class="mx-auto rounded elevation-2 mb-5"
                     contain
                 ></v-img>
                 <p class="body-1 font-weight-medium mb-1">{{ $t('appHeader.feedbackScanQrCode') }}</p>
-                <p class="body-2 grey--text mt-3 mb-0">{{ $t('appHeader.feedbackOrGithub') }}</p>
+                <p v-if="sys.feedback_notice" class="body-2 grey--text mt-3 mb-0 feedback-notice">{{ sys.feedback_notice }}</p>
+                <p v-else class="body-2 grey--text mt-3 mb-0">{{ $t('appHeader.feedbackOrGithub') }}</p>
             </div>
             <template v-slot:actions>
                 <v-spacer></v-spacer>
                 <v-btn
+                    v-if="sys.feedback_github_url !== '-'"
                     outlined
                     color="primary"
-                    href="https://github.com/PoxenStudio/mybooks/issues"
+                    :href="sys.feedback_github_url || 'https://github.com/PoxenStudio/mybooks/issues'"
                     target="_blank"
                     rel="noopener noreferrer"
                 >

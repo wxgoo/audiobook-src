@@ -222,6 +222,13 @@
                 <div class="d-flex align-center">
                   <v-icon small class="mr-2" :color="f.color">{{ f.icon }}</v-icon>
                   <span class="text-body-1">{{ $t(f.label) }}</span>
+                  <!-- 可选直达链接：f.to 指向站内路由时，标题变成可点击 -->
+                  <a
+                    v-if="f.to"
+                    class="ml-2 text-body-2"
+                    style="cursor: pointer"
+                    @click="$router.push(f.to)"
+                  >{{ $t(f.link_text || f.label) }} ›</a>
                 </div>
                 <div v-if="f.tips" class="text-caption grey--text ml-8">{{ $t(f.tips) }}</div>
               </div>
@@ -1811,9 +1818,32 @@ export default {
                   is_current: i === 0,
                 })),
               },
-              { icon: "mdi-copyright", key: "HEADER", label: "settings.site_header", type: "textarea" },
-              { icon: "mdi-copyright", key: "FOOTER", label: "settings.site_footer", type: "textarea" },
-              { icon: "mdi-closed-caption-outline", key: "FOOTER_WATERMARK", label: "settings.footer_watermark" },
+                { icon: "mdi-copyright", key: "HEADER", label: "settings.site_header", type: "textarea" },
+                { icon: "mdi-copyright", key: "FOOTER", label: "settings.site_footer", type: "textarea" },
+                { icon: "mdi-closed-caption-outline", key: "FOOTER_WATERMARK", label: "settings.footer_watermark" },
+                {
+                    // 反馈弹窗内容（build.22 起管理员可改）：二维码图 / 自定义文案 / 仓库链接；
+                    // GITHUB_URL 填 - 可隐藏该按钮，避免指向他人仓库
+                    icon: "mdi-comment-question-outline",
+                    key: "FEEDBACK_QR_URL",
+                    label: "settings.feedback_qr_url",
+                    type: "text",
+                    tips: "settings.feedback_qr_url_tips",
+                },
+                {
+                    icon: "mdi-text-box-outline",
+                    key: "FEEDBACK_NOTICE",
+                    label: "settings.feedback_notice",
+                    type: "textarea",
+                    tips: "settings.feedback_notice_tips",
+                },
+                {
+                    icon: "mdi-github",
+                    key: "FEEDBACK_GITHUB_URL",
+                    label: "settings.feedback_github_url",
+                    type: "text",
+                    tips: "settings.feedback_github_url_tips",
+                },
               {
                 icon: "mdi-web",
                 key: "site_language",
@@ -2098,6 +2128,18 @@ export default {
                 tips: "settings.reader_groups_enabled_tips",
                 al: ["读者组", "总开关", "分组权限", "关闭读者组"],
                 type: "checkbox",
+              },
+              {
+                // 作者归一化指路（fix1）：入口本体在「工具箱 → 作者归一化」，这里给出
+                // 可点击直达；改存量书走「作者清理」，归一化页内有直达链接。
+                key: "author_norm_entry",
+                type: "subtitle",
+                icon: "mdi-account-convert-outline",
+                color: "info",
+                label: "settings.author_norm_entry",
+                to: "/toolbox/author_norm",
+                link_text: "settings.author_norm_open",
+                tips: "settings.author_norm_entry_tips",
               },
               {
                 icon: "mdi-book-lock-outline",

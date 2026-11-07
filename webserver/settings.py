@@ -349,6 +349,10 @@ settings = {
     'FOOTER': '',
     'FOOTER_WATERMARK': 'PoxenStudio/MyBooks',
     'HIDE_PROJECT_LINKS': False,
+    # 「反馈」弹窗内容管理员可改（build.22）：默认仍指上游，管理员可换成自己的二维码/文案/仓库链接
+    'FEEDBACK_QR_URL': '/logo/link_gongzhonghao.jpg',
+    'FEEDBACK_NOTICE': '',
+    'FEEDBACK_GITHUB_URL': 'https://github.com/PoxenStudio/mybooks/issues',
     'SIDEBAR_ITEMS': [],                # 侧边栏显示的项目，空表示全部显示；仅含 "none" 表示全部隐藏
     'SIDEBAR_ITEMS_MIGRATED': False,    # 服务端内部标记（无 UI 控件）：管理员保存过设置页即置 True，之后 SIDEBAR_ITEMS 由管理员权威决定，读取期不再补齐旧默认列表缺的三个新项
 

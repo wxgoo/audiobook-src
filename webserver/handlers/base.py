@@ -643,13 +643,25 @@ class BaseHandler(web.RequestHandler):
         except Exception:
             return False
 
+    def is_opds_acquisition(self, path):
+        """OPDS 目录里的下载直链：形如 /api/book/<id>.<fmt>?from=opds（见 opds.py ACQUISITION_ENTRY）。
+
+        消费者是阅读器下载器：必须登录时这类直链要回 401 + WWW-Authenticate 挑战，
+        不能走 /api/ 的 200 JSON——否则下载器会把 JSON 当成下载成功存成假书。
+        """
+        if not _SHARE_DOWNLOAD_PATH_RE.match(path):
+            return False
+        return self.get_argument("from", "") == "opds"
+
     def should_be_logged_in(self):
         """REQUIRE_LOGIN 开启时的登录门禁：未登录且路径不在放行名单 → 一律拦下。
 
         - /api/* 回 200 {"err": "user.need_login"}：前端 $backend 有该错误的统一跳转；
         - /get/* 回 401：消费者是 <img>、EPUB 解包器、下载器，200 JSON 会被当成资源解析；
-        - OPDS 回 401 + WWW-Authenticate：客户端靠这个头弹 Basic 认证，配了账号即可通过
-          （process_auth_header 已把 Basic 凭据换成 current_user），否则必须登录；
+        - OPDS 目录与 OPDS 下载直链回 401 + WWW-Authenticate：客户端靠这个头弹 Basic 认证，
+          配了账号即可通过（process_auth_header 已把 Basic 凭据换成 current_user），否则必须
+          登录。下载直链挂在 /api/book/ 下，必须排在 /api/ 那条之前判定，否则阅读器会收到
+          200 + JSON 并当成下载成功（上游 8ccab741）；
         - 其它页面（WAP 等）跳登录页，带上 next 便于回跳。
         放行时返回 False；拦下时不返回（写响应后 raise web.Finish）。
         """
@@ -678,7 +690,7 @@ class BaseHandler(web.RequestHandler):
                 bid, fmt = filename.split(".", 1)
                 if self.parse_download_sign(self.get_argument("dl", ""), bid, fmt):
                     return False
-        if path.startswith("/opds"):
+        if path.startswith("/opds") or self.is_opds_acquisition(path):
             self.set_header("WWW-Authenticate", 'Basic realm="MyBooks"')
             self.set_status(401)
             raise web.Finish()
@@ -2016,6 +2028,10 @@ class BaseHandler(web.RequestHandler):
                 "aiEnabled": CONF.get("AI_ENABLED", False),
                 "standalone": CONF.get("STANDALONE", False),
                 "hide_project_links": CONF.get("HIDE_PROJECT_LINKS", False),
+                # 「反馈」弹窗内容（build.22 起管理员可改）：notice 为空时前端回退默认文案
+                "feedback_qr_url": CONF.get("FEEDBACK_QR_URL", "/logo/link_gongzhonghao.jpg"),
+                "feedback_notice": CONF.get("FEEDBACK_NOTICE", ""),
+                "feedback_github_url": CONF.get("FEEDBACK_GITHUB_URL", "https://github.com/PoxenStudio/mybooks/issues"),
                 "enable_podcast_service": CONF.get("ENABLE_PODCAST_SERVICE", False),
                 # 书单卡片封面条是否自动轮播（站长级总开关，默认开）
                 "booklist_cover_scroll": CONF.get("ENABLE_BOOKLIST_COVER_SCROLL", True),

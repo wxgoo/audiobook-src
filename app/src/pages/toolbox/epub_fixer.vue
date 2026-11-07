@@ -120,7 +120,7 @@
                   </template>
                   <div v-for="f in findingLines(r)" :key="f.label" class="mb-1">
                     <b>{{ f.label }}</b> ×{{ f.count }}
-                    <div v-if="f.samples.length" class="ef-sample">{{ f.samples.join('；') }}</div>
+                    <div v-if="f.samples.length" class="ef-sample">{{ f.samples.join($t('epubFixer.detailSep')) }}</div>
                   </div>
                 </v-tooltip>
               </span>
@@ -332,7 +332,7 @@ export default {
       ];
       if (drm) parts.push(this.$t('epubFixer.detectDrm', { n: drm }));
       if (fail) parts.push(this.$t('epubFixer.detectFail', { n: fail }));
-      return parts.join('，');
+      return parts.join(this.$t('epubFixer.listSep'));
     },
     stageText() {
       const s = this.progress && this.progress.stage;
@@ -463,7 +463,7 @@ export default {
       if (r.reconverted) parts.push(this.$t('epubFixer.resultReconverted'));
       if (r.new_book_id) parts.push(this.$t('epubFixer.resultNewBook', { id: r.new_book_id }));
       (r.warnings || []).forEach((w) => parts.push(w));
-      return parts.join('；');
+      return parts.join(this.$t('epubFixer.detailSep'));
     },
     async startRepair() {
       if (this.pickedEpubCount === 0) return;
@@ -528,6 +528,9 @@ export default {
               this.applyAnalyzePrecheck();
               this.analyzed = true;
               this.analyzing = false;
+              // 检测是后台任务，进度条只在检测过程中有意义；
+              // 留着会让界面永久停在 100% 的「第 N/N 本」（上游 d7dd8af1）
+              this.progress = null;
             } else {
               this.running = false;
               this.resultMsg = this.$t('epubFixer.fixSuccess');
