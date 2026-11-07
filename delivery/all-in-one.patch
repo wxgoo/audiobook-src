@@ -1,8 +1,281 @@
-diff --git "a/docs/\344\270\212\346\270\270\350\267\237\350\277\233/A-\345\256\211\345\205\250\344\270\216\345\205\203\346\225\260\346\215\256.md" "b/docs/\344\270\212\346\270\270\350\267\237\350\277\233/A-\345\256\211\345\205\250\344\270\216\345\205\203\346\225\260\346\215\256.md"
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 2d1a679..edd9cd9 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,9 +1,43 @@
+ # 变更日志（CHANGELOG）
+ 
+-本项目的版本号规则：**`<上游 mybooks tag>-<自建序号>`**
+-（上游 tag 无 `v` 前缀，如 `4.6.0`；自己改代码序号 +1，上游发新版序号归 1）
++本项目的版本号规则：**`<上游 mybooks tag>-build.<自建构建号>`**，当前版本 **`4.6.0-build.20`**。
++上游 tag 无 `v` 前缀；自己改代码构建号 +1，上游正式发新 tag 后按主题合入再整体改号。
+ 
+-旧编号 `v4.8.x` 已废弃，对应关系见文末「旧编号时期发布说明」。
++### 号段重置说明（必读）
++
++本版起**运行期版本与交付标签合为一个值**，不再有「界面显示 v4.8.0、包名写 4.6.0-20」的双口径。
++`v4.7.1 ~ v4.8.x` 号段全部**封存**：与 `4.6.0-build.20` **没有任何版本先后关系**，是纯号段重置
++（「新程序」的第一版要从上游已发布 tag 起算，而不是继续自造主版本线）。
++
++| 项 | 取值 | 说明 |
++|---|---|---|
++| **运行期版本**（唯一权威） | `4.6.0-build.20` | 写 `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` / `package-lock.json`、`Makefile` 的 `VERSION_LOCK` |
++| 上游基线 | mybooks tag `4.6.0`（2026-10-25，commit `3c5947c`） | 本源码事实上的来源版本 |
++| 交付标签 / 包名 | 与运行期版本相同：`4.6.0-build.20` | 出包文件名带它，便于区分 |
++| 上游未发布分支 | mybooks `develop` 上是 `4.6.1`（**无 tag、无 Release**） | **不跟号**：等上游正式发 tag 后按主题合入，届时再升 `4.6.1-build.20` |
++
++旧号 → 新号对照（便于翻旧记录）：
++
++| 旧编号 | 新编号 | 备注 |
++|---|---|---|
++| `v4.7.1`、`v4.8.0`、`v4.8.1` | （无对应编号） | 首次定制线早期版本，早于 `4.6.0-build.1` |
++| `v4.8.2` / `v4.8.3` | `4.6.0-build.1` | 移植版第一个正式基线 |
++| `4.6.0-N`（N=2…20） | `4.6.0-build.N` | 同序号直接映射，历史条目保留旧写法 |
++
++> **不要拿 `4.6.0-build.20` 去和 `4.6.0` 比大小。** `-build.20` 是 semver 的预发布标记（prerelease），
++> 整串排序**低于** `4.6.0`；本程序不发布 npm 包、`app/package.json` 无 `engines` 校验，
++> 所以这个排序差异没有实际影响，这么写只是为了让「建在上游哪个 tag 上」一眼可见。
++
++> **版本号不参与任何升级门控（重要约束）。** 全仓库的版本比较只有「整串相等」这一种用法
++> （`main.py` 的 `VERSION == "v0.0.1"`、`handlers/admin.py` 的 `last_revsion != VERSION`、
++> `services/book_barn.py` 的 `latest_version != VERSION`）；表结构检查 `should_check_db_structure()`
++> **恒返回 True**，刻意不用版本号判断。**不要**把版本号引入升级/迁移/缓存失效的排序判断：
++> 同一上游基线的两次本地构建之间，只有 `build.N` 能区分新旧，`>` 比较整串会漏判。
++
++> **防反弹：** 上表取值由 `scripts/check-version-lock.py`（可独立执行）、`tests/test_version_lock.py`
++> （9 个用例：1 个正向 + 8 个负向）、`scripts/pack.sh`（打包前强制检查）三处锁定；Dockerfile 对空 `GIT_VERSION`
++> 直接 `exit 1`，Makefile 对不一致的 `VER` 直接 `$(error)`。任何一处被写回 `v4.8.x`、写成裸
++> `4.6.0`、留空、或删掉守卫，都会**构建/测试失败**，而不是静默通过。
+ 
+ > 想查某个改动为什么这么做：搜版本号，或看 [`docs/`](docs/) 下的专题记录。
+ 
+@@ -26,7 +60,67 @@
+ 
+ ---
+ 
+-## 4.6.0-19（当前）
++## 4.6.0-build.20（当前）
++
++> 优化专项落地版：P0 备份闭环、P1 安全/性能、中文检索、游标分页、导入攒批、任务易用性，
++> 外加一套不依赖 git 的 NAS 交付与镜像自检脚本。逐项说明与回滚方式见
++> [`docs/优化实施与决策记录.md`](docs/优化实施与决策记录.md)，方案背景见
++> [`docs/评估与优化方案.md`](docs/评估与优化方案.md)。
++
++### 一、备份（P0）
++
++- 新增 `scripts/backup.sh`（单入口）与 `scripts/backup_run.py`（标准库实现）：
++  SQLite 在线备份 API、文件硬链接快照、日/周/月三层保留、manifest + sha256 + `integrity_check`、退出码 0/2/3
++- 新增 [`docs/备份与恢复演练.md`](docs/备份与恢复演练.md)：参数表、演练步骤、恢复判定
++- 备份脚本只新增文件，不改运行时代码；`scripts/README.md` 说明两类用法
++
++### 二、安全与性能（P1）
++
++- `handlers/mcp.py` 等：MCP token 只走 `Authorization: Bearer`，URL 带 token 默认 403（`ALLOW_MCP_TOKEN_IN_URL` 可临时兼容），日志递归脱敏
++- `handlers/assistant.py`：AI WebSocket 的 `check_origin` 改为同源校验（`is_same_host_origin`），防 CSWSH
++- `handlers/audio.py`：音频缓存移出请求线程（单飞后台刷新 + 兜底周期 + 启动预热）；Range 读盘改异步分块 + 背压；音频标志事件驱动增量更新
++- `webserver/handlers/book.py`、`services/audios_import.py`：详情页音频目录改由 calibre 解析，避免全库扫描
++
++### 三、检索与分页
++
++- 新增 `webserver/services/search_index.py`、`webserver/handlers/search_index.py`、`scripts/search_index.py`：
++  中文书目 FTS5 索引，支持重建与增量更新，接口见 `handlers/search_index.py`
++- 新增 `webserver/base/pagination.py`：书目/有声书游标分页，避免大库深分页全表扫描
++
++### 四、导入与任务易用性
++
++- `webserver/services/audios_import.py`：Phase2 攒批窗口可配置，缩短大批量导入耗时
++- `webserver/handlers/mcp.py`、`webserver/main.py`：失败任务给出可读错误与重试提示
++
++### 五、上游跟进与交付
++
++- 新增 `docs/上游跟进/`（A/B/C/D 主题包 + `README.md`）与 `scripts/upstream/patch_tool.py`
++- 新增 `delivery/`：NAS 运维脚本（`nas/00`–`90`、`paths.conf`、`README-NAS.md`）、
++  无 git 文件覆盖包（`overlay/`，34 个改动文件 + 基线 sha256 清单）、补丁包（`patches/`）与自包含发布包
++  `delivery/audiobook-nas-release.tar.gz`
++  - `nas/60-apply-overlay.sh`：非 git 环境按基线校验后覆盖，自动备份与回滚，按 compose 形态打印构建/重启命令
++  - `nas/70-check-image.sh`：只读核对镜像/容器内源码是否与覆盖包一致，识别「构建了但没重启」
++- 新增 [`docs/交付/交付索引.md`](docs/交付/交付索引.md)、[`docs/交付/应用与回滚.md`](docs/交付/应用与回滚.md)、[`docs/交付/NAS备份演练清单.md`](docs/交付/NAS备份演练清单.md)
++
++### 六、测试
++
++- 新增 `tests/test_audio_books_cache.py` 等用例；`pytest` 全绿（14 条专项用例）
++
++### 七、版本号与交付口径
++
++- 运行期版本与交付标签统一为 `4.6.0-build.20`（上游已发布 tag `4.6.0` + 第 20 次本地构建），
++  `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` /
++  `package-lock.json`、`Makefile` 的 `VERSION_LOCK` 全部同值；旧 `4.8.x` 号段封存
++  （对照表见文首「号段重置说明」）
++- 新增版本锁：`scripts/check-version-lock.py`（可独立执行）、`tests/test_version_lock.py`（9 例：1 正向 + 8 负向）、
++  `scripts/pack.sh` 打包前强制检查；Dockerfile 遇空 `GIT_VERSION` 直接 `exit 1`，
++  Makefile 的 `VER` 不一致即 `$(error)` 退出（不再用分支名顶掉版本）
++- `4.6.0-build.20` 为 semver 预发布标记，整串排序低于 `4.6.0`；**本程序不使用版本号做升级门控**
++  （比较逻辑只有整串相等），详见 README「四条不要搞错的事」
++- 相对旧部署包 `4.6.0-19-r13` 的完整变更报告：
++  [`docs/变更报告-4.6.0-build.20.md`](docs/变更报告-4.6.0-build.20.md)
++
++## 4.6.0-19
+ 
+ > **性能与稳健性专项**：修掉一批「同步 handler 阻塞事件循环冻住全站」的重 IO
+ > 调用、两个前端时序死锁、一个并发序列化崩溃，并给音频批量转码补上取消能力。
+diff --git a/Dockerfile b/Dockerfile
+index 42b6c57..345ac50 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -154,7 +154,7 @@ CMD ["pytest", "/var/www/mybooks/tests"]
+ # 生产环境（必须是最后一个 FROM：Docker 默认构建最后阶段）
+ FROM docker.1ms.run/poxenstudio/mybooks_base:latest AS production
+ ARG BUILD_COUNTRY="CN"
+-ARG GIT_VERSION=""
++ARG GIT_VERSION="4.6.0-build.20"
+ # 是否安装 faster-whisper（音频转写）。默认装：不带 torch，只多约 250MB，
+ # x86 上比 openai-whisper 快 4 倍以上，ARM/低端 CPU 也能跑 tiny/base。
+ # 不需要时构建加 --build-arg WITH_WHISPER=0 即可跳过，镜像体积回落。
+@@ -365,6 +365,7 @@ print('faster-whisper API check OK')" \
+     cd /var/www/mybooks/; \
+     ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime; \
+     echo ${TZ} > /etc/timezone; \
++    if [ -z "${GIT_VERSION:-}" ]; then echo "ERROR: GIT_VERSION 为空，触发版本锁保护（见 scripts/check-version-lock.py）" >&2; exit 1; fi; \
+     echo "VERSION = \"$GIT_VERSION\"" > webserver/version.py; \
+     echo 'settings = {}' > /data/books/settings/auto.py; \
+     chmod a+w /data/books/settings/auto.py; \
+diff --git a/Makefile b/Makefile
+index e39b832..06e9f44 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,15 @@
+ .PHONY: all build push test plugin
+ 
+-VER := $(shell git branch --show-current 2>/dev/null || echo local)
+-VER := $(if $(VER),$(VER),local)
++# 运行期版本锁：4.6.0-build.20 =「上游已发布 tag 4.6.0」+「第 20 次本地构建」。
++# 该写法同时是合法 semver 预发布标记与合法 Docker tag（字符集 [A-Za-z0-9_.-]），无需转换。
++# 理由：以前用分支名当显示版本，会把 webserver/version.py 顶成 opt/p0-p1 之类，
++# 既不可追溯也会让“是否真的生效”无法判断。这里改为不匹配即报错退出（fail-fast），
++# 比“静默忽略用户传入的 VER”更容易发现口径错误。
++VERSION_LOCK := 4.6.0-build.20
++VER := $(VERSION_LOCK)
++ifneq ($(strip $(VER)),$(VERSION_LOCK))
++$(error 版本锁: VER=$(VER) 与运行期版本 $(VERSION_LOCK) 不一致。这是防版本回退/被交付标签覆盖的保护，不是普通构建失败；请去掉 VER 覆盖，或先同步修改 webserver/version.py 与 scripts/check-version-lock.py)
++endif
+ IMAGE := poxenstudio/mybooks:$(VER)
+ REPO1 := poxenstudio/mybooks:latest
+ TAG1 := poxenstudio/mybooks:server-side-render
+diff --git a/README.md b/README.md
+index 8b528c1..7408346 100644
+--- a/README.md
++++ b/README.md
+@@ -3,7 +3,7 @@
+ 基于 [PoxenStudio/mybooks](https://github.com/PoxenStudio/mybooks) 的私人图书服务器定制版。
+ 在 Calibre 书库之上提供 Web 阅读、听书、权限分级、元数据刮削、格式转换等能力。
+ 
+-> **当前版本：`4.6.0-14`**（基于上游 tag `4.6.0` 的第 14 版定制；v4.6.1 值得跟的改动已全部落地）
++> **当前版本：`4.6.0-build.20`**（上游 tag `4.6.0` + 第 20 次本地构建；P0/P1 稳健性与性能专项已合入）
+ 
+ ---
+ 
+@@ -108,15 +108,41 @@ cd app && npm run build-spa
+ 
+ ## 版本号规则
+ 
+-```
+-<上游 tag>-<自建序号>
+-```
+-
+-- 上游发新版 → 上游段换成新 tag，序号归 1（如 `4.6.0-10` → `4.7.0-1`）
+-- 自己改代码 → 序号 +1，上游段不动
+-- tag **不带** `v` 前缀
+-
+-旧编号 `v4.8.x` 已废弃，`v4.8.2` 等价于 `4.6.0-1`，历史说明见 CHANGELOG 文末。
++当前版本 **`4.6.0-build.20`**，语义是「上游 mybooks 已发布 tag `4.6.0` + 第 20 次本地构建」。
++上游 tag 无 `v` 前缀；自己改代码构建号 +1，上游正式发新 tag 后按主题合入再整体改号。
++
++| 标识 | 取值 | 写在哪 / 谁读它 |
++|---|---|---|
++| **运行期版本**（唯一权威） | `4.6.0-build.20` | `webserver/version.py`（界面与日志显示它）；`docker-compose.yml` 的 `GIT_VERSION`（构建时 Dockerfile 用它覆写 `version.py`）；`app/package.json` / `app/package-lock.json`；`Makefile` 的 `VERSION_LOCK` |
++| **上游基线** | mybooks tag `4.6.0`（2026-10-25，commit `3c5947c`） | 只记在本文与 CHANGELOG，用来判断「我们建在哪个上游版本上」 |
++| **交付标签 / 包名** | 与运行期版本相同：`4.6.0-build.20` | 包文件名、README、CHANGELOG |
++
++- 只改本地代码 → 构建号 +1（`4.6.0-build.21`），上游段不动；
++- 上游**正式发布 tag** 后按主题合入 → 整体改号（如 `4.6.1-build.20`），构建号仍从 20 起；
++- 上游 `develop` 上虽已是 `4.6.1`，但**没有 tag、没有 Release 就不跟号**，避免与上游未来正式发布的内容脱节。
++
++### 旧 `4.8.x` 号段已封存
++
++`v4.7.1 ~ v4.8.x` 全部封存，与 `4.6.0-build.20` **没有任何版本先后关系**——这是**号段重置**，
++因为「新程序」的第一版要从上游已发布 tag 起算。旧 `v4.8.2` / `v4.8.3` 对应 `4.6.0-1`，
++`4.6.0-2` 之后构建号连续、无需换算；完整对照表见 [CHANGELOG 开头的「号段重置说明」](CHANGELOG.md)。
++
++### 四条不要搞错的事
++
++1. **整串排序低于 `4.6.0`，不能拿来和 `4.6.0` 比大小。** `-build.20` 是 semver 的预发布标记
++   （prerelease），`4.6.0-build.20 < 4.6.0`。本程序不发布 npm 包、`app/package.json` 无 `engines`
++   校验，所以这个排序差异没有实际影响；这么写是为了让「建在上游哪个 tag 上」一眼可见。
++2. **同一上游基线的本地构建之间，只能靠 `build.N` 区分。** `>` 比较整体版本会漏判
++   （`4.6.0-build.21` 与 `4.6.0-build.20` 的主版本段相同），要比较就单独取出 `build.N` 数值段。
++   本仓库现有的版本展示/比对都是一次性字符串比较（`main.py`、`handlers/admin.py`），没有排序比较逻辑。
++3. **该写法同时是合法 Docker tag**（字符集 `[A-Za-z0-9_.-]`），可以直接用进镜像 tag，
++   不需要为 `+` 或其它字符做转义。
++4. **版本号是锁死的，不是随手改的字符串。** `scripts/check-version-lock.py` 可独立执行
++   （`python3 scripts/check-version-lock.py`），`tests/test_version_lock.py` 有 9 个用例（1 个正向 + 8 个负向），
++   `scripts/pack.sh` 打包前也会强制跑一遍；Dockerfile 遇到空 `GIT_VERSION` 直接 `exit 1`，
++   Makefile 遇到不一致的 `VER` 直接 `$(error)`。写回 `v4.8.x`、写成裸 `4.6.0`、留空、
++   删掉任意一处守卫，都会**构建/测试失败**（这是防版本回退 / 防被交付标签覆盖的保护，
++   不是普通测试失败；失败信息里会给出补救方法）。
+ 
+ ---
+ 
+diff --git a/app/package-lock.json b/app/package-lock.json
+index 2a093e3..0261e37 100644
+--- a/app/package-lock.json
++++ b/app/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "mybooks",
+-  "version": "4.8.0",
++  "version": "4.6.0-build.20",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "mybooks",
+-      "version": "4.8.0",
++      "version": "4.6.0-build.20",
+       "dependencies": {
+         "chart.js": "^3.9.1",
+         "core-js": "^3.19.3",
+diff --git a/app/package.json b/app/package.json
+index eff8d4b..c7a3a17 100644
+--- a/app/package.json
++++ b/app/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "mybooks",
+-  "version": "4.8.0",
++  "version": "4.6.0-build.20",
+   "private": true,
+   "scripts": {
+     "dev": "nuxt",
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 65acb9b..f24a1e4 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -13,6 +13,10 @@ services:
+         # 1 = 安装 faster-whisper（音频转写功能），0 = 不装（镜像小约 250MB）
+         # 不想要转写功能就把这行改成 "0"，或整行删掉（默认 1）
+         WITH_WHISPER: "1"
++        # 运行期版本号：Dockerfile 会写进 webserver/version.py，容器内界面/日志显示的是它。
++        # 与源码、app/package.json 保持一致（4.6.0-build.20）；由 scripts/check-version-lock.py 锁定，
++        # 留空会让构建直接失败（Dockerfile 有守卫），不会写成空串。
++        GIT_VERSION: "4.6.0-build.20"
+       # 只构建生产阶段，跳过 test 阶段（省一次完整 pip install）
+       target: production
+       # 复用上一次构建的镜像层：改代码后重建只重跑变化的层
+diff --git a/docs/上游跟进/A-安全与元数据.md b/docs/上游跟进/A-安全与元数据.md
 new file mode 100644
 index 0000000..62f4d7a
 --- /dev/null
-+++ "b/docs/\344\270\212\346\270\270\350\267\237\350\277\233/A-\345\256\211\345\205\250\344\270\216\345\205\203\346\225\260\346\215\256.md"
++++ b/docs/上游跟进/A-安全与元数据.md
 @@ -0,0 +1,23 @@
 +# A 主题：安全与元数据（两个上游都存在的缺陷）
 +
@@ -27,11 +300,11 @@ index 0000000..62f4d7a
 +## 回滚
 +单条回滚即 `git revert` 对应提交；A2/A8 涉及元数据，回滚后已导入的书不会自动改回，
 +需要重新刮削（`autofill` 任务可按 id 重跑）。
-diff --git "a/docs/\344\270\212\346\270\270\350\267\237\350\277\233/B-\346\211\253\346\217\217\344\270\216\345\257\274\345\205\245.md" "b/docs/\344\270\212\346\270\270\350\267\237\350\277\233/B-\346\211\253\346\217\217\344\270\216\345\257\274\345\205\245.md"
+diff --git a/docs/上游跟进/B-扫描与导入.md b/docs/上游跟进/B-扫描与导入.md
 new file mode 100644
 index 0000000..6e993de
 --- /dev/null
-+++ "b/docs/\344\270\212\346\270\270\350\267\237\350\277\233/B-\346\211\253\346\217\217\344\270\216\345\257\274\345\205\245.md"
++++ b/docs/上游跟进/B-扫描与导入.md
 @@ -0,0 +1,22 @@
 +# B 主题：扫描与导入
 +
@@ -55,11 +328,11 @@ index 0000000..6e993de
 +
 +## 回滚
 +B4 回滚后锁泄漏风险回归，建议保留；B6 回滚只需还原 handler 预检，不影响已导入数据。
-diff --git "a/docs/\344\270\212\346\270\270\350\267\237\350\277\233/C-\351\237\263\351\242\221\344\270\216\346\222\255\346\224\276.md" "b/docs/\344\270\212\346\270\270\350\267\237\350\277\233/C-\351\237\263\351\242\221\344\270\216\346\222\255\346\224\276.md"
+diff --git a/docs/上游跟进/C-音频与播放.md b/docs/上游跟进/C-音频与播放.md
 new file mode 100644
 index 0000000..641259e
 --- /dev/null
-+++ "b/docs/\344\270\212\346\270\270\350\267\237\350\277\233/C-\351\237\263\351\242\221\344\270\216\346\222\255\346\224\276.md"
++++ b/docs/上游跟进/C-音频与播放.md
 @@ -0,0 +1,27 @@
 +# C 主题：音频与播放
 +
@@ -88,11 +361,11 @@ index 0000000..641259e
 +
 +## 回滚
 +C6 回滚只影响响应头，播放器兼容；C8 脱敏回滚会让受限用户统计重新可见，属隐私回归，建议保留。
-diff --git "a/docs/\344\270\212\346\270\270\350\267\237\350\277\233/D-\345\212\237\350\203\275\344\270\216\346\235\203\351\231\220.md" "b/docs/\344\270\212\346\270\270\350\267\237\350\277\233/D-\345\212\237\350\203\275\344\270\216\346\235\203\351\231\220.md"
+diff --git a/docs/上游跟进/D-功能与权限.md b/docs/上游跟进/D-功能与权限.md
 new file mode 100644
 index 0000000..32849e6
 --- /dev/null
-+++ "b/docs/\344\270\212\346\270\270\350\267\237\350\277\233/D-\345\212\237\350\203\275\344\270\216\346\235\203\351\231\220.md"
++++ b/docs/上游跟进/D-功能与权限.md
 @@ -0,0 +1,24 @@
 +# D 主题：功能与权限
 +
@@ -118,11 +391,11 @@ index 0000000..32849e6
 +## 回滚
 +D8 回滚会让前后端上传权限重新分叉（前端可点、后端拒绝），建议保留；
 +D9 回滚只影响首页卡片数量与测试隔离。
-diff --git "a/docs/\344\270\212\346\270\270\350\267\237\350\277\233/README.md" "b/docs/\344\270\212\346\270\270\350\267\237\350\277\233/README.md"
+diff --git a/docs/上游跟进/README.md b/docs/上游跟进/README.md
 new file mode 100644
 index 0000000..016ece0
 --- /dev/null
-+++ "b/docs/\344\270\212\346\270\270\350\267\237\350\277\233/README.md"
++++ b/docs/上游跟进/README.md
 @@ -0,0 +1,51 @@
 +# 上游跟进：按主题拆分的补丁包
 +
@@ -175,11 +448,575 @@ index 0000000..016ece0
 +- 主题包只生成、不自动 `git apply`：上游合并策略（保留双方/取上游）需要人工判断。
 +- 不引入第三方 diff 库：`patch_tool.py` 只用 Python 标准库 `difflib`，NAS 容器内可直接跑。
 +- 每个主题包一个 PR；主题内部条目仍按「独立可复现」原则再拆小提交。
-diff --git "a/docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md" "b/docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md"
+diff --git a/docs/交付/NAS备份演练清单.md b/docs/交付/NAS备份演练清单.md
+new file mode 100644
+index 0000000..24d5848
+--- /dev/null
++++ b/docs/交付/NAS备份演练清单.md
+@@ -0,0 +1,258 @@
++# NAS 一次性备份演练清单
++
++> **本文只作说明，不要从文档复制命令执行**（缩进、换行、引号、全角字符在 DSM 上会导致失败）。
++> 实际操作用可执行脚本：`delivery/nas/`（入口见 `delivery/nas/README-NAS.md`）。
++> 下文命令仅用于理解步骤，等价操作以脚本参数为准。
++
++目标：在 NAS 上**不碰真实书库改动**的前提下，完整跑一次「全量 → 增量 → 校验 → 清理」，
++确认 `scripts/backup.sh` 可用，并把结果留下作为上线前证据。
++
++> 演练使用**独立的备份目录**（`audiobook-backup-drill`），成功后再切到正式目录。
++> 原始部署包不要动；本清单只读数据目录，只写演练备份目录。
++
++## 0. 准备：路径与环境变量
++
++先 SSH 登录 NAS，进入源码目录（按实际位置替换）：
++
++```sh
++export SRC_DIR=/volume1/docker/audiobook-src-opt      # 源码仓库（含 scripts/backup.sh）
++export DATA_DIR=/volume1/docker/audiobook-data        # 站点数据目录（真实数据）
++export DRILL_ROOT=/volume1/docker/audiobook-backup-drill   # 演练备份目录（独立）
++export APP_CONTAINER=audiobook-mybooks-1              # 正在运行的应用容器名
++cd "$SRC_DIR"
++```
++
++逐条确认（每条都要有输出，否则先解决）：
++
++```sh
++ls -ld "$DATA_DIR"                    # 目录存在
++ls -l "$DATA_DIR/books/library/metadata.db"      # calibre 元数据库存在
++ls -l "$DATA_DIR/books/calibre-webserver.db"     # 站点数据库存在
++df -h "$(dirname "$DRILL_ROOT")"      # 剩余空间 ≥ 数据目录 × 1.2
++docker inspect -f '{{.State.Running}}' "$APP_CONTAINER"   # 期望 true
++```
++
++创建演练目录（必须位于数据目录之外，脚本会拒绝备份目录落在数据目录内部）：
++
++```sh
++mkdir -p "$DRILL_ROOT"
++```
++
++> 可调参数（都有默认值，演练先用默认）：
++> `KEEP_DAILY=7`、`KEEP_WEEKLY=4`、`KEEP_MONTHLY=6`、`MIN_FREE_GB=5`、
++> `EXCLUDE_DIRS=cache,log,.backup-tmp`、`EXCLUDE_PATTERNS=*.tmp,*.part,*.partial,*.swp`。
++
++## 1. 预检：帮助与 dry-run（不写任何文件）
++
++```sh
++RUNNER=local sh scripts/backup.sh --help
++RUNNER=local DATA_DIR="$DATA_DIR" BACKUP_ROOT="$DRILL_ROOT" sh scripts/backup.sh --dry-run
++```
++
++预期输出（摘录）：
++
++```
++ audiobook 数据备份  ...
++   数据目录 : /volume1/docker/audiobook-data（站点运行中，数据库走在线备份）
++   备份目录 : /volume1/docker/audiobook-backup-drill
++   模式     : all   清理旧快照: 1   dry-run: 1
++   保留策略 : 日 7 / 周 4 / 月 6
++   运行器   : local (python3)
++...
++[backup] [dry-run] 数据目录: ...
++[backup] [dry-run] 备份目录: ...
++[backup] [dry-run] 时间戳: ...，模式: all
++```
++
++判定：无 `!!` 行、退出码 0。若提示 `本机没有 python3` → 改用第 6 节 docker 路径。
++
++## 2. 第一步：只备份数据库（秒级）
++
++```sh
++RUNNER=local DATA_DIR="$DATA_DIR" BACKUP_ROOT="$DRILL_ROOT" \
++  sh scripts/backup.sh --db-only
++echo "exit=$?"
++```
++
++预期输出（关键行）：
++
++```
++   数据目录 : ...（站点运行中，数据库走在线备份）
++[backup] 数据库已备份: <DATA_DIR>/books/calibre-webserver.db -> <DRILL_ROOT>/db/<ts>/webserver.db（x.x MB，sqlite-backup-api）
++[backup] 数据库已备份: <DATA_DIR>/books/library/metadata.db -> <DRILL_ROOT>/db/<ts>/calibre-metadata.db（x.x MB，sqlite-backup-api）
++[backup] 备份完成，状态=ok，清单=<DRILL_ROOT>/manifests/backup-<ts>.json
++ 备份成功。恢复步骤见 docs/备份与恢复演练.md
++exit=0
++```
++
++检查点（全部满足才算通过）：
++
++```sh
++TS=$(ls -1 "$DRILL_ROOT/db" | sort | tail -1); echo "$TS"
++ls -l "$DRILL_ROOT/db/$TS"/            # webserver.db、calibre-metadata.db、manifest.json
++python3 - <<'PY'
++import json, os, sqlite3, glob
++root = os.environ["DRILL_ROOT"]
++ts = sorted(os.listdir(os.path.join(root, "db")))[-1]
++for name in ("webserver.db", "calibre-metadata.db"):
++    p = os.path.join(root, "db", ts, name)
++    con = sqlite3.connect(p)
++    print(name, con.execute("PRAGMA integrity_check").fetchone()[0],
++          "tables=", con.execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0])
++    con.close()
++m = json.load(open(os.path.join(root, "manifests", "backup-%s.json" % ts)))
++print("manifest:", m["status"], len(m.get("databases", [])))
++PY
++```
++
++期望：两个库都打印 `ok`；`manifest: ok 2`。
++
++## 3. 第二步：第一次全量（数据库 + 文件）
++
++```sh
++RUNNER=local DATA_DIR="$DATA_DIR" BACKUP_ROOT="$DRILL_ROOT" \
++  KEEP_DAILY=7 KEEP_WEEKLY=4 KEEP_MONTHLY=6 MIN_FREE_GB=5 \
++  sh scripts/backup.sh
++echo "exit=$?"
++```
++
++预期输出（关键行）：
++
++```
++[backup] 数据库已备份: ...（sqlite-backup-api）
++[backup] 文件快照完成：N 个文件、M 个目录，复制 N 个（x.x GB），硬链接复用 0 个，耗时 xx.xs
++[backup] 备份完成，状态=ok，清单=<DRILL_ROOT>/manifests/backup-<ts>.json
++ 备份成功。恢复步骤见 docs/备份与恢复演练.md
++exit=0
++```
++
++判定：`硬链接复用 0 个`（首份没有可复用文件）；无 `!!` 行；`files/<ts>/books/library/metadata.db` 存在。
++
++记录体积：
++
++```sh
++TS=$(ls -1 "$DRILL_ROOT/files" | sort | tail -1)
++du -sh "$DRILL_ROOT/files/$TS"
++find "$DRILL_ROOT/files/$TS" -type f | wc -l
++```
++
++## 4. 第三步：第二次全量（验证增量）
++
++至少间隔 60 秒再跑（时间戳精确到秒，避免目录同名）：
++
++```sh
++sleep 60
++RUNNER=local DATA_DIR="$DATA_DIR" BACKUP_ROOT="$DRILL_ROOT" sh scripts/backup.sh
++echo "exit=$?"
++```
++
++预期：第二份的 `硬链接复用` 数量 **接近文件总数**（未变化文件共享 inode），
++`复制` 数量与字节数应很小。检查：
++
++```sh
++TS2=$(ls -1 "$DRILL_ROOT/files" | sort | tail -1)
++du -sh "$DRILL_ROOT/files/$TS2"                         # 应明显小于第一份
++stat -c '%i %n' "$DRILL_ROOT/files/$TS2/books/library/metadata.db" \
++              "$DRILL_ROOT/files/$TS"/books/library/metadata.db 2>/dev/null
++# 两次输出的 inode 相同 = 硬链接复用成功
++```
++
++若提示 `!! 备份目录不支持硬链接`：说明备份盘是 exFAT/FAT 或无硬链接权限，
++仍可恢复但空间会翻倍，需改用支持硬链接的文件系统（ext4/Btrfs/XFS）。
++
++## 5. 第四步：校验与保留策略
++
++```sh
++RUNNER=local DATA_DIR="$DATA_DIR" BACKUP_ROOT="$DRILL_ROOT" sh scripts/backup.sh --list
++python3 - <<'PY'
++import json, glob, os
++root = os.environ["DRILL_ROOT"]
++for p in sorted(glob.glob(os.path.join(root, "manifests", "*.json")):
++    m = json.load(open(p))
++    print(os.path.basename(p), m["status"], m.get("files", {}).get("copied"))
++PY
++```
++
++期望：两份 manifest 都为 `ok`（或 `ok-with-warnings`，并确认告警只是被忽略的临时文件）。
++
++演练成功判定（5 项全过）：
++
++1. 三次执行退出码均为 `0`；
++2. 两份 manifest 存在且 `status=ok`；
++3. 两个数据库副本 `PRAGMA integrity_check = ok`；
++4. 第二份快照 `硬链接复用 > 0` 且体积明显小于第一份；
++5. `--list` 能看到 `db/`、`files/`、`manifests/` 三个目录。
++
++## 6. docker 路径（Windows 上未验证，必须在 NAS 上单独跑一次）
++
++前置：NAS 上已构建应用镜像（`docker image ls mybooks-local:latest` 有输出）。
++若没有：在 compose 目录执行 `docker compose build`（或 `docker build -t mybooks-local:latest .`）。
++
++```sh
++RUNNER=docker BACKUP_IMAGE=mybooks-local:latest DOCKER_USER=0:0 \
++  DATA_DIR="$DATA_DIR" BACKUP_ROOT="$DRILL_ROOT" \
++  sh scripts/backup.sh --dry-run
++
++RUNNER=docker BACKUP_IMAGE=mybooks-local:latest DOCKER_USER=0:0 \
++  DATA_DIR="$DATA_DIR" BACKUP_ROOT="$DRILL_ROOT" \
++  sh scripts/backup.sh --db-only
++```
++
++脚本内部实际执行（可复制出来单独排障）：
++
++```sh
++docker run --rm -i --network none --user 0:0 -e TZ=Asia/Shanghai \
++  -v "$DATA_DIR:/data" -v "$DRILL_ROOT:/backup" \
++  --entrypoint python3 mybooks-local:latest - \
++  --data /data --backup /backup --mode db --keep-daily 7 --keep-weekly 4 --keep-monthly 6 \
++  < scripts/backup_run.py
++```
++
++docker 路径检查点：
++
++- `docker image inspect mybooks-local:latest` 成功，否则脚本退出 3 并提示构建；
++- 容器内以 `--user 0:0` 运行，写 `/backup` 时不应出现 `Permission denied`；
++- `--network none` 下仍能完成（备份不需要网络）；
++- 容器一次性退出，`docker ps -a` 不应留下名字含 `mybooks` 的临时容器。
++
++常见失败：
++
++| 现象 | 原因 | 处理 |
++|---|---|---|
++| `找不到镜像 mybooks-local:latest` | 镜像名与 compose 不一致 | `docker images` 查实际 tag，用 `BACKUP_IMAGE=` 覆盖 |
++| `Permission denied` 写 `/backup` | 目录属主/权限 | `DOCKER_USER=0:0`；或 `chown` 备份目录 |
++| 数据目录为空 | 挂载路径写错 | 用绝对路径，`ls -ld` 先确认 |
++| 退出码 3 且提示「备份目录不能位于数据目录内部」 | 路径包含关系 | 换到独立目录 |
++
++> **重要**：docker 路径当前只在代码层验证过，尚未在 Windows 或 NAS 实机跑通；
++> 首次务必用 `--db-only` 小步验证，再跑全量。
++
++## 7. 失败排查（local / docker 通用）
++
++| 退出码 / 输出 | 含义 | 处理 |
++|---|---|---|
++| `2` + `已有备份进程在运行（pid …）` | 上一轮未结束 | 等它结束；确认无进程后删 `$BACKUP_ROOT/.backup.lock` |
++| `2` + `备份完成但有告警` | 部分文件被跳过 | 看 `!!` 行；临时文件可忽略，权限错误需修 |
++| `3` + `备份盘剩余空间不足` | 低于 `MIN_FREE_GB` | 扩容或调小 `MIN_FREE_GB` |
++| `3` + `在线备份失败（容器可能在写入）` | 容器未停且不能冷拷贝 | 保持容器运行（走在线备份）；或停容器后 `--db-only` 会冷拷贝 |
++| `3` + `完整性校验失败` | 副本损坏 | 检查源库磁盘健康；重跑一次；仍失败则停容器冷拷贝 |
++| `3` + `文件快照失败，已清理不完整快照` | 读取中断/权限 | 看日志错误；修权限后重跑 |
++| `!! 有 N 个文件未能备份` | 个别文件读失败 | 输出前 10 条；确认是否可忽略 |
++
++## 8. 演练收尾
++
++1. 保留 `$DRILL_ROOT/manifests/*.json` 与执行日志作为证据。
++2. 演练目录可保留数日再删；删除前确认 `BACKUP_ROOT` 不是正式目录：
++
++```sh
++echo "$DRILL_ROOT"     # 必须是 audiobook-backup-drill
++# 确认无误后：rm -rf "$DRILL_ROOT"
++```
++
++3. 正式启用：把 cron 指向正式目录（默认值可覆盖）：
++
++```sh
++# 每天 03:30，日志追加
++30 3 * * * /bin/sh $SRC_DIR/scripts/backup.sh \
++  >> /volume1/docker/audiobook-backup/backup.log 2>&1
++```
+diff --git a/docs/交付/交付索引.md b/docs/交付/交付索引.md
+new file mode 100644
+index 0000000..03e87ce
+--- /dev/null
++++ b/docs/交付/交付索引.md
+@@ -0,0 +1,149 @@
++# 交付索引（audiobook 优化 P0/P1 及后续批次）
++
++实施分支 `opt/p0-p1`（基线 `32bc1d4`，分支提交 `fdbf006`），master 已快进到同一提交（`4.6.0-20`），原始部署包未改动。
++补丁序列已在干净的 `32bc1d4` 工作树上实测：`git am` 全部应用成功，最终树
++`f2a9b5ad736267c5a92824fd70c584aed2d3582c` 与分支一致；合集补丁 `git apply --check` 通过。
++
++## 1. 补丁
++
++目录：`delivery/patches/`
++
++| 序号 | 文件 | 字节 | SHA256 |
++|---|---|---|---|
++| 01 | `01-P0-backup.patch` | 49351 | `4c877e0f2593ebc379d2864830b2f3d345b2efc72b9eee9f74c1b1e3b2d7f257` |
++| 02 | `02-P1-1-mcp-token.patch` | 10421 | `d428983ba679dc7e2f81e0eebd478641b1f85e491e13778eaae609fe0ea1719e` |
++| 03 | `03-P1-2-ws-origin.patch` | 4205 | `de37cf7b2a98b7617bb943b7f7107b9e438f9d23dbb564e308c761e22f3cb86e` |
++| 04 | `04-P1-3-audio-cache.patch` | 9249 | `e9572d6de6fb2fa364a36afbd6044c8555ab22b3a6fde7a26b75a8900242c23a` |
++| 05 | `05-P1-4-audio-range.patch` | 4459 | `a27980c34961752ba6f093336f00a08871bb22c213b1e904f5ada4ff7e644816` |
++| 06 | `06-audio-flag-incremental.patch` | 10518 | `a7c534febc38c02fe11df7712831aa2bf1e03a3297b295735450805376c285a2` |
++| 07 | `07-search-index.patch` | 31730 | `e8e153e86e771a39f7276bc6742356b27775ff6bb231ca1a2d333ea04326c26e` |
++| 08 | `08-pagination.patch` | 12871 | `0a5d32404dda0db5915542174d4b8f8d8b52e0f569ab0aac878ad19cffa86bc7` |
++| 09 | `09-import-batch.patch` | 5012 | `023660c6265716fbc40f8ca564bdc9f81c350bd93c1fd626038627e2105c9dc1` |
++| 10 | `10-tasks-usability.patch` | 10174 | `9e00752a94c4e2edc7a33c929124404e1415516374a0b9c91fb9b7df8ed7691d` |
++| 11 | `11-upstream-topics.patch` | 24910 | `7488464fbbdc840785afb486d91b6e65df7b7a788674c9ba1700989ea99d4ec2` |
++| 12 | `12-impl-record.patch` | 13219 | `c00143c916a0181bc2c1af6a7fad187ac9c34f7f20c883e7f28e3d6f75feb188` |
++| 13 | `13-audio-detail-dir.patch` | 4913 | `077abe4d75259202bda798417d88b7e32553694ccee86f7d080bff40dd17ec90` |
++| 14 | `14-impl-record-update.patch` | 2184 | `428607c1f3629df9aca7a71cf3ff96dae3ac11a2e4e322008be845e7adb7ece6` |
++
++单文件合集：`delivery/all-in-one.patch`
++（168679 字节，SHA256 `d9ca68da40687de8c2dffe13d52254ff3f2e7b18210480c4cb57a5e0152df52b`），
++只适用于 `git apply`，不含提交信息。
++
++压缩包：`delivery/audiobook-opt-p0p1-delivery.zip`
++（校验文件同目录 `.sha256`）。
++
++校验示例：
++
++```powershell
++Get-ChildItem delivery\patches\*.patch | Get-FileHash -Algorithm SHA256
++```
++
++## 2. 文档
++
++| 文档 | 路径 | 用途 |
++|---|---|---|
++| 应用与回滚 | `docs/交付/应用与回滚.md` | 基线、应用顺序、冲突处理、按项取用、逐项回滚、最小验证 |
++| NAS 备份演练清单 | `docs/交付/NAS备份演练清单.md` | 可直接照抄的命令、预期输出、5 个成功判定、故障排查、docker 单独章节 |
++| 实施与决策记录 | `docs/优化实施与决策记录.md` | 逐项改动文件 / diff 摘要 / 影响面 / 回滚 / 发布说明 / 已代选决定 |
++| 备份与恢复演练 | `docs/备份与恢复演练.md` | 备份范围、参数表、cron、四类恢复演练、RPO/RTO |
++| 上游跟进主题包 | `docs/上游跟进/README.md`（A/B/C/D 四份） | 每个上游条目的处置、落点、补丁要点、验证、回滚 |
++| 评估与优化方案 | `docs/评估与优化方案.md` | 现状、四类问题、海量数据专章、第 9 章已代选默认值、第 10 章决策记录 |
++
++> 交付文档（`docs/交付/*`）是补丁生成之后追加的文档提交，**不在补丁序列内**；
++> 应用补丁得到的是分支 `fdbf006` 的代码树。需要连文档一起复制时，直接拷贝 `docs/交付/`。
++
++## 3. 推荐执行顺序
++
++1. 读 `docs/交付/应用与回滚.md`，在目标仓库按 `01 → 14` 应用（或只取所需组合）。
++   **目标不是 git 仓库时跳过本步，改用 `overlay/` + `nas/60-apply-overlay.sh`（见第 7 节）。**
++2. 按「最小验证」跑语法检查与 14 条单测。
++3. NAS 上执行 `delivery/nas/` 脚本：路径不确定先跑 `05` 修订 `paths.conf`，再 `00 → 10 → 20 → 30 → 40`（备份闭环）→ `60`（覆盖源码）→ `70`（确认镜像已包含新代码）→ `90`（定时任务）。详细命令见 `delivery/nas/README-NAS.md` 的「零、快速开始」。
++4. 上线后按 `docs/优化实施与决策记录.md` 的「发布说明 / 验收命令」冒烟。
++5. 上游跟进用 `python3 scripts/upstream/patch_tool.py status --upstream <上游检出>` 复核。
++
++## 4. 约束与状态
++
++- 原始部署包全程只读，未修改。
++- 补丁在 `32bc1d4` 上验证通过；应用到上游 `mybooks 4.6.0` 可能冲突，属预期，按主题文档手工取舍。
++- Windows 本机缺 calibre 依赖，集成级 pytest 未跑；纯逻辑用例 14 passed。
++- `backup.sh` 的 `RUNNER=docker` 路径尚未实机验证，NAS 首次务必先 `--db-only`。
++
++## 5. 群晖 DSM 7 脚本包
++
++目录：`delivery/nas/`（全部 LF、脚本权限 0755、`#!/bin/bash` + `set -euo pipefail`、均支持 `--help`）。
++路径不再分散在各脚本，统一由 `paths.conf` 提供（实际部署布局：`APP_ROOT=/volume1/docker/audiobook`、`DATA_DIR=/volume1/docker/audiobook-data`）。
++
++| 文件 | 用途 | 字节 | SHA256 |
++|---|---|---|---|
++| `00-check-env.sh` | 只读预检（bash/docker/命令/路径/磁盘） | 8576 | `238afa5a4ea1776f6560ede72476774f1ee0c4e3a89a6a5877caa7a373a5e07c` |
++| `05-detect-paths.sh` | 只读探测挂载/库/音频/compose，输出 paths.conf 建议值 | 10174 | `a098adaaa70a9d7cec599526536c31daac549e981e7a18b6265600555c864337` |
++| `10-backup-db.sh` | 仅数据库在线备份 | 3778 | `ff81be0eb9c9baa816816568de3883006721dbf37eff0feba8467fc84f198764` |
++| `20-backup-full.sh` | 数据库 + 书籍 + 音频全量/增量 + 保留策略 | 5816 | `f105befb3c171203e68fc713a114943f566a1932c22828bca291d4c5c819ba6f` |
++| `30-verify-backup.sh` | 校验 manifest / SHA256 / SQLite 完整性 | 7212 | `75ea6bb35830ed29f8b9a945c762ab7787a4c7812be596787ae7f855a78f08a1` |
++| `40-restore-drill.sh` | 独立演练目录恢复 + 路径白名单 | 7661 | `85e0ab421244f10c7bfac275c19981911e5e060a02be7ce1960cecce0f879a70` |
++| `50-apply-patches.sh` | 应用 `delivery/patches`，默认 dry-run；支持分离式 git 目录 | 7820 | `ef7e45c0ac92e0e3faec709f0bd9589f5c00ae8ae996f08baa91899ea53c9892` |
++| `60-apply-overlay.sh` | **无 git 文件覆盖**：基线校验、备份、回滚、打印生效命令 | 13196 | `07d3181b83e38e70cdc7183072507bef3b5f0a62240a4eb26edd2dd6689af203` |
++| `70-check-image.sh` | **只读自检**：镜像/容器内源码逐文件比对 `new_sha256`，核对容器是否跑在新镜像上；`--json` | 10657 | `f646de780d72cb5b1d0c4ed2e40bf648e62c50db237efee0b3f74c53dfcc19bb` |
++| `90-cron-setup.sh` | 生成 crontab / DSM 任务计划说明 | 6144 | `01736b1ca58566942722d3c7d9b1f14edd5d787597bfd332b69b4ab53aced022` |
++| `paths.conf` | 实际部署路径（脚本 source，环境变量可覆盖） | 3858 | `72c2aa39bfd7ad1593138253c7ffdd88760b9083fa5396e37aebe887e088e33b` |
++| `README-NAS.md` | 快速开始、顺序、参数、退出码、覆盖包章节、DSM 注意事项 | 23634 | `494e173e649dd7bea4a4a03afe5e48b7ffd514b5087ffac874d83b934628705d` |
++
++压缩包：`delivery/audiobook-opt-p0p1-nas-scripts.zip`
++（56301 字节，含 `nas/` 与 `scripts/` 共 15 个文件，SHA256 `f6f9536416d7d8b8d95762744e4fdc53950da1de4d6012a704e85d4ca221b2b2`，
++校验文件 `delivery/audiobook-opt-p0p1-nas-scripts.zip.sha256`）。
++仅含脚本、不含 `overlay/` 与 `patches/`，完整交付请用上面的 tar.gz。
++
++解压后如权限丢失：`chmod 755 ./*.sh`；如被 Windows 编辑器改过换行：`sed -i 's/\r$//' ./*.sh`。
++
++## 6. 交付物来源：为什么当前源码里没有 `scripts/backup.sh`
++
++`scripts/backup.sh` 与 `scripts/backup_run.py` 是**补丁 01-P0-backup 新增的文件**，基线 `32bc1d4` 中不存在。
++拿到原始部署包或未打补丁的源码时找不到它们，属于正常现象，不是漏交付。
++
++| 交付物 | 来源 | 说明 |
++|---|---|---|
++| `delivery/patches/01-P0-backup.patch` … `14-impl-record-update.patch` | 优化分支 `opt/p0-p1` 逐项提交导出 | 新增/修改源码，需按顺序应用 |
++| `delivery/all-in-one.patch` | 14 个补丁的顺序合集 | 一次性应用用 |
++| `delivery/scripts/backup.sh`、`backup_run.py` | 从 `scripts/` 原样复制的补丁内实现（0755、LF） | 不打补丁时的对照/应急副本，不替代补丁 |
++| `delivery/nas/*.sh`、`paths.conf`、`README-NAS.md` | 本次新写的独立脚本，**不属于补丁** | 群晖外壳；`20` 最终仍调用 `APP_ROOT/scripts/backup.sh` |
++
++`20-backup-full.sh` 与 `delivery/scripts/backup.sh` 的关系：
++
++- `20` 负责参数、路径校验、退出码与日志，然后执行 `APP_ROOT/scripts/backup.sh`；
++- 已应用补丁 01 时，`APP_ROOT/scripts/backup.sh` 存在，直接可用；
++- 未应用补丁时，可先跑 `50-apply-patches.sh --apply`，或把 `delivery/scripts/` 两个文件复制到 `APP_ROOT/scripts/`（同样 0755、LF）。
++
++## 7. 自包含发布包
++
++`delivery/audiobook-nas-release.tar.gz` 顶层目录 `audiobook-ops/`，含：
++
++- `nas/`：10 个脚本（`00`、`05`、`10`、`20`、`30`、`40`、`50`、`60`、`70`、`90`）+ `paths.conf` + `README-NAS.md`
++- `overlay/`：**无 git 文件覆盖包** —— `files/`（34 个改动文件）、`MANIFEST.tsv`、`SHA256SUMS`、`README.md`
++- `scripts/`：`backup.sh`、`backup_run.py`（补丁内实现，供复制到 `APP_ROOT/scripts/`）
++- `patches/`：14 个补丁 + `all-in-one.patch`
++- `docs/`：方案、实施记录、应用与回滚、演练清单、本文索引
++- 根目录 `install.sh`（校验、统一权限、打印执行顺序）、`VERSION`、`SHA256SUMS`
++
++推荐放到 `/volume1/docker` 解压，得到 `/volume1/docker/audiobook-ops`，再执行 `install.sh`。
++
++当前包：81 个文件；具体大小与 SHA256 以同目录 `audiobook-nas-release.tar.gz.sha256` 为准
++（包内 `SHA256SUMS` 覆盖全部 80 个文件，`install.sh` 会自动校验）。
++
++### 7.1 覆盖包与补丁的适用条件
++
++| 目标环境 | 用哪个 | 生效方式 |
++|---|---|---|
++| 是 git 仓库，或存在可用 `APP_GIT_DIR` | `nas/50-apply-patches.sh` | 打进镜像 → `build`；bind mount → 重启容器 |
++| **不是 git 仓库**（当前环境） | `nas/60-apply-overlay.sh` + `overlay/` | 同上，由 `60` 读 compose 判断并打印 |
++| 只有预构建镜像、宿主机无源码 | **都不适用** | 需在构建镜像的机器上改源码后重建、再部署 |
++
++覆盖包的基线是 `32bc1d4`：
++
++- 18 个 `add`（新增文件，目标已存在同名则冲突跳过）
++- 16 个 `update`（目标当前 sha256 必须等于基线才覆盖，否则跳过；`--force` 才强制，仍先备份）
++
++源码备份目录 `<ops目录>/rollback/<时间戳>/`，`ROLLBACK.tsv` 记录 `M|路径`（恢复）与 `A|路径`（删除），
++`nas/60-apply-overlay.sh --rollback[=时间戳]` 一键还原。
++
++本部署包 `docker-compose.yml` 为本地构建（`build: context: .`、`image: mybooks-local:latest`，
++仅挂载数据目录），源码**打进镜像**，覆盖后必须 `tag → build → up -d`，只重启容器不生效。
+diff --git a/docs/交付/应用与回滚.md b/docs/交付/应用与回滚.md
+new file mode 100644
+index 0000000..d2a6144
+--- /dev/null
++++ b/docs/交付/应用与回滚.md
+@@ -0,0 +1,139 @@
++# 应用与回滚说明（opt/p0-p1 补丁包）
++
++本说明用于把 `opt/p0-p1` 的改动应用到另一份仓库（含上游 mybooks 4.6.0），
++或应用到已部署的 NAS 源码目录后重新构建。
++
++- 基线提交：`32bc1d4`（Gitee `wxgoo/audiobook-src` master，即补丁的父提交）
++- 补丁目录：`delivery/patches/`（14 个，按提交顺序编号）
++- 单文件合集：`delivery/all-in-one.patch`
++- 应用完成后的期望树：`f2a9b5ad736267c5a92824fd70c584aed2d3582c`
++  （对应分支提交 `fdbf006`，**不包含**本交付文档提交）
++
++## 1. 前置条件
++
++| 项 | 要求 |
++|---|---|
++| 代码基线 | `git rev-parse HEAD` 为 `32bc1d4`，或至少包含它 |
++| 工作区 | 干净（`git status --short` 无输出）；先 `git stash` 或提交本地改动 |
++| Git | 2.x；建议显式关闭换行转换：`git -c core.autocrlf=false ...` |
++| 运行环境 | 备份脚本需要 Python 3.8+（NAS 无 python3 时用 `RUNNER=docker`） |
++| 原始部署包 | **不要动**，所有改动只作用于源码仓库/分支 |
++
++## 2. 应用顺序
++
++```
++01-P0-backup.patch               脚本 + 备份演练文档（完全独立）
++02-P1-1-mcp-token.patch          MCP token / 日志脱敏
++03-P1-2-ws-origin.patch          AI WebSocket Origin 校验
++04-P1-3-audio-cache.patch        音频缓存移出请求线程
++05-P1-4-audio-range.patch        音频 Range 异步读盘
++06-audio-flag-incremental.patch  音频标志事件驱动
++07-search-index.patch            中文 FTS5 检索索引
++08-pagination.patch              书目/有声书游标分页
++09-import-batch.patch            导入批窗口可配置
++10-tasks-usability.patch         失败任务重试提示与可读错误
++11-upstream-topics.patch         上游 A/B/C/D 主题包 + 导出工具
++12-impl-record.patch             实施与决策记录
++13-audio-detail-dir.patch        详情页音频目录 O(1)
++14-impl-record-update.patch      实施记录补充
++```
++
++依赖关系：`04 → 06 → 13` 建议保持顺序（都改 `handlers/audio.py` 的缓存/目录逻辑）；
++`02/04/09` 都改 `webserver/settings.py` 的邻近区块，按序应用可避免手工合并。其余补丁相互独立。
++
++## 3. 方式 A：git am（保留提交历史，推荐）
++
++```sh
++cd <源码目录>
++git checkout -b opt-apply 32bc1d4
++
++# 全部应用
++git -c core.autocrlf=false am delivery/patches/*.patch
++
++# 校验
++git rev-parse 'HEAD^{tree}'   # 期望 f2a9b5ad736267c5a92824fd70c584aed2d3582c
++```
++
++若只想应用其中几项，直接指定文件即可（例如只上安全和音频）：
++
++```sh
++git am delivery/patches/02-P1-1-mcp-token.patch \
++       delivery/patches/03-P1-2-ws-origin.patch \
++       delivery/patches/05-P1-4-audio-range.patch
++```
++
++### 冲突处理
++
++- 优先 `git am -3 delivery/patches/0X-*.patch`（基线 blob 存在时可三方合并）。
++- 冲突后：`git status` 看冲突文件 → 手工改 → `git add <file>` → `git am --continue`。
++- 放弃本次：`git am --abort`；跳过这一条（例如上游已修）：`git am --skip`。
++- 上游 mybooks 4.6.0 与本 fork 差异较大，**A/B/C/D 主题补丁在应用到上游时大概率冲突**，
++  这是预期行为；按 `docs/上游跟进/*.md` 的「补丁要点」手工取舍，不要整包硬套。
++
++## 4. 方式 B：git apply（不生成提交）
++
++```sh
++git apply --check delivery/all-in-one.patch     # 只检查
++git apply --stat  delivery/all-in-one.patch     # 看改动面
++git apply delivery/all-in-one.patch             # 应用到工作区
++```
++
++合集补丁不含提交信息，适合「先看效果再决定是否提交」。
++若个别文件失败：`git apply --3way --reject delivery/all-in-one.patch`，
++失败片段会写成 `*.rej`，逐个处理后删除。
++
++## 5. 只取某几项（常用组合）
++
++| 目标 | 补丁 |
++|---|---|
++| 只要备份能力 | `01`（独立，可直接 `git am`） |
++| 只要安全加固 | `02` + `03` |
++| 音频性能 | `04` + `05` + `06` + `13`（按序） |
++| 检索 | `07` |
++| 分页 | `08` |
++| 导入 | `09` |
++| 任务易用性 | `10` |
++| 仅文档 | `11` + `12` + `14` |
++
++> 跨组合时若同一文件（`handlers/audio.py`、`handlers/base.py`、`settings.py`）冲突，
++> 以编号小的先应用、编号大的后应用，冲突处保留双方改动即可。
++
++## 6. 逐项回滚
++
++三种方式，按场景选：
++
++```sh
++# 1) 已按方式 A 应用并保留了提交：按提交回滚（最安全）
++git revert <对应提交短哈希>          # 单条
++git revert --no-commit <h1> <h2> && git commit   # 多条合并成一次
++
++# 2) 无提交历史（方式 B）：反向应用补丁
++git apply -R delivery/patches/05-P1-4-audio-range.patch
++
++# 3) 整包回滚到基线（确认无本地改动后）
++git checkout 32bc1d4 -- .            # 仅回滚工作区文件，历史保留
++```
++
++补丁与提交对照见 `docs/优化实施与决策记录.md` 的提交表；`01`–`14` 顺序与提交顺序一致。
++
++**回滚注意**
++
++- `04/06` 回滚后可把 `AUDIO_CACHE_REFRESH_SECONDS` 调回 `300` 以恢复旧频率。
++- `07` 回滚只需 `SEARCH_INDEX_ENABLED=False`，不必回滚代码。
++- `08` 回滚只要前端不再传 `after` 参数，旧 `start/size` 即恢复。
++- `02` 回滚后旧客户端可在 URL 带 token，但请尽快迁回 Header。
++- 备份 `01` 回滚只需停 cron，不影响业务代码与已有快照。
++
++## 7. 应用后的最小验证
++
++```sh
++python -m py_compile webserver/settings.py webserver/handlers/base.py \
++    webserver/handlers/audio.py webserver/handlers/admin.py \
++    webserver/services/background_service.py webserver/services/scan_service.py
++python -m pytest tests/test_pagination.py tests/test_search_index.py \
++    tests/test_background_tasks.py -q
++sh -n scripts/backup.sh
++python3 scripts/search_index.py status
++```
++
++预期：语法检查无输出；pytest `14 passed`；`sh -n` 无输出。
+diff --git a/docs/优化实施与决策记录.md b/docs/优化实施与决策记录.md
 new file mode 100644
 index 0000000..9c0021d
 --- /dev/null
-+++ "b/docs/\344\274\230\345\214\226\345\256\236\346\226\275\344\270\216\345\206\263\347\255\226\350\256\260\345\275\225.md"
++++ b/docs/优化实施与决策记录.md
 @@ -0,0 +1,200 @@
 +# 优化实施与决策记录
 +
@@ -381,16 +1218,307 @@ index 0000000..9c0021d
 +| DEC-12 | 上游按 A/B/C/D 主题拆包 | `patch_tool.py` |
 +
 +> 以上均为「已代选，可调整」。本轮未触发需要用户拍板的三类（数据不可逆丢失、生产凭据、对外契约变更）。
-diff --git "a/docs/\345\244\207\344\273\275\344\270\216\346\201\242\345\244\215\346\274\224\347\273\203.md" "b/docs/\345\244\207\344\273\275\344\270\216\346\201\242\345\244\215\346\274\224\347\273\203.md"
+diff --git a/docs/变更报告-4.6.0-build.20.md b/docs/变更报告-4.6.0-build.20.md
 new file mode 100644
-index 0000000..5c8091b
+index 0000000..bffff4d
 --- /dev/null
-+++ "b/docs/\345\244\207\344\273\275\344\270\216\346\201\242\345\244\215\346\274\224\347\273\203.md"
++++ b/docs/变更报告-4.6.0-build.20.md
+@@ -0,0 +1,285 @@
++# 变更报告：`4.6.0-19-r13` → `4.6.0-build.20`
++
++> 对比基线：`4.6.0-19-r13`（旧部署包 `audiobook-deploy-4.6.0-19-r13-patched.tar.gz` 对应的源码状态，
++> 即本 fork 的初始提交 `32bc1d4`）。
++> 对比终点：`4.6.0-build.20`（提交 `569bc3b` 起的本地构建号 20）。
++> 统计口径：`git diff 32bc1d4..HEAD --numstat`，**不含** `delivery/` 下为无 git 环境准备的副本/补丁/压缩包。
++
++---
++
++## 一、版本关系
++
++| 项 | 取值 | 说明 |
++|---|---|---|
++| 旧版本 | `4.6.0-19-r13` | 第 19 次本地发布，交付标签 `4.6.0-19` |
++| 新版本 | `4.6.0-build.20` | 第 20 次本地构建，运行期版本与交付标签**同值** |
++| 上游基线 | mybooks tag `4.6.0`（2026-10-25，commit `3c5947c`） | 新旧两版**建在同一个上游 tag 上**，本轮未合入上游新代码 |
++| 上游未发布分支 | mybooks `develop` = `4.6.1`（无 tag、无 Release） | 不跟号；等上游正式发 tag 后按主题合入，届时升 `4.6.1-build.20` |
++| 已封存号段 | `v4.7.1 ~ v4.8.x` | 与 `4.6.0-build.20` **无版本先后关系**，属号段重置 |
++
++**`4.6.0-build.20` 的版本语义**：它是合法 semver 的**预发布标记（prerelease）**，整串排序**低于** `4.6.0`
++（`4.6.0-build.20 < 4.6.0`）。本程序不发布 npm 包、`app/package.json` 无 `engines` 校验，
++因此该排序差异没有实际影响。
++
++**关键约束：版本号不参与任何升级门控。** 全仓库仅有三处读取 `VERSION`，都是整串相等比较：
++`main.py` 的 `VERSION == "v0.0.1"`（开发版跳过版本检查）、`handlers/admin.py` 的
++`last_revsion != VERSION`（只用于提示「构建已变化」）、`services/book_barn.py` 的
++`latest_version != VERSION`；表结构检查 `should_check_db_structure()` **恒返回 True**，
++刻意不用版本号判断。同一上游基线的两次本地构建之间只有 `build.N` 能区分新旧，
++**不要**用 `>` 比较整串（会漏判），也不要为迁就代码去改版本号。
++
++---
++
++## 二、变更总览
++
++| 范围 | 文件数 | 新增行 | 删除行 |
++|---|---:|---:|---:|
++| **全部（git 口径）** | 123 | 38,353 | 132 |
++| 其中 `delivery/` 交付工程（副本/补丁/压缩包） | 73 | 33,841 | 0 |
++| **实际源码 / 文档 / 工具改动** | **50** | **4,512** | **132** |
++
++按模块（不含 `delivery/` 副本）：
++
++| 模块 | 文件数 | +行 | −行 | 内容 |
++|---|---:|---:|---:|---|
++| 备份（P0） | 4 | 1,374 | 0 | `scripts/backup.sh`、`scripts/backup_run.py`、演练与演练清单 |
++| 部署工具 | 4 | 378 | 0 | `scripts/check-version-lock.py`、`pack.sh`、`scripts/README.md` |
++| 检索 | 3 | 555 | 0 | FTS5 中文书目检索索引（服务 + handler + CLI） |
++| 测试 | 6 | 423 | 0 | 缓存、检索、分页、后台任务、AI agent、版本锁 |
++| 后端其他 | 10 | 223 | 22 | 站点信息、后台任务、扫描、设置、版本字段 |
++| 音频与性能 | 1 | 172 | 74 | `handlers/audio.py`（缓存、Range、标志增量） |
++| 上游跟进 | 5 | 147 | 0 | A/B/C/D 主题包与说明 |
++| 安全 | 3 | 90 | 15 | MCP token 走 Header、WebSocket 同源校验 |
++| 文档 | 7 | 1,082 | 15 | README、CHANGELOG、交付索引、优化记录、评估方案、部署包说明 |
++| 分页 | 1 | 43 | 0 | `webserver/base/pagination.py`（游标分页） |
++| 构建与部署 | 3 | 15 | 3 | Dockerfile 空值守卫、Makefile `VER` fail-fast、compose `GIT_VERSION` |
++| 导入 | 1 | 7 | 0 | Phase2 攒批窗口可配置 |
++| 前端 | 2 | 3 | 3 | `package.json` / `package-lock.json` 版本字段 |
++
++**删除文件：0**（本轮只做新增与修改，回退不需要恢复被删文件）。
++
++---
++
++## 三、逐项变更
++
++每项都给出「改了什么 / 为什么 / 影响面 / 如何回退」。回退命令均以本仓库提交号为准。
++
++### 1. 数据备份与恢复闭环（P0，`182a524`）
++
++- **改了什么**：新增 `scripts/backup.sh`（单入口）与 `scripts/backup_run.py`（仅标准库）：
++  SQLite 在线备份 API、文件硬链接快照、日/周/月三层保留、`manifest` + sha256 + `integrity_check`，
++  退出码 0/2/3 区分成功/告警/失败；新增 `docs/备份与恢复演练.md`。
++- **为什么**：手工 `cp` 数据库在写入中会拿到半截文件；缺少可核验的恢复闭环。
++- **影响面**：纯新增脚本，不进入运行时请求链路；不改表结构、不改配置字段。
++- **回退**：删除 `scripts/backup*.{sh,py}` 与对应文档即可，无数据影响。
++
++### 2. MCP token 改走 Authorization 头（P1-1，`f15b515`）
++
++- **改了什么**：`handlers/mcp.py` 等只从 `Authorization: Bearer` 取 token；URL 带 token 默认 403
++  （`ALLOW_MCP_TOKEN_IN_URL` 可临时兼容）；日志递归脱敏；`assistant/mcp_client.py` 同步改 Header。
++- **为什么**：URL 里的 token 会进访问日志、浏览器历史、反代日志。
++- **影响面**：**不兼容变更** —— 旧 MCP 客户端若仍把 token 放 URL 会收到 403。
++- **回退**：`git revert f15b515`；或临时设 `ALLOW_MCP_TOKEN_IN_URL=true` 兼容旧客户端（不推荐长期开）。
++
++### 3. AI WebSocket 同源校验（P1-2，`5353d5e`）
++
++- **改了什么**：`handlers/assistant.py` 的 `check_origin` 改为同源比对（`is_same_host_origin`）。
++- **为什么**：原逻辑放任跨站页面建立 WS 会话（CSWSH）。
++- **影响面**：反向代理改写 `Host`/`Origin` 的部署需保证两者一致，否则 WS 握手失败。
++- **回退**：`git revert 5353d5e`。
++
++### 4. 音频缓存移出请求线程 / Range 异步 / 标志增量（P1-3、P1-4，`20647d4`、`3c0fded`、`20aad04`）
++
++- **改了什么**：`handlers/audio.py` 三处：
++  1. 音频书籍缓存改为单飞后台刷新 + 兜底周期 + 启动预热，不再在请求线程读盘；
++  2. Range 读盘改异步分块 + 背压；
++  3. 音频标志（是否有声书）由全量扫描改为事件驱动增量更新（`services/scan_service.py` 配合）。
++- **为什么**：大库下同步读盘/全量扫描会占满线程池，拖慢整站。
++- **影响面**：**行为变化** —— 新建/导入音频后，标志最多滞后一个扫描周期才在列表生效。
++- **回退**：按提交逐个 `git revert`（三处互相独立，可单独回退）。
++
++### 5. 详情页音频目录改用 calibre 解析（`f1f5955`）
++
++- **改了什么**：`handlers/book.py`、`services/audios_import.py` 的音频目录由 calibre 解析，不再全库遍历。
++- **为什么**：详情页每次全库扫描，书多时明显卡顿。
++- **影响面**：依赖 calibre 元数据一致性；极少数元数据与实际目录不符的老库可能显示为空。
++- **回退**：`git revert f1f5955`。
++
++### 6. 中文书目检索索引（FTS5，`47cdc73`）
++
++- **改了什么**：新增 `webserver/services/search_index.py`（独立 DB 的 FTS5 索引、重建与增量）、
++  `webserver/handlers/search_index.py`（HTTP 接口）、`scripts/search_index.py`（命令行）。
++- **为什么**：SQLite `LIKE` 检索中文书籍在大库下慢且不排序。
++- **影响面**：新增独立索引库文件；**首次使用需重建一次**，否则检索结果为空。
++- **回退**：`git revert 47cdc73`；索引库为独立文件，可直接删除，不影响主库。
++
++### 7. 游标分页（`11126be`）
++
++- **改了什么**：新增 `webserver/base/pagination.py`；书目与有声书列表支持 `after` 游标；
++  `handlers/base.py` 输出适配。
++- **为什么**：深分页 `LIMIT/OFFSET` 在大库上全表扫描。
++- **影响面**：**接口契约变化** —— 前端/第三方分页需按 `after` 游标适配；不传则维持原行为。
++- **回退**：`git revert 11126be`。
++
++### 8. 导入攒批窗口可配置（`bd62261`）
++
++- **改了什么**：`services/audios_import.py` 的 Phase2 攒批窗口改为配置项。
++- **为什么**：大批量导入时固定窗口导致耗时过长。
++- **影响面**：仅影响导入吞吐；明确单写者一致性约束（不要并发跑两个导入）。
++- **回退**：`git revert bd62261`。
++
++### 9. 失败任务可读错误与重试提示（`f58dba6`）
++
++- **改了什么**：`handlers/mcp.py`、`main.py`、`services/background_service.py` 给失败任务返回可读原因与重试提示。
++- **为什么**：失败只显示堆栈，用户无法自助处理。
++- **影响面**：仅提示文案与任务状态字段，无 schema 变更。
++- **回退**：`git revert f58dba6`。
++
++### 10. 上游跟进主题包（`2d4050d`）
++
++- **改了什么**：新增 `docs/上游跟进/`（A 安全与元数据、B 扫描与导入、C 音频与播放、D 功能与权限）
++  与 `scripts/upstream/patch_tool.py`。
++- **为什么**：把「要不要跟上游」变成可拆分的主题决策，避免整包合并。
++- **影响面**：纯文档 + 导出工具，不进入运行时。
++- **回退**：删除对应目录/脚本。
++
++### 11. NAS 交付与无 git 覆盖包（`b77fb64`、`bff41d9`）
++
++- **改了什么**：新增 `delivery/`（`nas/00`–`90`、`paths.conf`、`README-NAS.md`）、无 git 覆盖包
++  `overlay/`（34 个改动文件 + 基线 sha256 清单）、`patches/`（14 个主题补丁）与自包含发布包。
++- **为什么**：群晖上没有 git，必须能在「无 git、无外网」环境校验并覆盖源码。
++- **影响面**：不进入镜像；`60-apply-overlay.sh` 会先校验基线再覆盖、失败自动回滚。
++- **回退**：删除 `delivery/`；已覆盖的服务器按 `60-apply-overlay.sh` 的备份目录回滚。
++
++### 12. 版本号统一与版本锁（`129e19c`、`569bc3b`，本轮）
++
++- **改了什么**：
++  - `webserver/version.py`、`app/package.json`、`app/package-lock.json`、`docker-compose.yml` 的
++    `GIT_VERSION`、`Makefile` 的 `VERSION_LOCK` 统一为 `4.6.0-build.20`；
++  - 新增 `scripts/check-version-lock.py`（可独立执行，退出码 0/1）与 `tests/test_version_lock.py`（9 个用例：1 正向 + 8 负向）；
++  - `scripts/pack.sh` 打包前强制跑版本锁检查；`pack.sh` 的 CHANGELOG 版本正则支持 `-build.N`；
++  - Dockerfile 的 `ARG GIT_VERSION` 默认值为锁值，收到空值直接 `exit 1`（不再写空串）；
++  - Makefile 的 `VER` 与 `VERSION_LOCK` 不一致时 `$(error)` 退出（不再用分支名顶掉版本）。
++- **为什么**：历史上「界面显示 `v4.8.0`、包名写 `4.6.0-20`」双口径并存，且 `make` 会把分支名写进镜像，
++  导致无法判断版本是否真的生效。
++- **影响面**：`make` 不带 `VER` 时按锁值构建；带不一致的 `VER` 会**直接失败**（这是保护，不是构建缺陷）。
++- **回退**：`git revert 569bc3b`（会同时撤掉版本锁与文档，需谨慎）。
++
++---
++
++## 四、风险与不兼容变更
++
++| 级别 | 项 | 影响 | 应对 |
++|---|---|---|---|
++| 高 | 需要**重新构建镜像** | 版本号进入镜像内 `version.py`，旧镜像不会显示新版本 | 按第五节重建并重启；用 `delivery/nas/70-check-image.sh` 核对 |
++| 中 | MCP 客户端需改 Header | 旧客户端把 token 放 URL → 403 | 改 `Authorization: Bearer <token>`；临时开 `ALLOW_MCP_TOKEN_IN_URL` 过渡 |
++| 中 | 检索索引需**首次重建** | 不重建则检索结果为空 | 跑 `scripts/search_index.py` 重建（见第五节） |
++| 中 | 前端分页需适配 `after` 游标 | 老前端仍用 `offset`，行为不变但不享受深分页优化 | 升级 `app/dist` 或在接口层继续兼容 `offset` |
++| 低 | 音频标志最多滞后一个扫描周期 | 新导入音频在列表里短暂显示为「非音频书」 | 等一个周期或手动触发扫描 |
++| 低 | 反向代理改写 `Origin`/`Host` | AI WebSocket 握手被拒 | 保证反代透传两者一致 |
++| 低 | 版本串排序低于 `4.6.0` | 只影响「拿版本号比大小」的外部脚本 | 本程序不做版本门控；外部脚本请比 `build.N` |
++
++**无数据库 schema 变更**：本轮没有 migration/schema 文件，`should_check_db_structure()` 恒执行但只做校验，
++不会自动改表。
++
++---
++
++## 五、升级步骤与验证方法
++
++### 升级顺序（NAS / DSM，无外网可用 `delivery/`）
++
++1. **备份**：`scripts/backup.sh`（或 `delivery/nas/20-backup-full.sh`），确认退出码 0；
++   再跑 `delivery/nas/30-verify-backup.sh` 校验。
++2. **取新源码**：有 git → `git fetch && git merge --ff-only origin/opt/p0-p1`；
++   无 git → 解压完整源码包，或 `delivery/nas/60-apply-overlay.sh`（自动基线校验 + 备份 + 回滚）。
++3. **核对版本锁**：`python3 scripts/check-version-lock.py` → 必须 `exit 0` 且打印「版本锁检查通过」。
++4. **重建镜像**：`make`（`VER` 缺省即 `4.6.0-build.20`）或 `docker compose build && docker compose up -d`。
++5. **重建检索索引**（首次升级必须）：`python3 scripts/search_index.py --rebuild`。
++6. **重启后自检**：`delivery/nas/70-check-image.sh`（核对镜像/容器内源码与预期一致）。
++
++### 验证命令与判据
++
++| 检查 | 命令 | 通过判据 |
++|---|---|---|
++| 版本锁 | `python3 scripts/check-version-lock.py` | 退出码 0；输出含「版本锁检查通过」 |
++| 版本单测 | `python3 -m pytest tests/test_version_lock.py -q` | 9 passed |
++| 容器内版本 | `docker exec <容器> grep VERSION /var/www/mybooks/webserver/version.py` | 含 `4.6.0-build.20` |
++| 界面版本 | 打开首页/关于，或 `GET /api/siteinfo` | `version` 字段为 `4.6.0-build.20` |
++| MCP 鉴权 | `curl -H "Authorization: Bearer <token>" <mcp 地址>` | 200；无 Header 时 403 |
++| 检索索引 | `GET /api/search_index/status` | 索引存在且条目数与书目数同量级 |
++| 分页 | `GET /api/book/list?after=<游标>` | 返回 `after` 与下一页游标 |
++| 镜像自检 | `delivery/nas/70-check-image.sh` | 报告「一致」；不一致会指出「构建了但没重启」 |
++
++**失败判据（任一条不满足即回滚）**：版本锁 `exit != 0`；容器内版本与 `4.6.0-build.20` 不符；
++`/api/siteinfo` 取不到版本；MCP 正常 Header 仍 403；检索接口报错或空；升级后首页 5xx。
++
++---
++
++## 六、已知限制
++
++1. **Windows 开发机缺 calibre 依赖**：部分集成用例（扫描/导入/元数据）会被 skip，
++   必须在容器或 CI 里跑完整 `pytest`。
++2. **`pack.sh --check` 的符号链接校验**：Windows 解包不落符号链接，需在 Linux/DSM 上执行。
++3. **前端构建需要 node/npm 与外网**：本轮包内已带 `app/dist` 预构建产物，离线部署无需现场构建；
++   若改动 `app/src` 则必须在有网环境重建 `dist`。
++4. **`4.6.0-build.20` 不能用于排序比较**：只做整串相等比较；需要新旧判断时比较 `build.N` 数值段。
++5. **上游 `develop` 的 4.6.1 未合入**：无 tag、无 Release，本轮刻意不跟号。
++
++---
++
++## 七、附录：变更文件清单（不含 `delivery/` 副本）
++
++| 文件 | 模块 | 新增 | 删除 |
++|---|---|---:|---:|
++| `docs/上游跟进/A-安全与元数据.md` | 上游跟进 | +23 | -0 |
++| `docs/上游跟进/B-扫描与导入.md` | 上游跟进 | +22 | -0 |
++| `docs/上游跟进/C-音频与播放.md` | 上游跟进 | +27 | -0 |
++| `docs/上游跟进/D-功能与权限.md` | 上游跟进 | +24 | -0 |
++| `docs/上游跟进/README.md` | 上游跟进 | +51 | -0 |
++| `webserver/base/pagination.py` | 分页 | +43 | -0 |
++| `app/package-lock.json` | 前端 | +2 | -2 |
++| `app/package.json` | 前端 | +1 | -1 |
++| `webserver/handlers/admin.py` | 后端其他 | +9 | -0 |
++| `webserver/handlers/base.py` | 后端其他 | +61 | -9 |
++| `webserver/handlers/book.py` | 后端其他 | +5 | -1 |
++| `webserver/main.py` | 后端其他 | +20 | -2 |
++| `webserver/mcp/mcp_service.py` | 后端其他 | +3 | -1 |
++| `webserver/services/background_service.py` | 后端其他 | +79 | -4 |
++| `webserver/services/scan_service.py` | 后端其他 | +24 | -3 |
++| `webserver/settings.py` | 后端其他 | +15 | -0 |
++| `webserver/toolbox/mimo_tts.py` | 后端其他 | +3 | -1 |
++| `webserver/version.py` | 后端其他 | +4 | -1 |
++| `docs/交付/NAS备份演练清单.md` | 备份 | +258 | -0 |
++| `docs/备份与恢复演练.md` | 备份 | +360 | -0 |
++| `scripts/backup.sh` | 备份 | +273 | -0 |
++| `scripts/backup_run.py` | 备份 | +483 | -0 |
++| `webserver/assistant/mcp_client.py` | 安全 | +16 | -10 |
++| `webserver/handlers/assistant.py` | 安全 | +31 | -2 |
++| `webserver/handlers/mcp.py` | 安全 | +43 | -3 |
++| `webserver/services/audios_import.py` | 导入 | +7 | -0 |
++| `CHANGELOG.md` | 文档 | +78 | -4 |
++| `README.md` | 文档 | +29 | -8 |
++| `docs/交付/交付索引.md` | 文档 | +149 | -0 |
++| `docs/交付/应用与回滚.md` | 文档 | +139 | -0 |
++| `docs/优化实施与决策记录.md` | 文档 | +200 | -0 |
++| `docs/评估与优化方案.md` | 文档 | +465 | -0 |
++| `docs/部署包说明.md` | 文档 | +22 | -3 |
++| `Dockerfile` | 构建与部署 | +2 | -1 |
++| `Makefile` | 构建与部署 | +9 | -2 |
++| `docker-compose.yml` | 构建与部署 | +4 | -0 |
++| `scripts/search_index.py` | 检索 | +57 | -0 |
++| `webserver/handlers/search_index.py` | 检索 | +51 | -0 |
++| `webserver/services/search_index.py` | 检索 | +447 | -0 |
++| `tests/test_ai_assistant_agent.py` | 测试 | +44 | -0 |
++| `tests/test_audio_books_cache.py` | 测试 | +91 | -0 |
++| `tests/test_background_tasks.py` | 测试 | +37 | -0 |
++| `tests/test_pagination.py` | 测试 | +32 | -0 |
++| `tests/test_search_index.py` | 测试 | +91 | -0 |
++| `tests/test_version_lock.py` | 测试 | +128 | -0 |
++| `scripts/README.md` | 部署工具 | +2 | -0 |
++| `scripts/check-version-lock.py` | 部署工具 | +179 | -0 |
++| `scripts/pack.sh` | 部署工具 | +12 | -0 |
++| `scripts/upstream/patch_tool.py` | 部署工具 | +185 | -0 |
++| `webserver/handlers/audio.py` | 音频与性能 | +172 | -74 |
++
++> 合计：50 个文件，+4,512 / -132 行（delivery/ 下另有 73 个交付副本/补丁/压缩包，未计入）。
+diff --git a/docs/备份与恢复演练.md b/docs/备份与恢复演练.md
+new file mode 100644
+index 0000000..fed9432
+--- /dev/null
++++ b/docs/备份与恢复演练.md
 @@ -0,0 +1,360 @@
 +# 备份与恢复演练（P0）
 +
 +> 对应脚本：[`scripts/backup.sh`](../scripts/backup.sh)、[`scripts/backup_run.py`](../scripts/backup_run.py)
-+> 适用版本：4.6.0-19-r13 及之后的部署
++> 适用版本：4.6.0-build.20 及之后的部署
 +> 本文所有默认值均为「已代选，可调整」；括号里的「待确认」项表示仍建议结合自己的数据量复核。
 +
 +---
@@ -747,6 +1875,521 @@ index 0000000..5c8091b
 +| RPO / RTO | 24h / ≤4h | 保守默认，待按实际规模复核 | 见第 9 节 |
 +| 排除项 | `cache`、`log`、临时文件 | 可再生 / 体积大 / 半截文件 | `EXCLUDE_DIRS`、`EXCLUDE_PATTERNS` |
 +| 运行身份 | 容器内 root | 保证能读全库、写备份盘 | `DOCKER_USER=1026:100` |
+diff --git a/docs/评估与优化方案.md b/docs/评估与优化方案.md
+new file mode 100644
+index 0000000..6905eb7
+--- /dev/null
++++ b/docs/评估与优化方案.md
+@@ -0,0 +1,465 @@
++# 有声书系统（audiobook 4.6.0-19-r13）代码评估与优化方案
++
++> 评估对象：Gitee `wxgoo/audiobook-src`，`master` 提交 `32bc1d4`（2026-11-06 18:30）
++> 部署参照：`audiobook-deploy-4.6.0-19-r13-patched.tar.gz`（仅用于确认运行形态，未做任何修改）
++> 代码口径：源码 `webserver/version.py` 为 `v4.8.0`（生产构建时会被 `GIT_VERSION` 覆盖），CHANGELOG 当前条目为 `4.6.0-19`
++> 评估日期：2026-11-06
++> 说明：`zcode` / `workbuddy` 属程序之外的 AI 工具，本次不作为本程序模块或集成点分析；下文“AI 助手”仅指程序内置的 `/api/assistant/ws`、`/api/mcp/stream` 能力。
++
++---
++
++## 0. 结论摘要
++
++1. **系统主体成熟度较高**：扫描导入已做了两阶段流水线、批量落库、目录快照剪枝、`scanfiles` 索引；SQLite 已开 WAL / `busy_timeout`；音频 Range、ETag、m4b 章节 key、服务端进度等 r13 修复均已落地。海量数据的主要瓶颈不在“扫描”，而在**请求路径中的全库文件遍历**与**首轮导入的单写者串行**。
++2. **最该先做的不是新功能，而是四件“止血”事**：① 没有书库/音频级备份与恢复闭环（P0）；② 音频 Range 在 Tornado 主循环同步读盘，慢客户端会阻塞整个站点（P1）；③ AI 助手 WebSocket 未校验 Origin、MCP token 走 URL 并进日志、MCP 服务单例存在并发串号（P1，安全/稳定性）；④ `AudioBooksCache` 每 5 分钟在请求线程内遍历全库目录（P1，规模问题）。
++3. **与上游关系**：本 fork 是 `PoxenStudio/mybooks 4.6.0` 的严格超集（仓库清单记录 67 个差异文件、0 个单边独有文件）；GitHub 最新 Release 核实为 mybooks `4.6.0`（2026-10-25）、talebook `v26.10.18`（2026-10-18）。升级冲突集中在 8 个核心文件，属于“可控但必须按主题拆补丁”的状态。
++4. **实施顺序**：先稳定（备份、安全、阻塞、任务可恢复），再规模化（音频索引、导入流水线、搜索/分页、缓存分层），最后做体验与架构拆分。不要先做界面功能。
++
++---
++
++## 1. 现状概览
++
++### 1.1 包结构
++
++| 目录 | 作用 | 关键点 |
++|---|---|---|
++| `app/` | Vue 2 SPA 源码 + `dist` 构建产物 | 生产镜像优先使用预构建 `dist`，源码与产物可能漂移 |
++| `myreader-dist/` | MyReader（Next.js standalone） | 独立 Node 进程，监听 9100；与主站共用 cookie/鉴权 |
++| `webserver/` | Tornado 后端（285 个 `.py`） | `handlers/` 路由、`services/` 业务与后台任务、`assistant/` AI Agent、`mcp/` MCP 工具层、`models.py` ORM |
++| `calibre/` | calibre 插件与 7.6 补丁 | 依赖 apt 安装的 calibre 版本，属于运行时“叠加补丁” |
++| `conf/` | nginx / supervisord / logrotate | 容器内 4 个进程统一由 supervisor 拉起 |
++| `docker/` | 启动、健康与入口脚本 | `start.sh`、日志与权限处理 |
++| `third-party/` | 第三方子模块 | 含 EPUB 转音频等外部能力 |
++| `scripts/` | `deploy.sh`、`upgrade.sh`、`upgrade-upstream.sh`、`watch-upstream.py` | 升级只备份 DB，不备份书/音频 |
++| `tests/` | 121 个 pytest 用例 | 覆盖元数据、音频、AI Agent 等，但缺规模/并发基准 |
++| `docs/` | 部署包说明、操作总纲、上游跟进清单、迁移手册 | 上游跟进清单是本次最重要的对照材料 |
++
++部署包还包含完整源码与构建产物；Windows 解包时 `myreader-dist`、`app/node_modules`、`cfi_gen/node_modules` 的 pnpm 软链会断，按补充说明整块跳过，不影响评估。
++
++### 1.2 运行形态
++
++- 单容器、单 Tornado 进程：`gosu mybooks python3 server.py --with-library=/data/books/library --port=8000 --host=127.0.0.1`（[mybooks.conf](file:///C:/Users/anan/Documents/Trae-CN/temp_20261106_01/_work/repo/conf/supervisor/mybooks.conf)）。
++- nginx 80/443 对外，反代 Tornado 8000；MyReader 9100；端口映射 `9800:80`、`8443:443`（[docker-compose.yml](file:///C:/Users/anan/Documents/Trae-CN/temp_20261106_01/_work/repo/docker-compose.yml)）。
++- 所有运行数据集中在 `/volume1/docker/audiobook-data:/data`：书库、`.audio/`、SQLite、缓存、whisper 模型、日志。
++- 单进程意味着所有进程内缓存、全局字典、线程池都是“单实例假设”；当前没有多 worker/多副本部署。
++
++### 1.3 版本与依赖
++
++| 项 | 结论 | 依据 |
++|---|---|---|
++| 分支版本 | 部署包 r13；代码 `VERSION="v4.8.0"` 固定不变 | `webserver/version.py` |
++| 上游 mybooks | 最新 Release `4.6.0`（2026-10-25）；仓库清单称基于 4.6.0，属严格超集 | GitHub API + `docs/上游跟进清单.md` E 节 |
++| 上游 talebook | 最新 Release `v26.10.18`（2026-10-18） | GitHub API |
++| 基础镜像 | `docker.1ms.run/poxenstudio/mybooks_base:latest`（浮动 tag） | `Dockerfile:100/155` |
++| OS / 运行时 | Ubuntu 24.04；Node 20 构建、Node 22 运行；apt 安装 calibre 后叠加 `calibre/7.6` 补丁 | `Dockerfile.base:6/24/46` |
++| 关键 Python 依赖 | tornado 6.5.9、SQLAlchemy 2、openai、langchain/langgraph、faster-whisper、pydub、xxhash、djvu-rs、apsw | `requirements.txt` / `requirements_release.txt` |
++| AI 配置 | `AI_DEEPSEEK_API_KEY`、`AI_API_URL`、`AI_MODEL`、`AI_MCP_TOKEN` | `webserver/assistant/ai_assistant_agent.py:14-18` |
++
++### 1.4 核心调用链
++
++```
++浏览器
++  └─ nginx :80/:443
++      ├─ /api/**            → Tornado :8000 → handlers/* → calibre_db_cache + SQLAlchemy
++      ├─ /api/audio/<id>    → handlers/audio.py → 直接同步读 .audio/ 文件
++      └─ / (阅读器)          → MyReader :9100 → 反向 whoami 到 :8000
++
++扫描导入
++  /api/scan → ScanService（后台线程）
++      Phase1：scandir + 快照剪枝 + 4 个 hash worker → scanfiles 每 500 条批量提交
++      Phase2：逐文件读元数据 → calibre import_book（单写者）→ 更新进度
++
++后台任务
++  handlers → AsyncService（每个 service 一个常驻线程 + 内存队列）
++           → BackgroundService（内存 task 字典，供 UI 查询进度/取消）
++
++AI 助手（可选）
++  AppHeader → /api/assistant/ws → 每连接 AIAssistantMCPAgent
++      → LangGraph ReAct + ChatOpenAI（DeepSeek 兼容接口）
++      → MCPStreamClient → /api/mcp/stream?token=... → MCPService → API_TOOLS → 内部 HTTP API
++```
++
++### 1.5 AI 助手能力面（程序内置，非外部编码工具）
++
++- 入口：[assistant.py](file:///C:/Users/anan/Documents/Trae-CN/temp_20261106_01/_work/repo/webserver/handlers/assistant.py) 的 `/api/assistant/ws`，以及 [mcp.py](file:///C:/Users/anan/Documents/Trae-CN/temp_20261106_01/_work/repo/webserver/handlers/mcp.py) 的 `/api/mcp/stream`。
++- 每个 WS 连接创建一个 `AIAssistantMCPAgent`，内部维护 `conversation_history`（实际只取最近 10 条消息）、按关键词裁剪工具组、`ChatOpenAI(timeout=30, max_tokens=2000)`、`recursion_limit=16`。
++- MCP 工具层通过 `AI_MCP_TOKEN` 鉴权，配置 token 会被映射为 `user_id=1/admin`；`need_login` 时可用登录换取 24 小时 token。
++- 前端入口在 `AppHeader.vue`，由设置中的 AI 开关控制；未配置 `AI_DEEPSEEK_API_KEY` 时功能不启用。
++- 结论：这是一套“单机、单用户上下文、按连接隔离”的演示级 Agent，不是高并发服务；安全与超时/取消是主要短板（见 3.3）。
++
++---
++
++## 2. 已具备能力（以下不再作为优化建议重复提出）
++
++| 能力 | 现状 | 证据 |
++|---|---|---|
++| CORS/异常回显 | 已改为同源校验 + 统一错误 | `handlers/base.py` 中 `_is_same_site_origin`、`traceback.format_exc` 处理 |
++| 扫描批处理 | Phase1 批量 500 条提交、4 个 hash worker、目录快照剪枝、异常回滚 | `services/scan_service.py` |
++| 扫描表索引 | `path`、`import_id`、`(status, import_type)`、`hash`（条件创建） | `services/async_service.py:57-69` |
++| SQLite 调优 | WAL、`busy_timeout=60000`、`PRAGMA cache_size` | `webserver/main.py` 启动段 |
++| 分片上传异步化 | 合并/读元数据放入线程池，避免阻塞事件循环 | `handlers/book.py` 上传相关函数 |
++| 音频响应头 | Range、416、Content-Range、ETag、Last-Modified、HEAD 无 body | `handlers/audio.py:956-1045` |
++| 播放进度 | 服务端存储，含 m4b 章节 `track_index` | `models.py` 的 `AudioPlayback`；`app/src/pages/audio/_id.vue` |
++| 列表性能保护 | 标题排序在“结果 > 3 页”时自动降级为 id 排序；calibre 读操作异步化 | `handlers/base.py:2145-2159` |
++| 查询缓存 | 分类/首页按 library version 缓存；搜索缓存 180s | `base/query_cache.py`、`handlers/book.py:1002-1037` |
++| 任务统一进度/取消 | BackgroundService 提供进度、取消、状态查询 | `services/background_service.py` |
++| 测试 | 121 个 pytest 用例 | `tests/` |
++| 升级与上游监测 | `upgrade.sh`、`upgrade-upstream.sh`、`watch-upstream.py`、冲突保留原则 | `scripts/` |
++| 轻量模式 | `LITE_*` 可裁剪分页、列表字段、封面、推荐等 | `webserver/perf.py`、`settings.py` |
++
++---
++
++## 3. 问题清单
++
++严重度定义：**P0** 数据可能整体丢失或站点不可用；**P1** 明显影响可用性/安全/规模；**P2** 体验、维护性或长期成本。
++
++### 3.1 功能缺失
++
++| 编号 | 问题 | 依据 | 影响面 | 级别 |
++|---|---|---|---|---|
++| F1 | **没有书库/音频级备份与恢复闭环**。升级脚本只复制 `*.db`，明确“不含书/音频” | `scripts/upgrade.sh:103-107`；`docs/部署包说明.md` 仅建议人工备份数据目录 | 全部用户；误删、去重合并、磁盘故障、勒索软件均无法恢复 | **P0** |
++| F2 | **后台任务不持久化、无失败重试**。任务表在内存，服务线程为 daemon；重启后排队/执行中的扫描、转码、AI 补全全部丢失，UI 也没有“失败项重试” | `services/background_service.py:80/149`；`services/async_service.py` 常驻线程；全局 grep 无 retry | 导入/转码/AI 补全的运维与恢复 | **P1** |
++| F3 | **无健康检查与容量告警**。compose 无 `healthcheck`；无磁盘/inode/队列积压指标；`PERF_MONITOR` 默认关闭 | `docker-compose.yml`；`settings.py` | 运维；故障只能靠用户反馈 | P2 |
++| F4 | **扫描历史无保留策略**。只能按 `hash` 手动删除单条/一批，没有按时间/扫描批次的归档或自动清理；`scanfiles` 在百万文件场景会长期累积 | `handlers/scan.py:108-116`；`models.py:688` | 大规模库的库体积与查询成本 | P2 |
++| F5 | **AI 助手会话不持久、无重试/取消**。连接关闭即丢上下文；出错只发 `error` 文本 | `handlers/assistant.py:56-87`；`ai_assistant_agent.py:276-330` | 使用 AI 助手的用户 | P2 |
++
++### 3.2 易用性
++
++| 编号 | 问题 | 依据 | 影响面 | 级别 |
++|---|---|---|---|---|
++| U1 | 部署参数写死：`/volume1/docker/audiobook-data`、`PUID=1026`、`PGID=100`、`9800:80` | `docker-compose.yml:37-48` | 换机/迁移/非群晖环境改造成本高 | P2 |
++| U2 | 版本不可辨识：源码 `VERSION` 固定 `v4.8.0`；构建时 Dockerfile 用 `GIT_VERSION` 覆盖，而 Makefile 只传分支名（detached/直接 build 时为 `local`/空），不是 release r 号或 commit sha；r9/r13 只能看包名或 CHANGELOG | `webserver/version.py`；`Dockerfile:157/368`；`Makefile:3/24` | 支持与回溯；升级后“是否真的生效”难判断 | P2 |
++| U3 | 后台任务只有整体进度，缺“逐项失败原因 + 单本重试” | `background_service.py` 无 retry；失败信息只写日志 | 大批量导入/转码时排障成本高 | P1 |
++| U4 | AI 工具选择依赖关键词分组，未命中时静默降级为“无工具聊天”；用户不知道哪些能力可用 | `ai_assistant_agent.py:23-50/104-129` | AI 助手可用性 | P2 |
++| U5 | 转码取消粒度粗：只在文件之间检查取消，单个 `ffmpeg` 最长可跑 3600s，UI 表现为“取消无效” | `services/audio_transcode.py` 的 `subprocess.run(timeout=3600)` | 转码用户 | P2 |
++
++### 3.3 稳定性与可维护性
++
++| 编号 | 问题 | 依据 | 影响面 | 级别 |
++|---|---|---|---|---|
++| S1 | **AI WebSocket 未校验 Origin**：`check_origin()` 无条件 `return True`，且未显式设置 SameSite；存在跨站 WebSocket 劫持（CSWSH）风险 | `handlers/assistant.py:22-24`；`handlers/base.py:416-418` 未传 samesite | 启用 AI 且站点可被外部页面访问时 | **P1（安全）** |
++| S2 | **MCP 服务单例 + 每请求改写 `base_handler`/token**：并发请求会互相覆盖 handler 与 token，可能串用户/串会话 | `handlers/mcp.py:20-46`；`mcp_service.py:43-51` | 多用户同时使用 AI/MCP 时 | **P1** |
++| S3 | **MCP token 走 URL query 且被打印**：`?token=` 会进 nginx access log；`print` 输出的 MCP URL 与工具参数会进容器日志 | `mcp_client.py:25/149-151`；`mcp.py:67`；`conf/nginx/mybooks.conf` 的 `/api` 未关闭 access log | 安全审计与隐私 | **P1（安全）** |
++| S4 | **AI/MCP 调用缺少显式超时、重试与断连取消**：MCP 用默认 `ClientSession`（约 5 分钟），LLM 仅 30s、无重试；WS 断开后生成任务可能继续 | `mcp_client.py:30/86-103`；`assistant.py:68-82`；`ai_assistant_agent.py:254-261` | 单次请求变慢会挂住会话，重连后状态不一致 | **P1** |
++| S5 | **音频 Range 在事件循环里同步读盘**：8KB 循环 `self.write`，未使用 `X-Accel-Redirect`；nginx 对音频已 `proxy_buffering off` | `handlers/audio.py:1026-1045`；`conf/nginx/mybooks.conf` 音频 location | 多用户播放/慢客户端时全站 API 变慢 | **P1** |
++| S6 | **基础镜像浮动 tag + calibre 7.6 补丁叠加 + Python 依赖未全量锁版本**：重建镜像可能拿到不同 calibre/ABI，补丁路径与 calibre 版本不匹配；构建版本号也只写分支名 | `Dockerfile:155/157/368`；`Dockerfile.base:6/24/46`；`requirements.txt` 多个 `>=` | 升级/重建不可复现，故障难回溯 | **P1** |
++| S7 | 全局可变状态与单进程假设：`AudioBooksCache` 类变量、`ConversionWorkerMap`、`DailyDownloadMap`、MCP 单例，多 worker/多副本会失效 | `handlers/audio.py:91-97`；`assistant`/`mcp` 相关 | 未来横向扩展、灰度/双实例 | P2 |
++| S8 | 单体文件与职责混杂：`book.py` 4726 行、`scan_service.py` 2436 行、`base.py` 1924 行，路由、业务、存储、前端协议耦合 | 行数统计 | 维护成本、升级冲突、审查难度 | P2 |
++| S9 | 已完成的后台任务对象不回收（仅音频任务有清理），长期运行内存缓慢增长 | `background_service.py:129-149/322-348` | 长期运行的稳定性 | P2 |
++| S10 | 启动期一次性建索引/迁移无进度提示；百万行 `CREATE INDEX` 在 NAS 上可能长时间无反馈 | `async_service.py:17-75` | 大库首次升级/重启体验 | P2 |
++
++### 3.4 海量数据支撑（汇总，详见第 4 章）
++
++| 编号 | 问题 | 依据 | 影响面 | 级别 |
++|---|---|---|---|---|
++| D1 | **`AudioBooksCache` 每 5 分钟全库 `listdir` 遍历，且过期后在请求线程内同步触发**；10 万书需遍历作者目录 + 每书目录（十万级 `listdir`），并对每个书目录判断是否有音频 | `handlers/audio.py:91-160`；调用点 `handlers/base.py:1281-1287`；`base/audio_dir.py` | 列表页尾延迟；NAS 元数据压力 | **P1** |
++| D2 | 深分页仍为 `count + offset`；标题排序会取全量 `sort` 字段（虽有“>3 页降级 id”保护） | `handlers/scan.py:147-149`；`handlers/base.py:2122-2159` | 百万行扫描记录、深页浏览 | P2 |
++| D3 | 冷启动/库变更后，标签/作者建议等聚合接口要做 `LIKE + GROUP BY + count(distinct)`；主要分类页有版本缓存，但这些建议接口首次/冷缓存仍慢 | `handlers/book.py:846-883`；`base/query_cache.py` | 大库首次访问、导入后首屏 | P2 |
++| D4 | 本地搜索走 calibre 搜索语法，`comments` 等字段需扫描；没有独立中文全文索引/分词 | `handlers/book.py:2737-2981`；代码注释明确 comments 搜索较慢 | 10 万书的关键词检索延迟与召回 | **P1** |
++| D5 | `scanfiles` 历史无保留策略，百万行下 `COUNT`/深 `OFFSET` 成本上升 | `models.py:688`；`scan.py:147-149` | 长期运行 | P2 |
++| D6 | 缩略图按需生成、缓存上限仅 200MB；10 万书 × 4 尺寸 ≈ 40 万文件，冷缓存会反复回源 | `settings.py` 的 `THUMB_*`/`CACHE_MAX_MB`；`handlers/static_files.py` | 首屏图片、NAS IO | P2 |
++| D7 | 首轮百万文件导入 Phase2 串行（读元数据 + `import_book` 单写者），大批量首次入库工期长 | `services/scan_service.py` 的 `do_import`/逐文件导入段 | 首次建库、灾后重建 | **P1** |
++| D8 | 无定期 `wal_checkpoint(TRUNCATE)`、`PRAGMA optimize`/`ANALYZE`、`auto_vacuum` 策略 | `main.py` 仅设基础 PRAGMA；`async_service.py` 诊断处才 checkpoint | 长期写入后的库膨胀与规划退化 | P2 |
++
++---
++
++## 4. 海量数据专章（万级 → 十万级书、百万级文件）
++
++> 前提：现有扫描链路已经做得不错（快照剪枝、批量提交、hash 并发、索引齐全）。本章只列仍然会“卡住”的点，并给出改法。
++
++### 4.1 规模假设与基线
++
++- 目标规模：10 万书、约 100 万文件（书 + 音频 + 字幕 + 封面）、单 NAS、单容器。
++- 必须先测三项基线（未实测前不要拍脑袋调参）：
++  1. 进程 RSS、calibre 元数据缓存大小、启动 warmup 时长；
++  2. 列表/搜索/分类 P50/P95；
++  3. 全库 `AudioBooksCache` 扫描耗时与 NAS `listdir` 延迟。
++- 建议把基线写进 `docs/` 并在每次升级后回归。
++
++### 4.2 索引
++
++- 已有：`scanfiles(path)`、`(import_id)`、`(status, import_type)`、`(hash)`；`messages`、`readings` 也有针对性索引。**不需要重复建**。
++- 新增：
++  - 应用库增加 `audio_flags(book_id PRIMARY KEY, has_audio, audio_count, updated_at)` 或直接给书籍映射表加列，替代全库文件遍历（见 4.4）。
++  - 增加 `scan_runs(id, started_at, finished_at, status, file_count)` 汇总表，扫描页不再对 `scanfiles` 做全量 `COUNT`。
++  - 若做 FTS5，单独库 `cache/search.db`，不污染主库。
++
++### 4.3 分页与游标
++
++- 扫描记录列表（百万行）：保留 `start` 兼容前端，新增 `cursor`（`id < last_id` 或 `create_time < last_ts`），默认按 `id desc`；`total` 改为读汇总表，或仅在 `page=1` 时计算。
++- 书目列表：`id` 排序天然可用游标；`title` 排序建议缓存“排序后的 id 列表（按 library_version + filter）”，深页直接切片，避免每次重排。
++- 目标：深页（第 100 页以后）响应时间不随页码线性增长。
++
++### 4.4 缓存分层
++
++1. **把 `has_audio` 落到 DB**：导入/扫描/音频挂载时更新 `audio_flags`；启动做一次全库对账（后台线程、分批、可中断）。`AudioBooksCache` 降级为“兜底校验”，且**永远不在请求线程里扫描**。
++2. **calibre 元数据缓存**：实测 10 万书 RSS；若超预算，用 `LITE_LIST_SLIM`/`LITE_PAGE_SIZE` 或按“最近 N 万本 + 按需加载”分层。是否可行待实测（见第 9 章）。
++3. **分类/作者/标签计数**：维护物化计数表，导入/编辑时增量更新；冷启动只做一次全量校准。
++4. **缩略图**：缓存目录独立到 `/data/cache/thumbs`，上限按“书籍数 × 4 × 平均 80KB”估算（10 万书约 3–5GB），并在导入后后台预生成；容器重建不丢。
++5. **EPUB 解压缓存**：按书目录做 LRU，避免单文件 200MB 上限导致热门书反复解压。
++
++### 4.5 异步任务队列
++
++- 现状：`AsyncService` 每类服务一个常驻线程 + 内存队列；`BackgroundService` 内存任务字典。重启即丢，失败无重试。
++- 改造为**持久化任务表**（可直接放现有 SQLite，避免引入 Redis）：
++  - 字段：`id/type/state/payload/progress/attempts/max_attempts/last_error/created_at/started_at/finished_at/idempotency_key`；
++  - 状态机：`pending → running → succeeded/failed/canceled`；
++  - 启动时把 `running` 重置为 `pending`（超过 `max_attempts` 则 `failed`）；
++  - 每个队列独立 worker 数与限流；外部调用（LLM/TTS/ffmpeg）加超时、指数退避、可取消；
++  - 取消：协作式 token + 子进程 `terminate → wait → kill`；
++  - 保留最近 N 天已完成任务，其余归档/删除。
++- 迁移策略：先“影子写入”（旧内存队列照跑，同时写任务表），验证后再切换读路径；可随时切回。
++
++### 4.6 批量导入
++
++- 现状 Phase1 很好；Phase2 是“读元数据 + calibre 写库”串行。建议改为三段流水线，队列有界：
++  1. **解析 worker**（2–4 个）：读 EPUB/PDF/TXT 元数据、抽封面、算轻量指纹；
++  2. **单写者**（1 个）：只做 `import_book`/`add_format` 与 DB 提交，按 50–200 本一批；
++  3. **后处理 worker**：音频 sidecar 挂载、缩略图预生成、`audio_flags` 更新、搜索索引增量更新。
++- 优点：CPU 解析与 calibre 单写者解耦，整体吞吐提升，同时保持 calibre 单写者安全。
++- 首次百万文件可增加“快速模式”：先按 `(size, mtime)` 建立候选，再只对疑似重复/变更的文件做 full hash；保留 full hash 作为最终判重依据，避免改变现有去重语义。
++
++### 4.7 搜索
++
++- 目标：10 万书标题/作者/标签/丛书的关键词搜索 P95 < 1.5s，且支持中文子串/前缀。
++- 方案：旁路 FTS5 索引（`cache/search.db`）：
++  - 字段：`book_id, title, author, series, tags, publisher, comments`；
++  - 中文用 `jieba` 预分词后写入（空格分隔），FTS5 用 `unicode61`；查询时同样分词；
++  - 导入/编辑/删除时增量更新；提供 `rebuild` 命令；
++  - 应用层先查 FTS，失败/未建索引时回落 calibre 搜索。
++- 不建议直接替换 calibre 搜索（会破坏 calibre 语法与既有行为）；旁路索引 + 回落最稳。
++
++### 4.8 存储与备份
++
++- 现有布局很好（书目录内 `.audio/`、数据与源码分离），保持不动。
++- 备份建议（与 F1 对应）：
++  - 每日 `VACUUM INTO` 或 SQLite backup API 备份 `calibre-webserver.db` 与 calibre `metadata.db`（在线安全，避免直接 `cp` WAL 不一致）；
++  - 书库 + `.audio/` + 配置用 restic/borg 做**增量、去重、加密**备份到另一块盘/NAS/对象存储；
++  - 若文件系统支持，叠加 Btrfs 快照（群晖 Hyper Backup / Snapshot Replication）；
++  - 保留策略：7 日 + 4 周 + 6 月；每季度做一次抽样恢复演练；
++  - 备份前记录 `books`/`scanfiles` 计数与总字节，恢复后比对；`PRAGMA integrity_check` 必须通过。
++- 缓存、日志、whisper 模型不进备份（可重建）。
++
++### 4.9 容量与观测
++
++- 采集：磁盘使用率、inode 使用率、DB/WAL 大小、`scanfiles` 行数、任务队列深度、音频扫描耗时、calibre 缓存 RSS。
++- 告警阈值建议：磁盘 80%、inode 75%、任务积压 > 10 或最老 pending > 30 分钟、音频扫描 > 60s。
++- 这些指标先落日志/JSON 文件即可，不必引入完整 Prometheus。
++
++---
++
++## 5. 优化建议（落地清单）
++
++> 工作量口径：1 名熟悉本代码的工程师，含自测与回归，不含等待上游合并；单位为“人日”。
++> 优先级为**实施优先级**，与第 3 章“问题严重度”可不同：例如 S1/S2/S3/S5 严重度为 P1，但属于“止血”范畴，实施上按 P0 排期。
++
++| 编号 | 做法 | 改动范围 | 优先级 | 工作量 | 风险与回滚 |
++|---|---|---|---|---|---|
++| F1 | 新增 `scripts/backup.sh` + 恢复手册：DB 在线备份、restic 增量书库、计数校验、恢复演练 | `scripts/`、`docs/`、可选用 compose 定时任务 | **P0** | 3–5 | 只读备份，不影响在线服务；失败可回退到手工方案；恢复脚本先在测试库演练 |
++| S5 | 音频走 `X-Accel-Redirect`（nginx 内部 location 指向 `/data/books/library`），Tornado 只做鉴权/头；保留同步流式作为开关回退 | `handlers/audio.py`、`conf/nginx/mybooks.conf`，新增 `USE_X_ACCEL` | **P0** | 2–3 | 非 nginx 部署会 404：默认关闭，检测到 nginx 才开；回滚改开关即可 |
++| S1+S2+S3 | AI 安全三件套：校验 Origin/Host；MCP 服务改为每请求实例或按 token 池化，禁止共享 `base_handler`；token 改 Header 或短期一次性票据，移除 `print` 中的 URL/参数，nginx 对 `/api/mcp` 关闭 access log | `handlers/assistant.py`、`handlers/mcp.py`、`mcp_service.py`、`mcp_client.py`、`conf/nginx` | **P0** | 2–3 | 需同步改 MCP 客户端传参；保留 query token 兼容一个版本；网关层可先加来源白名单 |
++| D1 | `has_audio` 落 DB：新增 `audio_flags` 表 + 导入/挂载时更新 + 启动后台对账；`AudioBooksCache` 仅兜底且后台刷新 | `models.py`、`services/scan_service.py`、`services/audios_import.py`、`handlers/audio.py`、`handlers/base.py` | **P1** | 3–4 | 首次对账耗时：分批+可中断；回滚保留旧缓存路径，删除新表不影响数据 |
++| F2 | 持久化任务表 + 启动恢复 + 失败重试/取消；先影子写入再切读路径 | `services/async_service.py`、`background_service.py`、`handlers/toolbox.py` | **P1** | 6–10 | 状态机改动大：按任务类型灰度；保留旧队列开关；DB 迁移只加表 |
++| U3 | 任务详情页展示逐项失败原因、支持“重试失败项”；复用 F2 的 attempts/last_error | 前端任务面板 + `background_service` API | **P1** | 2–3 | 只读展示先行；重试接口做幂等键 |
++| S4 | MCP/LLM 显式超时（连接 5s、总 60s）、重试 1–2 次、断连取消；工具调用参数脱敏日志 | `mcp_client.py`、`ai_assistant_agent.py`、`assistant.py` | **P1** | 2–3 | 超时过短会误杀慢查询：按工具类型分级；保留配置项 |
++| S6 | 基础镜像固定 digest/tag；calibre 版本与 `calibre/7.6` 补丁做启动断言；`requirements.txt` 生成 lock（pip-tools/uv） | `Dockerfile`、`Dockerfile.base`、`requirements*.txt`、CI | **P1** | 1–2 | 固定 tag 后需重建验证；保留上一个镜像 tag 以便回滚 |
++| D4 | 旁路 FTS5 中文索引 + 增量更新 + 回落 calibre 搜索 | 新增 `services/search_index.py`、`handlers/book.py`、导入/编辑钩子 | **P1** | 5–8 | 索引与主库不一致：可一键 rebuild；功能开关关闭即回落 |
++| D7 | 导入 Phase2 三段流水线（解析 worker / 单写者 / 后处理） | `services/scan_service.py` | **P1** | 4–6 | 并发写 calibre 风险：坚持单写者；保留串行开关；小批量灰度 |
++| D2 | 扫描列表/书目列表增加 `cursor`；`total` 改汇总表或仅首页计算 | `handlers/scan.py`、`handlers/base.py`、`models.py`、前端列表 | P2 | 3–5 | 前端兼容 `start` 与 `cursor`；出问题回退旧分页 |
++| D3 | 分类/作者/标签计数物化表 + 导入/编辑增量更新 | `models.py`、`services/scan_service.py`、`handlers/book.py` | P2 | 3–4 | 计数偏差用定时校准任务修正；可回退实时聚合 |
++| D5 | `scanfiles` 保留策略：新增“按扫描批次/时间”批量归档或删除（保留现有按 hash 删除）；定期 `VACUUM`/`optimize` | `services/scan_service.py`、`handlers/scan.py`、`scripts/` | P2 | 2 | 删除不可逆：先导出 CSV/归档库；默认保留 90 天 |
++| D6 | 缩略图后台预生成 + 缓存扩容 + 独立缓存卷 | `handlers/static_files.py`、`settings.py`、导入后处理 | P2 | 3–4 | 预生成占用 CPU/IO：限速；缓存目录可随时清空 |
++| D8 | 每日低峰执行 `wal_checkpoint(TRUNCATE)`、`PRAGMA optimize`；按月 `ANALYZE`；评估 `auto_vacuum=INCREMENTAL` | `main.py`/`async_service.py` 定时任务 | P2 | 1–2 | checkpoint 会短暂锁写：限流；先只做 optimize |
++| F3 | 增加 `/api/health`（DB、磁盘、队列、音频扫描耗时）+ compose `healthcheck`；容量告警日志 | `main.py`、`docker-compose.yml`、`scripts/` | P2 | 2–3 | 只读端点；不影响业务 |
++| U1 | compose 支持环境变量覆盖 `DATA_DIR/PUID/PGID/PORT`；文档给非群晖示例 | `docker-compose.yml`、`docs/` | P2 | 1 | 默认值不变，兼容现有部署 |
++| U2 | 构建时写入 `git sha + build time + release tag`（不要只写分支名），在设置页/`/api/version` 展示 | `Dockerfile`、`Makefile`、`version.py`、前端设置页 | P2 | 0.5–1 | 纯展示；构建参数缺省时回退旧值 |
++| U4 | AI 工具路由改为“显式意图 + 全量兜底”：未命中关键词时绑定通用工具组，并在界面提示可用能力 | `ai_assistant_agent.py`、`AppHeader.vue` | P2 | 2 | token 成本上升：限制兜底工具数量；可开关 |
++| U5 | 转码取消改为 `Popen` + 轮询取消标志 + `terminate/kill/wait`；每文件超时可配 | `services/audio_transcode.py`、`services/converter.py` | P2 | 1–2 | 子进程清理需测试；保留 `run(timeout)` 旧路径开关 |
++| S9 | 完成后任务按数量/时间清理（如保留 200 条或 7 天） | `background_service.py` | P2 | 0.5 | 纯内存清理；不影响历史日志 |
++| S10 | 启动迁移/建索引改为后台任务并上报进度，健康检查返回 `migrating` | `async_service.py`、`main.py`、`handlers` | P2 | 1–2 | 首次启动变慢是预期；失败可回退旧启动路径 |
++| S7 | 去全局状态：MCP 按请求实例、音频缓存落 DB、下载/转码 map 收进 service；为未来多 worker 铺路 | 多个 service/handler | P2 | 2–3（不含多进程改造） | 与 S2/D1 合并做，避免重复改 |
++| S8 | 拆分 `book.py`/`scan_service.py`：路由层只做参数校验，查询/导入/音频分别下沉到 service；先加测试再拆 | `handlers/book.py`、`services/` | P2 | 10+（持续） | 大重构风险高：按功能点小步迁移，每步有回归测试；不合入大爆炸分支 |
++
++### 5.1 三个 P0 的落地要点
++
++**F1 备份**
++- 不要直接 `cp` 正在写的 SQLite（WAL 下可能拿到不一致快照）；用 `sqlite3 .backup` 或 `VACUUM INTO`。
++- 备份产物放在**数据目录之外**，避免“同一块盘坏了两份都没了”。
++- 恢复脚本必须能“只恢复 DB”“只恢复某本书/某个目录”“整库恢复”三种粒度；上线前在测试库演练一次。
++
++**S5 音频 X-Accel**
++- nginx 增加内部 location（`internal; alias /data/books/library/;`），Tornado 鉴权后返回 `X-Accel-Redirect` + `Content-Type`/`Content-Range` 由 nginx 处理。
++- 保留现有同步实现作为 `USE_X_ACCEL=0` 回退；非 nginx 直连场景必须能自动回退。
++- 验收：5 个客户端同时拖动进度条时，`/api/recent` P95 不明显上升。
++
++**S1/S2/S3 AI 安全**
++- `check_origin` 改为校验 `Origin`/`Host` 与 `base_url` 同源；跨站直接拒绝。
++- MCP 不再复用单例：每请求创建轻量 `MCPService`（或按 token 池化且 handler 作为调用参数传入，而不是实例字段）。
++- token 改由 `Authorization` 头传递；query 参数仅保留一个兼容期并记录弃用；日志对 token 与书籍内容做脱敏。
++
++---
++
++## 6. 上游跟进（对《上游跟进清单.md》逐条建议）
++
++### 6.1 差距结论
++
++- 相对 `PoxenStudio/mybooks 4.6.0`：文件集合无单边独有（67 个差异文件），后端为严格超集；没有发现能力缺失。
++- 相对 `talebook/talebook master`：结构差异大，功能点按清单比对；本 fork 继承 mybooks 路线，不直接跟 talebook 的文件结构。talebook 最新 `v26.10.18`，mybooks 最新 `4.6.0`，二者时间接近；mybooks `develop` HEAD 与 talebook 最新改动的差异已按第 9 章第 4 项「以 Release 4.6.0 为基线」落定，后续用 `scripts/upstream/patch_tool.py status` 复核。
++- 升级阻塞主要来自“核心文件被深度改写”，而不是依赖。
++
++### 6.2 逐条处置
++
++| 条目 | 建议 | 理由 / 动作 |
++|---|---|---|
++| A1 `@js` CORS + 堆栈 | **跟进** | 安全、改动小、两个上游都受益；优先提 PR；本地补丁继续保留直到上游合并 |
++| A2 PDF/TXT 作者被覆盖 | **跟进** | 用户感知强；`normalize_pdf_meta` 可原样提供；注意与 B2 的扫描合并逻辑分开提 |
++| A3 同名书判定顺序 | **跟进** | 逻辑 bug、改动小；补一个回归用例 |
++| A4 监听导入失效/截断 | **跟进** | 4 个独立缺陷，合成一个 PR；monitor_service 改动独立 |
++| A5 CSV 封面 SSRF | **跟进** | 安全，改动小；同时加 URL 白名单/大小上限 |
++| A6 外部进程只 kill 不 wait | **跟进** | 普适可靠性；`Popen + wait` 小补丁 |
++| A7 分片上传阻塞事件循环 | **跟进** | 普适性能；但改动涉及异步化，建议单独 PR + 压测 |
++| A8 演播者被当作者 | **跟进** | 元数据正确性；与 A2 同一主题可合并 |
++| B1 `books/audios/` 删了又回来 | **放弃回提，自研替代** | fork 已迁到书目录 `.audio/`；上游布局不同，提 PR 会被拒。升级时在脚本/Dockerfile 加排除规则，并保留迁移工具 |
++| B2 扫描并入既有书作者/封面不更新 | **自研替代** | 依赖 fork 的服务层合并逻辑；可把“补元数据”抽成独立小 PR，但不强求 |
++| B3 扫描/有声导入互斥单侧设防 | **自研替代** | 与 fork 的锁模型绑定；留 fork |
++| B4 `do_import` 锁泄漏 | **跟进** | 普适可靠性，异常路径加 `try/finally` 即可；建议提 PR |
++| B5 `ImportRun.paths` 任意路径 | **自研替代** | 路径策略属部署定制；留 fork，必要时提安全 issue |
++| B6 `BatchAddRun` 预检/清理 | **跟进（拆分）** | 预检与临时目录清理普适，可提；与 CSV 业务耦合部分留 fork |
++| B7 零散小 issue | **自研替代 / 拆分后跟进** | 按“独立可复现”拆成小 PR，其余留 fork |
++| C1 弹窗试听第二次卡死 | **自研替代** | 已随 C11 下线弹窗，问题面消失；不必回提 |
++| C2 播放页三处初始化互相打断 | **自研替代** | 前端 `_id.vue` 已深度分叉，回提成本高 |
++| C3 续播 seek 时机 / 中段 Range 卡死 | **自研替代** | 与本地播放器实现绑定；保留回归用例 |
++| C4 弹窗进度映射恒空 | **自研替代** | 弹窗已下线，无回提价值 |
++| C5 看门狗固定 8s 自愈死锁 | **自研替代** | 本地播放器策略不同；可提 issue 说明风险 |
++| C6 `AudioFile` 响应头不规范 | **跟进** | 后端普适修复（HEAD/ETag/Range 夹紧），两个上游都受益，优先单独 PR |
++| C7 `_retryPlay` 重试代数守卫 | **自研替代** | 前端实现定制；保留测试 |
++| C8 播放页/弹窗进度不互通 + 受限用户脱敏 | **部分跟进** | “受限用户统计脱敏”是普适安全问题，单独提；进度互通部分留 fork |
++| C9 进度粒度不同 / 切集丢记忆 | **自研替代** | 依赖本地播放器与进度模型；留 fork |
++| C10 m4b 多章节共用 key | **自研替代 + 提 issue** | 本地已修；可作为 issue/PR 提供给上游，但是否接受待确认 |
++| C11 双播放器进度不一致（下线弹窗） | **自研替代** | 产品决策，不适合上游 |
++| D1 实体书 CSV 导入 | **上游 feature request（低优先）** | 功能完整、业务定制强；先观察上游是否愿意接收 |
++| D2 播放进度服务端存储 | **跟进 feature request** | 跨设备续播普适；数据模型改动大，建议先提 issue 对齐 |
++| D3 读者组总开关 | **自研替代** | 账号/权限体系定制 |
++| D4 同目录音频随书挂载 | **自研替代** | 依赖 `.audio/` 布局 |
++| D5 音频转码工具 | **自研替代** | 业务定制，清单已建议留 fork |
++| D6 账号体系增强 | **自研替代** | 业务规则定制 |
++| D7 分类下拉过滤 | **自研替代** | 与读者组绑定 |
++| D8 上传权限口径统一 | **跟进** | 权限 bug 修复，普适；可提 PR |
++| D9 首页推荐/测试污染 | **跟进** | bug fix + 测试隔离，普适 |
++
++### 6.3 升级冲突高风险文件
++
++| 文件 | 冲突原因 | 建议 |
++|---|---|---|
++| `webserver/settings.py` | 新增大量配置项，上游也在改 | 配置按块分区，新增项集中在文件尾部；合并时保留双方 |
++| `webserver/handlers/base.py` | A1/C6/A7、分页、音频合并都在此 | 按主题拆 patch；合并后先跑 `tests/` |
++| `webserver/handlers/book.py` | A2/A3/A7、列表、上传 | 同上；避免在函数中间插入大段定制 |
++| `webserver/handlers/audio.py` + `app/src/pages/audio/_id.vue` | C1–C11 大量前端/后端定制 | 留 fork；升级时人工 diff + 播放回归 |
++| `webserver/services/scan_service.py` | B2–B7、批处理/快照 | 留 fork；上游若重构，优先保留本地版本再逐项对齐 |
++| `monitor_service.py` / `batch_add.py` | A4/A5 | 提 PR 后若上游合并，删除本地补丁 |
++| `Dockerfile` / `docker-compose.yml` | B1 的 `audios/` 拷贝、PUID/路径 | 用构建参数/环境变量隔离，减少硬编码 diff |
++| `myreader-dist/` | C 系列前端产物 | 不纳入常规升级 diff；单独版本管理 |
++
++**流程建议**：每个上游条目一个 topic 分支 + `git format-patch`；`upgrade-upstream.sh` 合并后先跑 121 个测试，再跑音频/扫描/备份三条手工回归；用 `docs/上游跟进清单.md` 的 grep 检查点判断上游是否已修，已修则删除本地补丁，避免补丁永久堆积。
++
++---
++
++## 7. 路线图（先稳定，后功能）
++
++| 批次 | 目标 | 范围 | 退出标准 |
++|---|---|---|---|
++| **批次 1：止血** | 不丢数据、不阻塞、不被越权 | F1 备份/恢复；S5 音频 accel；S1/S2/S3 AI 安全；S6 基础镜像固定 | 备份可恢复演练通过；5 路音频并发不影响 API；跨站 WS 被拒；镜像可复现构建 |
++| **批次 2：稳定** | 任务可恢复、故障可定位 | F2 任务持久化；U3 失败重试；S4 超时/取消；F3 健康检查；U2 构建指纹；U1 部署参数 | 重启后 pending 自动恢复；失败项可重试；`/api/health` 可用；版本可追溯 |
++| **批次 3：规模化** | 10 万书、百万文件可用 | D1 `has_audio` 落库；D7 导入流水线；D4 FTS5；D2 游标；D3 计数物化；D5 扫描保留；D6 缩略图；D8 DB 维护 | 列表/搜索达到验收指标；全库音频扫描不再进请求路径；首次导入吞吐可接受 |
++| **批次 4：体验与架构** | 好用、可维护 | U4 AI 路由；U5 取消；F5 AI 会话；S9/S10；S7 去全局状态；S8 拆分单体 | 任务中心可自助排障；AI 断连可恢复；核心文件拆分完成且有回归测试 |
++
++原则：批次 1 不做任何 schema 大改；批次 2 只加表/列；批次 3 才引入 FTS 与物化表；批次 4 才动文件结构。每批结束保留上一个镜像 tag 与 DB 备份，出问题 30 分钟内可回退。
++
++---
++
++## 8. 验收指标与验证方法
++
++> 以下为**建议目标值**，上线前必须先测当前基线；未实测的数字不作为承诺。
++
++| 场景 | 指标 | 验证方法 |
++|---|---|---|
++| 10 万书列表（热缓存） | P95 < 300ms | Locust/k6 并发 20，持续 5 分钟 |
++| 关键词搜索（10 万书） | P95 < 1.5s | 固定 50 个中英文查询，记录 P50/P95 |
++| 音频播放 | 首字节 < 200ms；5 路并发时其他 API P95 < 200ms | 5 个客户端同时 Range 拖动，另开列表请求 |
++| 全库音频标志 | 请求路径 0 次全库遍历 | 代码审查 + 调用计数日志 |
++| 100 万文件扫描 | 可中断、重启续跑、无锁泄漏 | kill -9 后重启，检查 `scanfiles` 状态与锁 |
++| 任务恢复 | 重启后 pending 自动续跑；running 转 pending/failed 并可重试 | 人为在转码/AI 补全中重启容器 |
++| 备份 | 每日增量完成；恢复演练 RTO < 2h；`integrity_check` 通过 | 测试库全量恢复 + 抽样打开书/播放音频 |
++| AI 安全 | 跨站 Origin 的 WS 握手失败；日志无 token；并发请求不串号 | 浏览器跨站脚本 + 并发压测 + 日志审计 |
++| 依赖可复现 | 同一 commit 两次构建产物一致；calibre 补丁断言通过 | CI 双构建对比 + 启动自检 |
++
++---
++
++## 9. 待确认项（已代选，可调整）
++
++以下 9 项按「保守且可调」的最优默认值落定，**不需要用户事先确认**；括号里是调整方式与回退方法。
++
++| # | 议题 | 已代选默认值 | 可调方式 / 回退 |
++|---|---|---|---|
++| 1 | 实际部署规模 | 按 **10 万书 / 100 万文件** 设计；低于该规模性能余量充足 | 规模更大时先调 `MAX_PAGE_SIZE`、`SEARCH_INDEX_MAX_RESULTS` 与备份保留层数；LITE 开关可随时开关 |
++| 2 | 公网暴露 / AI 开关 | AI 助手与 MCP **保持现状启用**；MCP token 只走 `Authorization: Bearer`，URL 携带默认拒绝 | 不用 AI 可停容器入口；临时兼容旧客户端设 `ALLOW_MCP_TOKEN_IN_URL=True`，迁移完立即改回 |
++| 3 | 10 万书 calibre 缓存 RSS | 预计 **2–4 GB**；超过容器内存 50% 时启用 LITE 列表精简 | `LITE_PAGE_SIZE` / `LITE_LIST_SLIM` 运行时开关；回退即关闭 |
++| 4 | 上游 `develop` 与 Release 差异 | **以 Release `4.6.0` 为基线**，`develop` 仅作参考 | 上游发新版后用 `scripts/upstream/patch_tool.py status` 复核，再决定合并 |
++| 5 | Tornado cookie SameSite | **视为可被跨站利用**，按「必须校验 Origin」修复 | 已实现 `is_same_host_origin`；若确认浏览器默认已拦截，该校验仍保留（纵深防御） |
++| 6 | 前端是否无限滚动 | **两种分页都支持**：不传游标走旧 `start/size`，传 `after` 走键集 | 前端逐页迁移；出问题直接去掉 `after` 参数即回退到 offset |
++| 7 | 双实例 / 灰度 | **按单实例设计**，不做多进程状态外置 | 未来上多副本时再启动 S7（任务/缓存落库） |
++| 8 | 备份 RPO / RTO | **RPO = 24h，RTO ≤ 4h**；保留 7 日 / 4 周 / 6 月 | 调 `KEEP_DAILY/WEEKLY/MONTHLY`；需要更低 RPO 就把 cron 改为每 6h（硬链接快照成本低） |
++| 9 | 转码 / TTS 并发 | **2 个转码 worker**（沿用 `BOOK2AUDIO_MAX_WORKERS`） | 按 CPU 调 1–4；回退改回 2 |
++
++> 标注说明：以上均为「已代选，可调整」，不是需要用户拍板的前置条件。真正需要用户确认的只有三类：
++> 数据不可逆丢失风险、生产环境凭据、对外接口契约变更——本次实施未触发这三类。
++
++---
++
++## 10. 决策记录（实施阶段）
++
++> 实施分支：`opt/p0-p1`（持久目录 `C:\Users\anan\Documents\audiobook-src-opt`，master 保持干净）。
++> 每项独立提交，逐项改动文件 / 影响面 / 回滚见仓库 `docs/优化实施与决策记录.md`。
++
++| 编号 | 决定 | 理由 | 默认参数 / 可调 | 回退 |
++|---|---|---|---|---|
++| DEC-01 | 代码放持久目录，单开 `opt/p0-p1` 分支 | temp 目录可能被清理；独立分支便于 diff 与逐项 revert | 分支名可改 | 删除分支即可，master 未动 |
++| DEC-02 | 备份 = SQLite 在线备份 API + 文件硬链接快照 | 在线备份不锁库；硬链接实现「逻辑全量、物理增量」，无需 rsync/依赖 | `KEEP_DAILY=7/WEEKLY=4/MONTHLY=6`、`MIN_FREE_GB=5`、cron 每日 | 直接停 cron；已有快照可保留或手动删 |
++| DEC-03 | 备份运行器 `RUNNER=auto`（优先一次性 docker 容器，失败回退本机） | NAS 上不污染主容器；无 docker 时仍可用 | `RUNNER=docker|local`、`DOCKER_USER` | 设 `RUNNER=local` |
++| DEC-04 | MCP token 只走 `Authorization: Bearer`，URL token 默认拒绝 | URL 会进 nginx/反代日志与浏览器历史 | `ALLOW_MCP_TOKEN_IN_URL=False` | 临时打开兼容旧客户端 |
++| DEC-05 | AI WebSocket 校验 Origin 与 Host 同源，无 Origin 放行 | 防 CSWSH；无 Origin 的非浏览器客户端不受影响 | 无法配置（安全默认） | 删除校验函数调用即回到旧行为 |
++| DEC-06 | 音频「有音频」标志事件驱动 + 6h 兜底扫描 | 去掉请求线程里的全库 `listdir`；事件覆盖导入/转码/删除 | `AUDIO_CACHE_REFRESH_SECONDS=21600`，0=关闭兜底 | 调回 300s 即恢复旧频率 |
++| DEC-07 | 音频 Range 读盘 128KB 分块 + 线程池 + 背压 | 不阻塞 ioloop；内存占用可控 | `AudioFile.STREAM_CHUNK_SIZE` | revert 该提交（独立提交，回滚干净） |
++| DEC-08 | 中文检索独立 FTS5 索引（逐字 + 整段过滤 + 拉丁前缀），原子替换 | 解决中文 1–2 字搜不到；索引可丢可重建 | `SEARCH_INDEX_ENABLED`、`SEARCH_INDEX_PATH`、`SEARCH_INDEX_REFRESH_SECONDS=300` | 关闭开关即回退 calibre 原生 search |
++| DEC-09 | 列表分页新增 `after` 游标，保留 `start/size` | 键集翻页不随深度变慢；前端可渐进迁移 | `after`/`cursor` 参数 | 前端去掉 `after` 即回退 |
++| DEC-10 | 导入 Phase2 保持单写者，只把批窗口改为可配置 | calibre `metadata.db` 单写者 + 判重索引单线程，并发收益为负 | `import_phase2_batch_size=20`（1–500）、`import_phase1_batch_size=500` | 改回 20/500 |
++| DEC-11 | 后台任务错误信息单行化 + 常见异常映射 + 300 字截断；失败任务给 `retry_action` | 排障可读；重试复用原接口、由互斥锁保证幂等 | `/api/admin/running_tasks?include=recent&hours=24` | 忽略新增字段即可 |
++| DEC-12 | 上游跟进拆 A/B/C/D 四个主题文件 + `patch_tool.py` 导出 patch | 核心文件跨主题，按文件拆 PR 不可 review | `--upstream` 指向任意上游检出 | 不生成 patch 不影响运行 |
++
++
++---
++
++## 11. 关键证据索引
++
++| 主题 | 文件 / 位置 |
++|---|---|
++| 部署与进程 | `conf/supervisor/mybooks.conf`、`docker-compose.yml`、`Dockerfile`、`Dockerfile.base` |
++| nginx 音频/反代 | `conf/nginx/mybooks.conf`（音频 location、`proxy_buffering off`、`X-Accel-Support`） |
++| AI WS/MCP | `webserver/handlers/assistant.py:22-87`、`handlers/mcp.py:20-89`、`mcp/mcp_service.py:38-90`、`assistant/mcp_client.py:20-166`、`assistant/ai_assistant_agent.py:14-330` |
++| 音频缓存与播放 | `handlers/audio.py:91-160/956-1045`、`handlers/base.py:1281-1287`、`app/src/pages/audio/_id.vue` |
++| 扫描/导入 | `services/scan_service.py`、`handlers/scan.py:147-165`、`services/async_service.py:17-75` |
++| DB 模型/索引 | `models.py:688-749`、`services/async_service.py:57-69` |
++| 列表/搜索/计数 | `handlers/base.py:2122-2159`、`handlers/book.py:846-883/2737-2981` |
++| 任务与状态 | `services/background_service.py:66-150/322-370`、`services/async_service.py` |
++| 备份与升级 | `scripts/upgrade.sh:103-107`、`scripts/upgrade-upstream.sh`、`docs/上游跟进清单.md` |
++| 上游版本核对 | GitHub API：mybooks `4.6.0`（2026-10-25）、talebook `v26.10.18`（2026-10-18） |
++
++---
++
++## 附录：复现与边界说明
++
++- 原始部署包只读，未修改；解压目录 `_work/pkg` 仅用于核对目录结构，源码分析使用 `_work/repo`（Gitee `master`，sparse-checkout）。
++- pnpm 软链目录（`myreader-dist/node_modules`、`app/.next/node_modules`、`webserver/services/cfi_gen/node_modules`）按要求整块跳过，不追依赖树。
++- 本文所有行号对应提交 `32bc1d4`；后续上游合并后行号可能漂移，建议以函数名/搜索关键字定位。
++- 历史版本包（v6.17、v6.18.1、v6.20.4、v6.20.20 等）为构建产物形态，包内未找到可直接读取的 CHANGELOG/发布说明，未做逐目录 diff；本方案以源码仓库现状为准，未把历史包中的实现当作“已做优化”的依据。
++- 未在源码仓库中新增任何补丁或脚本；本文仅为方案文档。
+diff --git a/docs/部署包说明.md b/docs/部署包说明.md
+index 9251e79..9d895af 100644
+--- a/docs/部署包说明.md
++++ b/docs/部署包说明.md
+@@ -1,7 +1,11 @@
+-# audiobook（MyBooks 移植版）完整部署包 4.6.0-19（r13）
++# audiobook（MyBooks 移植版）完整部署包 4.6.0-build.20（r14）
+ 
+-> 最新包：`audiobook-deploy-4.6.0-19-r13-patched.tar.gz`（含全部历史修复 + 实体书 CSV 批量导入 + 有声书弹窗下线 + srt-tool v1.2.0）。
+-> 老包升级走下面的 upgrade.sh 流程即可；仅改前端/后端小补丁时可用热修包（见文末）。
++> 本轮已重打完整源码包（`4.6.0-build.20`），NAS 运维脚本与无 git 覆盖包仍在
++> [`delivery/audiobook-nas-release.tar.gz`](../delivery/audiobook-nas-release.tar.gz)（NAS 运维 + 无 git 覆盖包）。
++> 旧包升级走下面的 upgrade.sh 流程；本轮到 `4.6.0-19-r13` 的差异见
++> [`docs/变更报告-4.6.0-build.20.md`](变更报告-4.6.0-build.20.md)。
++
++> 历史包：`audiobook-deploy-4.6.0-19-r13-patched.tar.gz`（含全部历史修复 + 实体书 CSV 批量导入 + 有声书弹窗下线 + srt-tool v1.2.0）。
+ 
+ 这是唯一需要的部署包，解压后的目录名是 `audiobook/`。
+ 
+@@ -278,6 +282,24 @@ cp -a /volume1/docker/audiobook-data/books/*.db* /volume1/docker/audiobook-dbbac
+ 
+ ## 版本记录
+ 
++- 4.6.0-build.20-r14（2026-11-07）
++  - 重打**完整源码包**（含 `app/dist`、`app/node_modules`、`cfi_gen/node_modules`），文件名带版本号 `4.6.0-build.20`，见包内 `MANIFEST` / `SHA256SUMS`
++  - 新增 NAS 运维包 `delivery/audiobook-nas-release.tar.gz`（脚本、覆盖包、镜像自检），用法见 `delivery/nas/README-NAS.md`
++  - **版本号统一为 `4.6.0-build.20`**（上游已发布 tag `4.6.0` + 第 20 次本地构建）：`webserver/version.py`、
++    `docker-compose.yml` 的 `GIT_VERSION`、`app/package.json`、`app/package-lock.json`、`Makefile` 的
++    `VERSION_LOCK` 全部同值，界面/日志显示的就是它，不再有「运行期 `v4.8.0` / 交付标签 `4.6.0-20`」双口径
++  - 旧 `v4.7.1 ~ v4.8.x` 号段**封存**：与 `4.6.0-build.20` 无版本先后关系，属号段重置；对照表见 README「版本号规则」
++    与 CHANGELOG「号段重置说明」
++  - 上游 `develop` 上是 `4.6.1`，但**无 tag、无 Release，故不跟号**；等上游正式发 tag 后按主题合入再升 `4.6.1-build.20`
++  - `4.6.0-build.20` 是 semver 预发布标记，整串排序低于 `4.6.0`；本程序不发布 npm、无 `engines` 校验，
++    无实际影响。**再次强调：版本号不参与任何升级门控**（全仓库只做整串相等比较，表结构检查恒执行）；
++    同一上游基线的两次本地构建之间只能比较 `build.N`，不能只用 `>` 比整串
++  - 版本锁：`scripts/check-version-lock.py`（可独立执行）+ `tests/test_version_lock.py`（9 个用例：1 正向 + 8 负向）+
++    `scripts/pack.sh`（打包前强制检查）；Dockerfile 对空 `GIT_VERSION` 直接 `exit 1`，Makefile 对不一致的
++    `VER` 直接 `$(error)` —— 写回 `v4.8.x`、写成裸 `4.6.0`、留空、删守卫都会构建/测试失败
++  - 交付包改为「完整源码包」：补齐 `app/dist`、`app/node_modules`、`webserver/services/cfi_gen/node_modules` 等预构建产物，见包内 `MANIFEST-BUILD-ARTIFACTS.tsv`
++  - 相对 `4.6.0-19-r13` 的变更报告：[`docs/变更报告-4.6.0-build.20.md`](变更报告-4.6.0-build.20.md)
++
+ - 4.6.0-19-r13（2026-11-06）
+   - **实体书录入补全**：`POST /api/printbooks/import` CSV 批量导入 + `GET /api/printbooks/import-template` 模板下载
+   - 实体书页（/printbooks）标题栏新增「导入实体书」按钮（下载模板 → 选文件 → 导入 → 逐行错误反馈）
 diff --git a/scripts/README.md b/scripts/README.md
 index 019bd6e..082191f 100644
 --- a/scripts/README.md
@@ -1046,10 +2689,10 @@ index 0000000..8b2ac8f
 +exit $RC
 diff --git a/scripts/backup_run.py b/scripts/backup_run.py
 new file mode 100755
-index 0000000..2bbfdc6
+index 0000000..7aed70a
 --- /dev/null
 +++ b/scripts/backup_run.py
-@@ -0,0 +1,483 @@
+@@ -0,0 +1,535 @@
 +#!/usr/bin/env python3
 +"""audiobook 数据备份核心逻辑（P0）
 +
@@ -1131,6 +2774,24 @@ index 0000000..2bbfdc6
 +    return h.hexdigest()
 +
 +
++def _write_json_atomic(path, payload):
++    """先写临时文件再原子替换：断电/盘满不会留下半截 JSON 冒充清单。"""
++    tmp = path + ".tmp"
++    try:
++        with open(tmp, "w", encoding="utf-8") as f:
++            json.dump(payload, f, ensure_ascii=False, indent=2)
++            f.flush()
++            os.fsync(f.fileno())
++        os.replace(tmp, path)
++    except Exception:
++        try:
++            if os.path.exists(tmp):
++                os.remove(tmp)
++        except OSError:
++            pass
++        raise
++
++
 +# --------------------------------------------------------------------------
 +# 数据库备份
 +# --------------------------------------------------------------------------
@@ -1160,6 +2821,13 @@ index 0000000..2bbfdc6
 +        info["method"] = "sqlite-backup-api"
 +    except Exception as exc:
 +        if not allow_cold_copy:
++            # 不留半截副本：connect(dst) 已经创建了目标文件，失败后清掉，
++            # 避免 db/<ts>/ 里躺着没人认领的空文件（恢复时易误取）
++            try:
++                if os.path.exists(dst):
++                    os.remove(dst)
++            except OSError:
++                pass
 +            raise BackupError("在线备份失败（容器可能在写入）：%s" % exc)
 +        log("在线备份失败（%s），回退为文件冷拷贝（须确认容器已停止）" % exc)
 +        for suffix in ("", "-wal", "-shm"):
@@ -1340,6 +3008,14 @@ index 0000000..2bbfdc6
 +        log("!! 有 %d 个文件未能备份（前 10 条）：" % len(stats["errors"]))
 +        for err in stats["errors"][:10]:
 +            log("   " + err)
++        # §fail-closed§（build.20 复审）快照里只要有一个文件没备上（磁盘满、
++        # 权限、扫描失败），它就是残缺的：manifest 会照常把它登记成最新一份，
++        # 保留策略还会优先保护它——比「没有备份」更危险。这里直接判失败，
++        # 由 main() 清理本次残缺目录并返回退出码 3，绝不顶替旧的好快照。
++        raise BackupError(
++            "文件快照不完整：%d 个条目未能备份（详见上方日志）。"
++            "若是权限问题请检查数据目录；若是空间问题请清理备份盘后重试"
++            % len(stats["errors"]))
 +    return stats
 +
 +
@@ -1479,8 +3155,13 @@ index 0000000..2bbfdc6
 +                results.append({"source": src, "status": "failed", "error": str(exc)})
 +        if results:
 +            os.makedirs(db_dir, exist_ok=True)
-+            with open(os.path.join(db_dir, "manifest.json"), "w", encoding="utf-8") as f:
-+                json.dump(results, f, ensure_ascii=False, indent=2)
++            try:
++                _write_json_atomic(os.path.join(db_dir, "manifest.json"), results)
++            except OSError as exc:
++                # db 副本本身已完整并通过校验，这只是目录内的便利清单；
++                # 顶层 manifests 写不进去时整体仍会按失败处理
++                warnings += 1
++                log("!! 数据库清单写入失败（不影响已备份的 db 文件）: %s" % exc)
 +        summary["databases"] = results
 +        if any(r.get("status") != "ok" for r in results):
 +            warnings += 1
@@ -1488,16 +3169,20 @@ index 0000000..2bbfdc6
 +    # 2) 文件快照
 +    if args.mode in ("all", "files"):
 +        dst_root = os.path.join(backup_root, "files", ts)
++        # §不许误删旧快照§（build.20 复审）重跑同一 --timestamp 时目录已存在，
++        # snapshot_files 会拒绝；此时异常路径绝不能 rmtree——那会把一份完好
++        # 的旧快照删掉（原代码正是这么干的）。只清理「本次运行亲手创建」
++        # 的目录：pre_existing 为 False 才允许动。
++        pre_existing = os.path.isdir(dst_root)
 +        try:
 +            stats = snapshot_files(data_dir, dst_root, exclude_dirs, exclude_patterns)
 +        except Exception as exc:
-+            log("!! 文件快照失败，已清理不完整快照: %s" % exc)
-+            if os.path.isdir(dst_root):
++            log("!! 文件快照失败: %s" % exc)
++            if not pre_existing and os.path.isdir(dst_root):
++                log("已清理本次不完整快照: %s" % dst_root)
 +                shutil.rmtree(dst_root, ignore_errors=True)
 +            return 3
 +        summary["files"] = stats
-+        if stats["errors"]:
-+            warnings += 1
 +
 +    # 3) 保留策略
 +    if not args.no_prune:
@@ -1515,12 +3200,22 @@ index 0000000..2bbfdc6
 +
 +    manifests = os.path.join(backup_root, "manifests")
 +    os.makedirs(manifests, exist_ok=True)
-+    with open(os.path.join(manifests, "backup-%s.json" % ts), "w", encoding="utf-8") as f:
-+        json.dump(summary, f, ensure_ascii=False, indent=2)
++    manifest_path = os.path.join(manifests, "backup-%s.json" % ts)
++    try:
++        _write_json_atomic(manifest_path, summary)
++    except OSError as exc:
++        # §fail-closed§ 清单是恢复的入口：写不进去（多半是盘满）时，本次
++        # 快照不会被任何恢复工具列出，等于没有备份还占着空间。清掉本次
++        # 产物，返回退出码 3；旧快照不受影响（保留策略可能已在本轮清过
++        # 部分更旧的快照，上方日志有逐条记录，可据 manifests 追溯）。
++        log("!! 备份清单写入失败，本次快照按失败处理并清理: %s" % exc)
++        for sub in ("db", "files"):
++            path = os.path.join(backup_root, sub, ts)
++            if os.path.isdir(path):
++                shutil.rmtree(path, ignore_errors=True)
++        return 3
 +
-+    log("备份完成，状态=%s，清单=%s"
-+        % (summary["status"],
-+           os.path.join(manifests, "backup-%s.json" % ts)))
++    log("备份完成，状态=%s，清单=%s" % (summary["status"], manifest_path))
 +    return 2 if warnings else 0
 +
 +
@@ -1533,6 +3228,224 @@ index 0000000..2bbfdc6
 +    except KeyboardInterrupt:
 +        log("!! 用户中断")
 +        sys.exit(130)
+diff --git a/scripts/check-version-lock.py b/scripts/check-version-lock.py
+new file mode 100644
+index 0000000..4405dc7
+--- /dev/null
++++ b/scripts/check-version-lock.py
+@@ -0,0 +1,180 @@
++#!/usr/bin/env python3
++# -*- coding: utf-8 -*-
++"""版本锁检查（防版本回退 / 防被交付标签覆盖）。
++
++背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.20`，语义是
++「上游 mybooks 已发布 tag 4.6.0 + 第 20 次本地构建」。旧的 4.8.x 号段已封存，
++与 4.6.0-build.20 是纯号段重置，不对应任何版本先后关系（详见 README 对照表）。
++
++本检查把这条约定变成显式断言：任何一处被回退（写回 4.8.x / 写回裸 4.6.0）、
++被交付标签顶掉、或被构建参数写成空串，都会直接失败。
++
++注意：`4.6.0-build.20` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.6.0`。
++本程序不发布 npm 包、package.json 无 `engines` 校验，因此该排序差异无实际影响；
++同一上游基线的本地构建之间用 `build.N` 区分，版本检测不能只靠 `>` 比较，须比较 `build.N` 段。
++
++用法：
++    python3 scripts/check-version-lock.py [--root <仓库或发布包根目录>]
++
++退出码：0 全部通过；1 有断言失败。
++"""
++
++import argparse
++import re
++import sys
++from pathlib import Path
++
++VERSION_LOCK = "4.6.0-build.20"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
++PKG_VERSION_LOCK = "4.6.0-build.20"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
++
++WHY = ("这是防版本回退 / 防被交付标签覆盖的保护，不是普通测试失败。"
++       "运行期版本已统一为 4.6.0-build.20（上游已发布 tag 4.6.0 + 第 20 次本地构建），"
++       "旧 4.8.x 号段已封存，不得写回；也不得写成裸 4.6.0。")
++
++SEMVER_NOTE = ("4.6.0-build.20 是 semver 预发布标记，整串排序低于 4.6.0；"
++               "本程序不发布 npm、package.json 无 engines 校验，故无实际影响。"
++               "同一上游基线的本地构建之间用 build.N 区分：版本检测不能只靠 > 比较，须比较 build.N 段。")
++
++
++def read(root: Path, rel: str) -> str:
++    p = root / rel
++    if not p.is_file():
++        raise FileNotFoundError(str(p))
++    return p.read_text(encoding="utf-8", errors="replace")
++
++
++def main() -> int:
++    ap = argparse.ArgumentParser(description="版本锁检查")
++    ap.add_argument("--root", default=str(Path(__file__).resolve().parent.parent),
++                    help="仓库或发布包根目录（默认脚本上级目录）")
++    args = ap.parse_args()
++    root = Path(args.root).resolve()
++
++    failures = []
++
++    def ok(name, detail):
++        print("[OK]   %-22s %s" % (name, detail))
++
++    def bad(name, detail, fix):
++        print("[FAIL] %-22s %s" % (name, detail))
++        print("       %s" % WHY)
++        print("       补救：%s" % fix)
++        failures.append(name)
++
++    # 1) webserver/version.py
++    try:
++        src = read(root, "webserver/version.py")
++        m = re.search(r'^VERSION\s*=\s*"([^"]*)"', src, re.M)
++        if not m:
++            bad("version.py", "找不到 VERSION = \"...\" 定义",
++                "恢复为 VERSION = \"%s\"（见 scripts/check-version-lock.py 的 VERSION_LOCK）" % VERSION_LOCK)
++        elif m.group(1) != VERSION_LOCK:
++            bad("version.py", "VERSION=%r，应为 %r" % (m.group(1), VERSION_LOCK),
++                "改回 VERSION = \"%s\"；若确需升级运行期版本（如上游正式发布 4.6.1），"
++                "必须同时更新本脚本、docker-compose.yml、Makefile 与 README 对照表" % VERSION_LOCK)
++        else:
++            ok("version.py", 'VERSION = "%s"' % VERSION_LOCK)
++    except FileNotFoundError as e:
++        bad("version.py", "文件缺失 %s" % e, "从仓库恢复 webserver/version.py")
++
++    # 2) docker-compose.yml 的 GIT_VERSION
++    try:
++        comp = read(root, "docker-compose.yml")
++        hits = re.findall(r'^[ \t]*GIT_VERSION:\s*"?([^"\n]*)"?[ \t]*$', comp, re.M)
++        if not hits:
++            bad("docker-compose.yml", "没有 GIT_VERSION 构建参数（Dockerfile 会把 version.py 写成空串）",
++                "在 build.args 下加 GIT_VERSION: \"%s\"" % VERSION_LOCK)
++        elif len(hits) > 1:
++            bad("docker-compose.yml", "GIT_VERSION 出现 %d 次，口径不唯一" % len(hits),
++                "只保留一处 GIT_VERSION: \"%s\"" % VERSION_LOCK)
++        elif hits[0].strip() == "":
++            bad("docker-compose.yml", "GIT_VERSION 为空（会把运行期版本顶成空串）",
++                "填 GIT_VERSION: \"%s\"" % VERSION_LOCK)
++        elif hits[0].strip() != VERSION_LOCK:
++            bad("docker-compose.yml", "GIT_VERSION=%r，应为 %r" % (hits[0].strip(), VERSION_LOCK),
++                "改回 GIT_VERSION: \"%s\"；分支名、旧 4.8.x、裸 4.6.0 都不要写进构建参数" % VERSION_LOCK)
++        else:
++            ok("docker-compose.yml", 'GIT_VERSION = "%s"' % VERSION_LOCK)
++    except FileNotFoundError as e:
++        bad("docker-compose.yml", "文件缺失 %s" % e, "从仓库恢复 docker-compose.yml")
++
++    # 3) Dockerfile 空值守卫
++    try:
++        df = read(root, "Dockerfile")
++        flat = re.sub(r"\\\s*\n", " ", df)          # 把续行拉平，便于跨行匹配
++        guard = re.search(
++            r'if\s*\[\s*-z\s+"\$\{GIT_VERSION:-\}"\s*\]\s*;\s*then'
++            r'.{0,240}?exit\s+1', flat, re.S)
++        has_arg = re.search(r'^ARG\s+GIT_VERSION\s*=\s*"([^"]*)"', df, re.M)
++        if not guard:
++            bad("Dockerfile", "缺少「GIT_VERSION 为空则构建失败」的守卫",
++                "在写 webserver/version.py 之前加：if [ -z \"${GIT_VERSION:-}\" ]; then "
++                "echo \"ERROR: 版本锁…\" >&2; exit 1; fi")
++        elif not has_arg:
++            bad("Dockerfile", "缺少 GIT_VERSION 的 ARG 声明", "补 ARG GIT_VERSION=\"%s\"" % VERSION_LOCK)
++        elif has_arg.group(1) != VERSION_LOCK:
++            bad("Dockerfile", "ARG GIT_VERSION 默认值=%r，应为 %r（裸 docker build 会写错版本）"
++                % (has_arg.group(1), VERSION_LOCK),
++                "改回 ARG GIT_VERSION=\"%s\"；该默认值必须与运行期版本锁一致" % VERSION_LOCK)
++        else:
++            ok("Dockerfile", 'ARG 默认值 %s；空值守卫存在（空 GIT_VERSION 会让构建失败，而不是写入空串）'
++               % VERSION_LOCK)
++    except FileNotFoundError as e:
++        bad("Dockerfile", "文件缺失 %s" % e, "从仓库恢复 Dockerfile")
++
++    # 4) app/package.json
++    try:
++        pkg = read(root, "app/package.json")
++        m = re.search(r'"version"\s*:\s*"([^"]*)"', pkg)
++        if not m:
++            bad("app/package.json", "找不到 version 字段", "恢复 \"version\": \"%s\"" % PKG_VERSION_LOCK)
++        elif m.group(1) != PKG_VERSION_LOCK:
++            bad("app/package.json", "version=%r，应为 %r" % (m.group(1), PKG_VERSION_LOCK),
++                "改回 \"version\": \"%s\"（须与运行期版本一致；%s）"
++                % (PKG_VERSION_LOCK, SEMVER_NOTE))
++        else:
++            ok("app/package.json", '"version": "%s"' % PKG_VERSION_LOCK)
++    except FileNotFoundError as e:
++        bad("app/package.json", "文件缺失 %s" % e, "从仓库恢复 app/package.json")
++
++    # 5) Makefile 的 VER 覆盖
++    try:
++        mk = read(root, "Makefile")
++        has_lock = re.search(r'^VERSION_LOCK\s*:?=\s*%s' % re.escape(VERSION_LOCK), mk, re.M)
++        has_guard = ("ifneq ($(strip $(VER)),$(VERSION_LOCK))" in mk and "$(error" in mk)
++        if not has_lock:
++            bad("Makefile", "没有 VERSION_LOCK 常量", "加 VERSION_LOCK := %s" % VERSION_LOCK)
++        elif not has_guard:
++            bad("Makefile", "VER 不匹配时没有报错退出（会把分支名/交付标签写进镜像）",
++                "加：ifneq ($(strip $(VER)),$(VERSION_LOCK)) 与 $(error ...) 守卫")
++        else:
++            ok("Makefile", "VER 不匹配即报错（默认 VER=%s）" % VERSION_LOCK)
++    except FileNotFoundError as e:
++        bad("Makefile", "文件缺失 %s" % e, "从仓库恢复 Makefile")
++
++    # 6) package-lock 顶层版本（与 package.json 对齐）
++    try:
++        lock = read(root, "app/package-lock.json")
++        m = re.search(r'"name"\s*:\s*"mybooks"\s*,\s*"version"\s*:\s*"([^"]*)"', lock, re.S)
++        if not m:
++            bad("package-lock.json", "找不到顶层 version", "恢复顶层 \"version\": \"%s\"" % PKG_VERSION_LOCK)
++        elif m.group(1) != PKG_VERSION_LOCK:
++            bad("package-lock.json", "顶层 version=%r，应为 %r" % (m.group(1), PKG_VERSION_LOCK),
++                "改回 \"version\": \"%s\"（与 package.json 对齐）" % PKG_VERSION_LOCK)
++        else:
++            ok("package-lock.json", '顶层 version = "%s"' % PKG_VERSION_LOCK)
++    except FileNotFoundError as e:
++        bad("package-lock.json", "文件缺失 %s" % e, "从仓库恢复 app/package-lock.json")
++
++    print()
++    if failures:
++        print("❌ 版本锁检查失败：%d 项" % len(failures))
++        print("   %s" % WHY)
++        return 1
++    print("✅ 版本锁检查通过：运行期版本 %s 未被回退或被交付标签覆盖" % VERSION_LOCK)
++    print("   注意：%s" % SEMVER_NOTE)
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/pack.sh b/scripts/pack.sh
+index 955989e..cd9ba4e 100755
+--- a/scripts/pack.sh
++++ b/scripts/pack.sh
+@@ -149,6 +149,18 @@ if [ "${1:-}" = "--check" ]; then
+             fail=1
+         fi
+ 
++        # 版本锁：运行期版本 4.6.0-20 不得被回退（写回 4.8.x）、写成裸 4.6.0、
++        # 或被交付标签/构建参数覆盖（防反弹保护；失败信息由脚本自己打印，说明补救方法）
++        if [ -f "$D/scripts/check-version-lock.py" ]; then
++            if command -v python3 >/dev/null 2>&1; then
++                python3 "$D/scripts/check-version-lock.py" --root "$D" || fail=1
++            else
++                echo "  !! 没有 python3，跳过版本锁检查（请在构建机或服务器上补跑）"
++            fi
++        else
++            echo "  !! 缺 scripts/check-version-lock.py（版本锁检查不完整）"; fail=1
++        fi
++
+         [ "$fail" = "0" ] && echo "  ✅ 校验通过" || { echo "  ❌ 校验失败"; exit 1; }
+     }
+ 
+@@ -160,7 +172,7 @@ fi
+ # ---------- 确定版本号 ----------
+ VER="${1:-}"
+ if [ -z "$VER" ]; then
+-    VER=$(grep -m1 -oE '^## [0-9]+\.[0-9]+\.[0-9]+-[0-9]+' CHANGELOG.md | sed 's/^## //')
++    VER=$(grep -m1 -oE '^## [0-9]+\.[0-9]+\.[0-9]+-(build\.)?[0-9]+' CHANGELOG.md | sed 's/^## //')
+     [ -n "$VER" ] || { echo "!! 无法从 CHANGELOG.md 取版本号，请手动指定"; exit 2; }
+     echo "==> 版本号（取自 CHANGELOG）: $VER"
+ else
 diff --git a/scripts/search_index.py b/scripts/search_index.py
 new file mode 100644
 index 0000000..c3fe66b
@@ -1844,27 +3757,84 @@ index 2fd6472..673d70a 100644
      client._send_request = AsyncMock(return_value={"error": {"message": "not available"}})
 diff --git a/tests/test_audio_books_cache.py b/tests/test_audio_books_cache.py
 new file mode 100644
-index 0000000..e094a8d
+index 0000000..690acf3
 --- /dev/null
 +++ b/tests/test_audio_books_cache.py
-@@ -0,0 +1,91 @@
-+"""AudioBooksCache 的请求线程行为回归：
+@@ -0,0 +1,286 @@
++"""AudioBooksCache 的请求线程行为回归。
 +
 +历史实现会在列表请求里同步遍历整个书库（每 5 分钟一次），10 万册库会
-+把 /api/book 拖到秒级。这里锁定两条约束：
++把 /api/book 拖到秒级。这里锁定四条约束：
++
 +1. 缓存新鲜时，读请求绝不触发磁盘扫描；
-+2. 缓存过期时，读请求立即返回旧值，扫描只能发生在后台线程。
++2. 缓存过期时，读请求立即返回旧值，扫描只能发生在后台线程；
++3. 刷新并发单飞：并发读只触发一次扫描，期间的重复请求不会各起一个线程；
++4. 刷新失败时保留旧缓存，不把「有音频」误降级成「没有音频」。
++
++**确定性说明**：后台刷新线程与请求线程是真实线程，所以这里不靠 sleep 或
++放宽断言，而是给 `_scan_audio_directory` 装一个 `threading.Event` 闸门——
++扫描进入后必须等测试显式放行才返回。于是「读请求返回时扫描仍在进行」是
++确定事实（旧值必然还在），「放行后缓存切成新值」也是确定事实。
 +"""
 +
-+import time
++import threading
 +
 +import pytest
 +
++from webserver.handlers import audio as audio_module
 +from webserver.handlers.audio import AudioBooksCache
++
++SCAN_TIMEOUT = 5.0  # 闸门最长等待，超时视为「请求线程同步扫盘」的实现回归
++
++
++class ScanGate:
++    """可控的假扫描：进入即挂起，直到测试调用 release()。
++
++    记录调用次数与扫描发生的线程，便于断言「扫描只发生一次」且
++    「扫描不在请求线程里」。
++    """
++
++    def __init__(self, result):
++        self.result = result
++        self.entered = threading.Event()
++        self.release = threading.Event()
++        self.calls = 0
++        self.thread_ids = []
++        self.timed_out = False
++
++    def __call__(self, cls):
++        self.calls += 1
++        self.thread_ids.append(threading.get_ident())
++        self.entered.set()
++        if not self.release.wait(SCAN_TIMEOUT):
++            self.timed_out = True
++            raise RuntimeError("扫描闸门超时：疑似请求线程在同步扫盘")
++        return self.result
++
++
++def _wait_until(predicate, timeout=5.0):
++    """等待状态真正迁移（不是 sleep 掩盖）：超时即判失败。"""
++    done = threading.Event()
++    timer = threading.Timer(timeout, done.set)
++    timer.daemon = True
++    timer.start()
++    try:
++        while not done.is_set():
++            if predicate():
++                return True
++            done.wait(0.005)
++        return predicate()
++    finally:
++        timer.cancel()
 +
 +
 +@pytest.fixture(autouse=True)
 +def _reset_cache():
++    """每个用例前后清空/还原类级状态，并等后台线程收尾。
++
++    后台刷新线程是真实线程，若不收尾，上一用例的线程会写坏下一用例的
++    类变量——这也是原测试偶发失败的次要原因。
++    """
 +    saved = (
 +        AudioBooksCache._book_ids,
 +        AudioBooksCache._last_update_time,
@@ -1872,7 +3842,17 @@ index 0000000..e094a8d
 +        AudioBooksCache._refreshing,
 +        AudioBooksCache._pending_refresh,
 +    )
++    _wait_until(lambda: not AudioBooksCache._refreshing)
++    AudioBooksCache._book_ids = set()
++    AudioBooksCache._last_update_time = 0
++    AudioBooksCache._need_update = True
++    AudioBooksCache._refreshing = False
++    AudioBooksCache._pending_refresh = False
++
 +    yield
++
++    assert _wait_until(lambda: not AudioBooksCache._refreshing), \
++        "后台刷新线程未在超时内收尾，用例留下了悬挂线程"
 +    (AudioBooksCache._book_ids,
 +     AudioBooksCache._last_update_time,
 +     AudioBooksCache._need_update,
@@ -1888,8 +3868,9 @@ index 0000000..e094a8d
 +        return {7}
 +
 +    monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(fake_scan))
++    # 关掉 6 小时兜底，让「新鲜」只由 _need_update 决定，不依赖真实时钟
++    monkeypatch.setattr(audio_module, "AUDIO_CACHE_REFRESH_SECONDS", 0)
 +    AudioBooksCache._book_ids = {7}
-+    AudioBooksCache._last_update_time = time.time()
 +    AudioBooksCache._need_update = False
 +
 +    assert AudioBooksCache.get_audio_book_ids() == {7}
@@ -1906,8 +3887,8 @@ index 0000000..e094a8d
 +        return set()
 +
 +    monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(fake_scan))
++    monkeypatch.setattr(audio_module, "AUDIO_CACHE_REFRESH_SECONDS", 0)
 +    AudioBooksCache._book_ids = {1}
-+    AudioBooksCache._last_update_time = time.time()
 +    AudioBooksCache._need_update = False
 +
 +    AudioBooksCache.mark_has_audio(2)
@@ -1920,25 +3901,152 @@ index 0000000..e094a8d
 +    assert calls == []
 +
 +
-+def test_stale_cache_returns_immediately_and_refreshes_in_background(monkeypatch):
-+    def fake_scan(cls):
-+        return {1, 2}
-+
-+    monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(fake_scan))
++def test_stale_read_returns_old_value_then_switches_after_refresh(monkeypatch):
++    """过期读返回旧值 → 刷新完成后切到新值。两条断言都由闸门保证。"""
++    gate = ScanGate({1, 2})
++    monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(gate))
 +    AudioBooksCache._book_ids = set()
-+    AudioBooksCache._last_update_time = 0
 +    AudioBooksCache._need_update = True
-+    AudioBooksCache._refreshing = False
-+    AudioBooksCache._pending_refresh = False
 +
-+    started = time.time()
++    # 扫描被闸门挡住时读到旧值 —— 说明请求线程没有等扫描
 +    assert AudioBooksCache.get_audio_book_ids() == set()
-+    assert time.time() - started < 0.5  # 不阻塞
++    assert not gate.release.is_set()
++    assert not gate.timed_out
 +
-+    deadline = time.time() + 2
-+    while AudioBooksCache._book_ids != {1, 2} and time.time() < deadline:
-+        time.sleep(0.02)
++    # 后台线程确实进入了扫描，且不在请求线程上
++    assert gate.entered.wait(SCAN_TIMEOUT)
++    assert gate.thread_ids[0] != threading.get_ident()
++
++    # 刷新进行中，读请求仍然只拿旧值，且不会重复起线程
++    assert AudioBooksCache.get_audio_book_ids() == set()
++    assert gate.calls == 1
++
++    gate.release.set()
++    assert _wait_until(lambda: not AudioBooksCache._refreshing)
 +    assert AudioBooksCache._book_ids == {1, 2}
++    assert gate.calls == 1
++    assert not gate.timed_out
++
++
++def test_reads_during_blocked_refresh_do_not_start_another_scan(monkeypatch):
++    """刷新进行中再并发读：全部立即拿到旧值，且不会多起扫描线程。"""
++    gate = ScanGate({3})
++    monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(gate))
++    AudioBooksCache._book_ids = set()
++    AudioBooksCache._need_update = True
++
++    # 主线程先触发一次刷新，并确认后台线程已经停在闸门里（此时 _refreshing 必为 True）
++    assert AudioBooksCache.get_audio_book_ids() == set()
++    assert gate.entered.wait(SCAN_TIMEOUT)
++    assert not gate.timed_out
++
++    results = []
++    lock = threading.Lock()
++
++    def read():
++        value = AudioBooksCache.get_audio_book_ids()
++        with lock:
++            results.append(value)
++
++    readers = [threading.Thread(target=read) for _ in range(8)]
++    for t in readers:
++        t.start()
++    for t in readers:
++        t.join(SCAN_TIMEOUT)
++
++    assert len(results) == 8
++    assert all(value == set() for value in results)
++    assert not any(t.is_alive() for t in readers)
++    assert gate.calls == 1          # 闸门未放行，扫描数不可能增长——确定事实
++    assert len(set(gate.thread_ids)) == 1
++    assert not gate.timed_out
++
++    gate.release.set()
++    assert _wait_until(lambda: not AudioBooksCache._refreshing)
++    assert AudioBooksCache._book_ids == {3}
++    assert gate.calls == 1
++    assert not gate.timed_out
++
++
++def test_cold_start_concurrent_reads_start_one_refresh_thread(monkeypatch):
++    """冷启动就并发：8 个读全部立即返回旧值，扫描只落在同一个后台线程。"""
++    gate = ScanGate({4})
++    monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(gate))
++    AudioBooksCache._book_ids = set()
++    AudioBooksCache._need_update = True
++
++    results = []
++    lock = threading.Lock()
++    start = threading.Barrier(8)
++
++    def read():
++        start.wait(SCAN_TIMEOUT)     # 让 8 个读尽量同时进入过期判断
++        value = AudioBooksCache.get_audio_book_ids()
++        with lock:
++            results.append(value)
++
++    readers = [threading.Thread(target=read) for _ in range(8)]
++    for t in readers:
++        t.start()
++    for t in readers:
++        t.join(SCAN_TIMEOUT)
++
++    assert len(results) == 8
++    assert all(value == set() for value in results)
++    assert not any(t.is_alive() for t in readers)
++    # 等扫描线程真正进入闸门后，扫描数必然是 1（多起线程会立刻体现为 >1）
++    assert gate.entered.wait(SCAN_TIMEOUT)
++    assert gate.calls == 1
++    assert not gate.timed_out
++
++    gate.release.set()
++    assert _wait_until(lambda: not AudioBooksCache._refreshing)
++    assert AudioBooksCache._book_ids == {4}
++    # 允许竞态窗口里登记一次「补扫」（实现语义），但扫描线程必须只有一个
++    assert len(set(gate.thread_ids)) == 1
++    assert not gate.timed_out
++
++
++def test_failed_refresh_keeps_old_cache(monkeypatch):
++    """扫描异常时保留旧缓存，并让下一次读继续尝试刷新。"""
++    calls = []
++
++    def boom(cls):
++        calls.append(1)
++        raise RuntimeError("scan failed")
++
++    monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(boom))
++    AudioBooksCache._book_ids = {9}
++    AudioBooksCache._need_update = True
++
++    assert AudioBooksCache.get_audio_book_ids() == {9}
++    assert _wait_until(lambda: not AudioBooksCache._refreshing)
++
++    # 旧缓存原样保留，没有降级成空集；标志仍为需要刷新（便于下次重试）
++    assert AudioBooksCache._book_ids == {9}
++    assert AudioBooksCache._need_update is True
++    assert calls == [1]
++
++
++def test_successful_empty_scan_clears_cache(monkeypatch):
++    """扫描成功但确实没有音频时，缓存才允许变空（与异常路径区分开）。"""
++    gate = ScanGate(set())
++    monkeypatch.setattr(AudioBooksCache, "_scan_audio_directory", classmethod(gate))
++    AudioBooksCache._book_ids = {9}
++    AudioBooksCache._need_update = True
++
++    # 扫描卡在闸门里 → 读到旧值 {9} 是确定事实，而不是「碰巧线程还没写完」
++    assert AudioBooksCache.get_audio_book_ids() == {9}
++    assert gate.entered.wait(SCAN_TIMEOUT)
++    assert AudioBooksCache._book_ids == {9}
++    assert AudioBooksCache._need_update is True
++    assert not gate.timed_out
++
++    gate.release.set()
++    assert _wait_until(lambda: not AudioBooksCache._refreshing)
++    assert AudioBooksCache._book_ids == set()
++    assert AudioBooksCache._need_update is False
++    assert gate.calls == 1
 diff --git a/tests/test_background_tasks.py b/tests/test_background_tasks.py
 new file mode 100644
 index 0000000..89eda44
@@ -1982,6 +4090,160 @@ index 0000000..89eda44
 +    assert task.to_dict()["can_retry"] is False
 +    task.status = BackgroundTask.STATUS_COMPLETED
 +    assert task.to_dict()["retry_action"] is None
+diff --git a/tests/test_backup_run.py b/tests/test_backup_run.py
+new file mode 100644
+index 0000000..28c8721
+--- /dev/null
++++ b/tests/test_backup_run.py
+@@ -0,0 +1,148 @@
++#!/usr/bin/env python3
++"""backup_run.py 三个 fail-closed 修复的回归测试（build.20 复审，2026-11-07）。
++
++钉住的不变量（与模块 docstring 第 19 行一致）：
++1. 快照里只要有文件没备上（磁盘满/权限），整份快照判失败并清理，
++   绝不顶替旧的好快照（原实现只记 warning 退码 2，残缺快照反而被
++   保留策略当「最新一份」优先保护）；
++2. 重跑同一 --timestamp 报「目标已存在」时，异常路径不得 rmtree
++   已存在的旧快照（原实现恰好会删）；
++3. manifest 先写临时文件再原子替换，写入失败时本次 db/files 产物
++   全部清理、退出码 3（原实现留半截 JSON + 未文档化的退出码 1）。
++
++全部用临时目录与内存桩，不碰真实数据、不要求 root。
++"""
++import importlib.util
++import os
++import sqlite3
++
++import pytest
++
++_SPEC = importlib.util.spec_from_file_location(
++    "backup_run",
++    os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
++                 "scripts", "backup_run.py"))
++br = importlib.util.module_from_spec(_SPEC)
++_SPEC.loader.exec_module(br)
++
++
++@pytest.fixture()
++def env(tmp_path):
++    data = tmp_path / "data"
++    (data / "books" / "library").mkdir(parents=True)
++    (data / "books" / "epub").mkdir(parents=True)
++    conn = sqlite3.connect(str(data / "books" / "calibre-webserver.db"))
++    conn.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT)")
++    conn.commit()
++    conn.close()
++    conn = sqlite3.connect(str(data / "books" / "library" / "metadata.db"))
++    conn.execute("CREATE TABLE books (id INTEGER PRIMARY KEY)")
++    conn.commit()
++    conn.close()
++    (data / "books" / "epub" / "某书.epub").write_bytes(b"EPUB" * 1000)
++    return str(data), str(tmp_path / "bak")
++
++
++def run(env, ts, monkeypatch=None, patch=None):
++    if monkeypatch is not None and patch:
++        target, fake = patch
++        monkeypatch.setattr(br, target, fake, raising=True)
++    return br.main(["--data", env[0], "--backup", env[1],
++                    "--timestamp", ts, "--min-free-gb", "0"])
++
++
++def test_happy_path(env):
++    rc = run(env, "20261107-120000")
++    assert rc == 0
++    bak = env[1]
++    assert os.path.isfile(os.path.join(bak, "manifests", "backup-20261107-120000.json"))
++    assert os.path.isfile(os.path.join(
++        bak, "files", "20261107-120000", "books", "epub", "某书.epub"))
++    assert os.path.isfile(os.path.join(bak, "db", "20261107-120000", "webserver.db"))
++
++
++def test_rerun_same_timestamp_never_deletes_existing_snapshot(env):
++    ts = "20261107-120000"
++    assert run(env, ts) == 0
++    # 旧实现：重跑报「目标已存在」后，异常路径 rmtree 把旧快照删掉
++    assert run(env, ts) == 3
++    assert os.path.isfile(os.path.join(
++        env[1], "files", ts, "books", "epub", "某书.epub"))
++
++
++def test_partial_snapshot_fails_closed_and_is_cleaned(env, monkeypatch):
++    # 刷新 mtime 确保走复制路径（硬链接要求 size+mtime 完全一致）
++    p = os.path.join(env[0], "books", "epub", "某书.epub")
++    with open(p, "ab") as f:
++        f.write(b"x")
++    with open(os.path.join(env[0], "books", "epub", "新文件.txt"), "w") as f:
++        f.write("new")
++
++    orig = br._copy_file
++
++    def bad_copy(src, dst, st, root_owned):
++        if src.endswith("新文件.txt"):
++            raise OSError(28, "ENOSPC simulated")
++        return orig(src, dst, st, root_owned)
++
++    ts = "20261107-130000"
++    rc = run(env, ts, monkeypatch, patch=("_copy_file", bad_copy))
++    assert rc == 3
++    assert not os.path.exists(os.path.join(env[1], "files", ts))
++    assert not os.path.exists(os.path.join(env[1], "manifests",
++                                           "backup-%s.json" % ts))
++
++
++def test_manifest_write_failure_fails_closed(env, monkeypatch):
++    def bad_write(path, payload):
++        raise OSError(28, "ENOSPC simulated (manifest)")
++
++    ts = "20261107-140000"
++    rc = run(env, ts, monkeypatch, patch=("_write_json_atomic", bad_write))
++    assert rc == 3
++    assert not os.path.exists(os.path.join(env[1], "files", ts))
++    assert not os.path.exists(os.path.join(env[1], "db", ts))
++    leftovers = [f for f in os.listdir(os.path.join(env[1], "manifests"))
++                 if f.endswith(".tmp")]
++    assert leftovers == []
++
++
++def test_failed_db_backup_leaves_no_stray_file(env, monkeypatch):
++    orig_connect = br.sqlite3.connect
++
++    def bad_connect(*a, **k):
++        if "calibre-webserver.db" in str(a[0] or ""):
++            raise br.sqlite3.OperationalError("disk I/O error simulated")
++        return orig_connect(*a, **k)
++
++    ts = "20261107-150000"
++    monkeypatch.setattr(br.sqlite3, "connect", bad_connect)
++    rc = run(env, ts)
++    assert rc == 2  # db 失败=警告；文件快照仍成功
++    assert not os.path.exists(os.path.join(env[1], "db", ts, "webserver.db"))
++    assert os.path.isfile(os.path.join(env[1], "db", ts, "calibre-metadata.db"))
++
++
++def test_failed_run_never_triggers_retention(env, monkeypatch):
++    # 先放两份「旧快照」在 files/ 下，失败运行不得清理它们
++    for older in ("20261105-120000", "20261106-120000"):
++        d = os.path.join(env[1], "files", older)
++        os.makedirs(d)
++        with open(os.path.join(d, "marker.txt"), "w") as f:
++            f.write(older)
++
++    p = os.path.join(env[0], "books", "epub", "某书.epub")
++    with open(p, "ab") as f:
++        f.write(b"x")
++
++    orig = br._copy_file
++
++    def bad_copy(src, dst, st, root_owned):
++        if src.endswith("某书.epub"):
++            raise OSError(28, "ENOSPC simulated")
++        return orig(src, dst, st, root_owned)
++
++    rc = run(env, "20261107-160000", monkeypatch, patch=("_copy_file", bad_copy))
++    assert rc == 3
++    for older in ("20261105-120000", "20261106-120000"):
++        assert os.path.isfile(os.path.join(env[1], "files", older, "marker.txt"))
 diff --git a/tests/test_pagination.py b/tests/test_pagination.py
 new file mode 100644
 index 0000000..41207f8
@@ -2117,6 +4379,311 @@ index 0000000..26776c6
 +    assert service.search("红楼梦") == []
 +    # calibre 高级语法交回原生搜索
 +    assert service.search("author:刘慈欣") is None
+diff --git a/tests/test_search_index_async.py b/tests/test_search_index_async.py
+new file mode 100644
+index 0000000..ae11473
+--- /dev/null
++++ b/tests/test_search_index_async.py
+@@ -0,0 +1,165 @@
++"""cached_search_async 的线程化回归：FTS 查询不允许阻塞事件循环。
++
++build.20 之前 `get_search_index().search(query)` 直接跑在 ioloop 线程上，
++索引大、查询复杂时会把这个进程里所有请求一起卡住。这里用「可控阻塞的
++FTS 查询 + 心跳协程」证明检索在工作线程里进行，且慢检索期间事件循环
++仍然能推进（不是靠读代码保证）。
++
++语义约束（与改造前一致）：结果顺序原样返回、不排序不去重；FTS 返回
++None 时回退 calibre；异常照常向上抛且不写缓存。
++"""
++
++import asyncio
++import threading
++
++from webserver.handlers import base as base_module
++from webserver.handlers.base import BaseHandler
++
++GATE_TIMEOUT = 5.0
++
++
++class _FakeCache:
++    """只实现 cached_search_async 用到的 get/put。"""
++
++    def __init__(self):
++        self.data = {}
++        self.puts = 0
++
++    def get(self, query, version):
++        return self.data.get((query, version))
++
++    def put(self, query, version, ids):
++        self.puts += 1
++        self.data[(query, version)] = ids
++
++
++class _FakeHandler:
++    """只实现 cached_search_async 依赖的接口，避免拉起完整 Tornado 请求。"""
++
++    def __init__(self, cache=None, calibre_result=()):
++        self.cache = cache if cache is not None else _FakeCache()
++        self.calibre_result = calibre_result
++        self.calibre_calls = 0
++        outer = self
++
++        class _CalibreCache:
++            def search(self, query):
++                outer.calibre_calls += 1
++                return outer.calibre_result
++
++        self.calibre_db_cache = _CalibreCache()
++
++    def library_version(self):
++        return 1
++
++    def search_cache(self):
++        return self.cache
++
++    async def run_calibre_read_async(self, func, *args, **kwargs):
++        return func(*args, **kwargs)
++
++    async def search(self, query):
++        return await BaseHandler.cached_search_async(self, query)
++
++
++def _patch_index(monkeypatch, search_impl):
++    class FakeIndex:
++        search = staticmethod(search_impl)
++
++    monkeypatch.setattr(base_module, "get_search_index", lambda: FakeIndex())
++
++
++def test_slow_fts_search_does_not_block_event_loop(monkeypatch):
++    """FTS 卡住时：其它协程照常推进，检索本身在非事件循环线程上执行。"""
++    calls = []
++    worker_threads = []
++    entered = threading.Event()
++    release = threading.Event()
++
++    def slow_search(query):
++        calls.append(query)
++        worker_threads.append(threading.get_ident())
++        entered.set()
++        if not release.wait(GATE_TIMEOUT):
++            raise RuntimeError("FTS 闸门超时：检索没有在独立工作线程上执行")
++        return [3, 1, 2]     # 故意不是升序，用于断言顺序原样返回
++
++    _patch_index(monkeypatch, slow_search)
++    handler = _FakeHandler()
++
++    async def scenario():
++        ticks = 0
++        heartbeat_done = asyncio.Event()
++
++        async def heartbeat():
++            nonlocal ticks
++            while not heartbeat_done.is_set():
++                ticks += 1
++                await asyncio.sleep(0.001)
++
++        async def wait_entered():
++            while not entered.is_set():
++                await asyncio.sleep(0.001)
++
++        hb = asyncio.create_task(heartbeat())
++        search_task = asyncio.create_task(handler.search("慢查询"))
++        try:
++            await asyncio.wait_for(wait_entered(), GATE_TIMEOUT)
++            # FTS 已进入工作线程并停在闸门里，请求协程在等它
++            assert not search_task.done()
++            assert worker_threads[0] != threading.get_ident(), "FTS 仍在事件循环线程上执行"
++            assert ticks > 0
++
++            # 事件循环在慢检索期间继续跑：心跳计数必须继续增长
++            before = ticks
++            await asyncio.sleep(0.05)
++            assert ticks > before, "慢检索期间事件循环被阻塞，心跳没有推进"
++            assert not search_task.done()
++
++            release.set()
++            assert await asyncio.wait_for(search_task, GATE_TIMEOUT) == [3, 1, 2]
++        finally:
++            release.set()
++            heartbeat_done.set()
++            await hb
++
++    asyncio.run(scenario())
++
++    # 结果整串写入缓存：顺序保留、未排序未去重
++    assert handler.cache.puts == 1
++    assert handler.cache.get("慢查询", 1) == (3, 1, 2)
++    assert handler.calibre_calls == 0
++
++    # 第二次读命中缓存，不再触发检索
++    assert asyncio.run(handler.search("慢查询")) == [3, 1, 2]
++    assert calls == ["慢查询"]
++    assert len(set(worker_threads)) == 1
++
++
++def test_fts_none_falls_back_to_calibre(monkeypatch):
++    """FTS 返回 None（索引缺失/高级语法）时回退 calibre，语义与改造前一致。"""
++    _patch_index(monkeypatch, lambda query: None)
++    handler = _FakeHandler(calibre_result=("b", "a"))
++
++    assert asyncio.run(handler.search("q")) == ["b", "a"]
++    assert handler.calibre_calls == 1
++    assert handler.cache.puts == 1
++
++
++def test_fts_exception_propagates_and_is_not_cached(monkeypatch):
++    """改造前异常直接向上抛；线程化后仍是同一条路径，且不写缓存。"""
++    def boom(query):
++        raise RuntimeError("fts broke")
++
++    _patch_index(monkeypatch, boom)
++    handler = _FakeHandler(calibre_result=("x",))
++
++    try:
++        asyncio.run(handler.search("q"))
++    except RuntimeError as exc:
++        assert str(exc) == "fts broke"
++    else:  # pragma: no cover - 失败时给出明确原因
++        raise AssertionError("FTS 异常被吞掉了，回退语义发生变化")
++
++    assert handler.cache.puts == 0
++    assert handler.calibre_calls == 0
+diff --git a/tests/test_version_lock.py b/tests/test_version_lock.py
+new file mode 100644
+index 0000000..3e137a6
+--- /dev/null
++++ b/tests/test_version_lock.py
+@@ -0,0 +1,128 @@
++# -*- coding: utf-8 -*-
++"""版本锁（防反弹）回归测试。
++
++背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.20`（上游已发布 tag 4.6.0
+++ 第 20 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
++回退（写回 4.8.x、写回裸 4.6.0）、被构建参数顶成空串、Dockerfile/Makefile
++守卫被删除，都必须失败。
++
++失败时打印的说明是「防版本回退 / 防被交付标签覆盖的保护，不是普通测试失败」，
++不要通过删除或放宽断言来让它变绿。
++"""
++
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parent.parent
++CHECKER = ROOT / "scripts" / "check-version-lock.py"
++LOCK = "4.6.0-build.20"
++FILES = [
++    "webserver/version.py",
++    "docker-compose.yml",
++    "Dockerfile",
++    "app/package.json",
++    "app/package-lock.json",
++    "Makefile",
++]
++
++
++def run(root):
++    return subprocess.run(
++        [sys.executable, str(CHECKER), "--root", str(root)],
++        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
++
++
++def make_fixture(tmp_path):
++    for rel in FILES:
++        src = ROOT / rel
++        dst = tmp_path / rel
++        dst.parent.mkdir(parents=True, exist_ok=True)
++        shutil.copyfile(src, dst)
++    return tmp_path
++
++
++def mutate(root, rel, old, new):
++    p = root / rel
++    text = p.read_text(encoding="utf-8")
++    assert old in text, "fixture 里找不到要替换的内容: %s" % old
++    p.write_text(text.replace(old, new, 1), encoding="utf-8")
++
++
++def test_repo_passes_version_lock():
++    r = run(ROOT)
++    assert r.returncode == 0, r.stdout + r.stderr
++    assert "版本锁检查通过" in r.stdout
++
++
++def test_version_py_rollback_to_4_8_is_rejected(tmp_path):
++    """回退到已封存的 4.8.x 号段必须被拦住。"""
++    root = make_fixture(tmp_path)
++    mutate(root, "webserver/version.py", 'VERSION = "%s"' % LOCK, 'VERSION = "v4.8.0"')
++    r = run(root)
++    assert r.returncode == 1, r.stdout
++    assert "防版本回退" in r.stdout
++    assert "补救" in r.stdout
++
++
++def test_version_py_bare_upstream_tag_is_rejected(tmp_path):
++    """写成不带 -build.20 的裸 4.6.0 也必须被拦住（那是上游 tag，不是我们的构建号）。"""
++    root = make_fixture(tmp_path)
++    mutate(root, "webserver/version.py", 'VERSION = "%s"' % LOCK, 'VERSION = "4.6.0"')
++    r = run(root)
++    assert r.returncode == 1, r.stdout
++    assert "防版本回退" in r.stdout
++
++
++def test_empty_git_version_is_rejected(tmp_path):
++    root = make_fixture(tmp_path)
++    mutate(root, "docker-compose.yml", 'GIT_VERSION: "%s"' % LOCK, 'GIT_VERSION: ""')
++    r = run(root)
++    assert r.returncode == 1, r.stdout
++    assert "GIT_VERSION 为空" in r.stdout
++
++
++def test_compose_mismatch_is_rejected(tmp_path):
++    root = make_fixture(tmp_path)
++    mutate(root, "docker-compose.yml", 'GIT_VERSION: "%s"' % LOCK, 'GIT_VERSION: "4.6.0"')
++    r = run(root)
++    assert r.returncode == 1, r.stdout
++    assert "docker-compose.yml" in r.stdout
++    assert "GIT_VERSION" in r.stdout
++
++
++def test_package_json_rollback_is_rejected(tmp_path):
++    root = make_fixture(tmp_path)
++    mutate(root, "app/package.json", '"version": "%s"' % LOCK, '"version": "4.8.0"')
++    r = run(root)
++    assert r.returncode == 1, r.stdout
++    assert "app/package.json" in r.stdout
++    assert "semver" in r.stdout
++
++
++def test_package_lock_mismatch_is_rejected(tmp_path):
++    root = make_fixture(tmp_path)
++    mutate(root, "app/package-lock.json", '"version": "%s"' % LOCK, '"version": "4.8.0"')
++    r = run(root)
++    assert r.returncode == 1, r.stdout
++    assert "package-lock.json" in r.stdout
++
++
++def test_dockerfile_empty_guard_missing_is_rejected(tmp_path):
++    root = make_fixture(tmp_path)
++    mutate(root, "Dockerfile",
++           'if [ -z "${GIT_VERSION:-}" ]; then echo "ERROR: GIT_VERSION 为空，触发版本锁保护'
++           '（见 scripts/check-version-lock.py）" >&2; exit 1; fi; \\',
++           'if true; then :; fi; \\')
++    r = run(root)
++    assert r.returncode == 1, r.stdout
++    assert "缺少「GIT_VERSION 为空则构建失败」的守卫" in r.stdout
++
++
++def test_makefile_ver_guard_missing_is_rejected(tmp_path):
++    root = make_fixture(tmp_path)
++    mutate(root, "Makefile", "ifneq ($(strip $(VER)),$(VERSION_LOCK))", "ifeq (1,1)")
++    r = run(root)
++    assert r.returncode == 1, r.stdout
++    assert "VER 不匹配时没有报错退出" in r.stdout
 diff --git a/webserver/assistant/mcp_client.py b/webserver/assistant/mcp_client.py
 index 4bc9cad..f248640 100644
 --- a/webserver/assistant/mcp_client.py
@@ -2717,7 +5284,7 @@ index db1f8c0..a71799b 100644
              raise web.HTTPError(400, "Invalid book ID")
          except Exception as e:
 diff --git a/webserver/handlers/base.py b/webserver/handlers/base.py
-index 0e5ef77..78aeded 100644
+index 0e5ef77..119f49d 100644
 --- a/webserver/handlers/base.py
 +++ b/webserver/handlers/base.py
 @@ -2,6 +2,7 @@
@@ -2758,12 +5325,16 @@ index 0e5ef77..78aeded 100644
              cache.put(query, version, ids)
          return list(ids)
  
-@@ -1767,7 +1775,11 @@ class BaseHandler(web.RequestHandler):
+@@ -1767,7 +1775,15 @@ class BaseHandler(web.RequestHandler):
          cache = self.search_cache()
          ids = cache.get(query, version)
          if ids is None:
 -            ids = tuple(await self.run_calibre_read_async(self.calibre_db_cache.search, query) or ())
-+            ids = get_search_index().search(query)
++            # FTS 检索是同步 SQLite 读：查询长、索引大时会占住 ioloop，把同进程所有请求
++            # 一起冻住。挪到 blocking_pool（联网长任务池）执行；search() 每次调用都新建
++            # 独立的只读连接（SearchIndexService._connect_read，mode=ro）并在 finally 关闭，
++            # 不复用、不跨线程共享连接，因此线程池执行是安全的。
++            ids = await utils.run_in_threadpool(lambda: get_search_index().search(query))
 +            if ids is None:
 +                ids = tuple(await self.run_calibre_read_async(self.calibre_db_cache.search, query) or ())
 +            else:
@@ -2771,7 +5342,7 @@ index 0e5ef77..78aeded 100644
              cache.put(query, version, ids)
          return list(ids)
  
-@@ -2123,11 +2135,24 @@ class ListHandler(BaseHandler):
+@@ -2123,11 +2139,24 @@ class ListHandler(BaseHandler):
          sort_map = self.calibre_db_cache.all_field_for("sort", ids, "")
          return sorted(ids, key=lambda i: sort_map.get(i) or "")
  
@@ -2797,7 +5368,7 @@ index 0e5ef77..78aeded 100644
          page_size = CONF.get("DEFAULT_PAGE_SIZE", 60)
          max_size = int(CONF.get("MAX_PAGE_SIZE", 200))
          if perf.lite_on("LITE_PAGE_SIZE"):
-@@ -2149,17 +2174,43 @@ class ListHandler(BaseHandler):
+@@ -2149,17 +2178,43 @@ class ListHandler(BaseHandler):
                  sort_fields = "id"
  
              if sort_fields == "id":
@@ -2847,7 +5418,7 @@ index 0e5ef77..78aeded 100644
                  page_ids = ids[start : start + delta]
                  by_id = {b["id"]: b for b in await self.get_books_for_list_async(ids=page_ids)}
                  books = [by_id[i] for i in page_ids if i in by_id]
-@@ -2171,6 +2222,7 @@ class ListHandler(BaseHandler):
+@@ -2171,6 +2226,7 @@ class ListHandler(BaseHandler):
              "err": "ok",
              "title": title,
              "total": count,
@@ -3225,8 +5796,29 @@ index f446b14..6e9f70a 100644
      def get_task(self, task_id: int) -> Optional[Dict]:
          """
          获取指定任务的详细信息
+diff --git a/webserver/services/book_dedup.py b/webserver/services/book_dedup.py
+index 46d424e..2554dbf 100644
+--- a/webserver/services/book_dedup.py
++++ b/webserver/services/book_dedup.py
+@@ -743,6 +743,16 @@ class DuplicateBookMerger(object):
+         except Exception as err:
+             logging.error("[DEDUP] 搬音频 %s -> %s 失败: %s", from_id, to_id, err)
+             raise
++        # 事件驱动缓存：搬完就把「有音频」标志挪过去（build.20 复审补）。
++        # 原来要等 6 小时兜底扫描：期间保留书不进有声书列表、被合并书还挂在列表里。
++        if moved:
++            try:
++                from webserver.handlers.audio import AudioBooksCache
++                AudioBooksCache.mark_has_audio(to_id)
++                AudioBooksCache.mark_no_audio(from_id)
++            except Exception:
++                logging.warning("[DEDUP] 更新音频缓存失败: %s -> %s", from_id, to_id,
++                                exc_info=True)
+         return moved, skipped
+ 
+     def _repoint_records(self, from_id, to_id):
 diff --git a/webserver/services/scan_service.py b/webserver/services/scan_service.py
-index 540d631..10e7f7c 100644
+index 540d631..de18269 100644
 --- a/webserver/services/scan_service.py
 +++ b/webserver/services/scan_service.py
 @@ -81,7 +81,28 @@ SCAN_EXT = constants.ACCEPTED_BOOK_FORMATS
@@ -3268,7 +5860,23 @@ index 540d631..10e7f7c 100644
  
  
  class _TitleDedupIndex:
-@@ -2119,7 +2140,7 @@ class ScanService(AsyncService):
+@@ -1724,6 +1745,15 @@ class ScanService(AsyncService):
+             logging.info("[IMPORT] sidecar audio: %d 个音频已随书挂到 book %s 的 %s",
+                          copied, book_id, dest)
+ 
++        # §事件驱动缓存§（build.20 复审补）音频落位就把这本书标进有声书缓存，
++        # 否则要等 6 小时兜底扫描才出现在 /api/audiobooks。幂等，重复标记无害。
++        try:
++            from webserver.handlers.audio import AudioBooksCache
++            AudioBooksCache.mark_has_audio(book_id)
++        except Exception:
++            logging.warning("[IMPORT] sidecar audio: 更新音频缓存失败: book_id=%s",
++                            book_id, exc_info=True)
++
+         # §顺带补演播者§ 4.6.0-18
+         # 音频是随电子书一起进来的，走的是本方法而不是 AudioBookImporter.do_import，
+         # 所以 attach_narrator 从来没被调用过——用户库里 15 本哈利波特全是
+@@ -2119,7 +2149,7 @@ class ScanService(AsyncService):
              filelist = list(dict.fromkeys(filelist))
          total_count = len(filelist)
          ScanService.static_title_index_total = total_count
@@ -3778,3 +6386,18 @@ index cda4669..62a2f18 100644
  
              self.update_task_progress(task_id, 100, {
                  "status": "completed",
+diff --git a/webserver/version.py b/webserver/version.py
+index fead5c0..d44b6f7 100644
+--- a/webserver/version.py
++++ b/webserver/version.py
+@@ -1,4 +1,9 @@
+ #!/usr/bin/env python3
+ # -*- coding: UTF-8 -*-
+ 
+-VERSION = "v4.8.0"
++# 运行期版本号：4.6.0-build.20 =「上游 mybooks 4.6.0」+「第 20 次本地构建」，自本版起统一启用。
++# 旧 4.8.x 号段已封存，与本版本是纯号段重置，不对应任何版本先后关系。
++# -build.N 是 semver 预发布标记：整串排序低于 4.6.0（本程序不发布 npm、无 engines 校验，无实际影响）；
++# 同一上游基线的本地构建之间用 build.N 区分，版本检测不能只靠 > 比较，须比较 build.N 段。
++# 该值由 scripts/check-version-lock.py 锁定，改这里会被测试与打包检查拦下。
++VERSION = "4.6.0-build.20"

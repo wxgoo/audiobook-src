@@ -1745,6 +1745,15 @@ class ScanService(AsyncService):
             logging.info("[IMPORT] sidecar audio: %d 个音频已随书挂到 book %s 的 %s",
                          copied, book_id, dest)
 
+        # §事件驱动缓存§（build.20 复审补）音频落位就把这本书标进有声书缓存，
+        # 否则要等 6 小时兜底扫描才出现在 /api/audiobooks。幂等，重复标记无害。
+        try:
+            from webserver.handlers.audio import AudioBooksCache
+            AudioBooksCache.mark_has_audio(book_id)
+        except Exception:
+            logging.warning("[IMPORT] sidecar audio: 更新音频缓存失败: book_id=%s",
+                            book_id, exc_info=True)
+
         # §顺带补演播者§ 4.6.0-18
         # 音频是随电子书一起进来的，走的是本方法而不是 AudioBookImporter.do_import，
         # 所以 attach_narrator 从来没被调用过——用户库里 15 本哈利波特全是

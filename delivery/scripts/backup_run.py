@@ -79,6 +79,24 @@ def sha256_file(path, buf_size=1024 * 1024):
     return h.hexdigest()
 
 
+def _write_json_atomic(path, payload):
+    """先写临时文件再原子替换：断电/盘满不会留下半截 JSON 冒充清单。"""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 # --------------------------------------------------------------------------
 # 数据库备份
 # --------------------------------------------------------------------------
@@ -108,6 +126,13 @@ def backup_one_db(src, dst, allow_cold_copy):
         info["method"] = "sqlite-backup-api"
     except Exception as exc:
         if not allow_cold_copy:
+            # 不留半截副本：connect(dst) 已经创建了目标文件，失败后清掉，
+            # 避免 db/<ts>/ 里躺着没人认领的空文件（恢复时易误取）
+            try:
+                if os.path.exists(dst):
+                    os.remove(dst)
+            except OSError:
+                pass
             raise BackupError("在线备份失败（容器可能在写入）：%s" % exc)
         log("在线备份失败（%s），回退为文件冷拷贝（须确认容器已停止）" % exc)
         for suffix in ("", "-wal", "-shm"):
@@ -288,6 +313,14 @@ def snapshot_files(data_dir, dst_root, exclude_dirs, exclude_patterns):
         log("!! 有 %d 个文件未能备份（前 10 条）：" % len(stats["errors"]))
         for err in stats["errors"][:10]:
             log("   " + err)
+        # §fail-closed§（build.20 复审）快照里只要有一个文件没备上（磁盘满、
+        # 权限、扫描失败），它就是残缺的：manifest 会照常把它登记成最新一份，
+        # 保留策略还会优先保护它——比「没有备份」更危险。这里直接判失败，
+        # 由 main() 清理本次残缺目录并返回退出码 3，绝不顶替旧的好快照。
+        raise BackupError(
+            "文件快照不完整：%d 个条目未能备份（详见上方日志）。"
+            "若是权限问题请检查数据目录；若是空间问题请清理备份盘后重试"
+            % len(stats["errors"]))
     return stats
 
 
@@ -427,8 +460,13 @@ def main(argv=None):
                 results.append({"source": src, "status": "failed", "error": str(exc)})
         if results:
             os.makedirs(db_dir, exist_ok=True)
-            with open(os.path.join(db_dir, "manifest.json"), "w", encoding="utf-8") as f:
-                json.dump(results, f, ensure_ascii=False, indent=2)
+            try:
+                _write_json_atomic(os.path.join(db_dir, "manifest.json"), results)
+            except OSError as exc:
+                # db 副本本身已完整并通过校验，这只是目录内的便利清单；
+                # 顶层 manifests 写不进去时整体仍会按失败处理
+                warnings += 1
+                log("!! 数据库清单写入失败（不影响已备份的 db 文件）: %s" % exc)
         summary["databases"] = results
         if any(r.get("status") != "ok" for r in results):
             warnings += 1
@@ -436,16 +474,20 @@ def main(argv=None):
     # 2) 文件快照
     if args.mode in ("all", "files"):
         dst_root = os.path.join(backup_root, "files", ts)
+        # §不许误删旧快照§（build.20 复审）重跑同一 --timestamp 时目录已存在，
+        # snapshot_files 会拒绝；此时异常路径绝不能 rmtree——那会把一份完好
+        # 的旧快照删掉（原代码正是这么干的）。只清理「本次运行亲手创建」
+        # 的目录：pre_existing 为 False 才允许动。
+        pre_existing = os.path.isdir(dst_root)
         try:
             stats = snapshot_files(data_dir, dst_root, exclude_dirs, exclude_patterns)
         except Exception as exc:
-            log("!! 文件快照失败，已清理不完整快照: %s" % exc)
-            if os.path.isdir(dst_root):
+            log("!! 文件快照失败: %s" % exc)
+            if not pre_existing and os.path.isdir(dst_root):
+                log("已清理本次不完整快照: %s" % dst_root)
                 shutil.rmtree(dst_root, ignore_errors=True)
             return 3
         summary["files"] = stats
-        if stats["errors"]:
-            warnings += 1
 
     # 3) 保留策略
     if not args.no_prune:
@@ -463,12 +505,22 @@ def main(argv=None):
 
     manifests = os.path.join(backup_root, "manifests")
     os.makedirs(manifests, exist_ok=True)
-    with open(os.path.join(manifests, "backup-%s.json" % ts), "w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, indent=2)
+    manifest_path = os.path.join(manifests, "backup-%s.json" % ts)
+    try:
+        _write_json_atomic(manifest_path, summary)
+    except OSError as exc:
+        # §fail-closed§ 清单是恢复的入口：写不进去（多半是盘满）时，本次
+        # 快照不会被任何恢复工具列出，等于没有备份还占着空间。清掉本次
+        # 产物，返回退出码 3；旧快照不受影响（保留策略可能已在本轮清过
+        # 部分更旧的快照，上方日志有逐条记录，可据 manifests 追溯）。
+        log("!! 备份清单写入失败，本次快照按失败处理并清理: %s" % exc)
+        for sub in ("db", "files"):
+            path = os.path.join(backup_root, sub, ts)
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+        return 3
 
-    log("备份完成，状态=%s，清单=%s"
-        % (summary["status"],
-           os.path.join(manifests, "backup-%s.json" % ts)))
+    log("备份完成，状态=%s，清单=%s" % (summary["status"], manifest_path))
     return 2 if warnings else 0
 
 
