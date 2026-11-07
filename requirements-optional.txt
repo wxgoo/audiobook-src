@@ -1,7 +1,5 @@
-# 可选依赖：音频转写文稿（移植自 audiobook 的 Whisper 功能）
-# 安装后 mybooks 会自动启用「音频转写文稿」管理接口；不装则功能隐藏，不影响其他功能。
-# torch 体积很大，请按服务器 CUDA 情况选择安装方式（见 https://pytorch.org）。
-openai-whisper==20240930
+# 可选依赖：srt_tool 工具箱「音频转写文稿」使用 faster-whisper（见下方 faster-whisper 条目）
+# openai-whisper 已由 faster-whisper 替代（build.22 合并转写入口时移除）
 
 # 工具箱「音频转写文稿」（srt_tool，build.22）：faster-whisper 内核，
 # CPU 友好、无需 torch；与仓库根 srt-tool/（PC 版）同一识别内核。

@@ -948,6 +948,7 @@ class AdminSrtToolStart(BaseHandler):
         model = (data.get("model") or "base").strip()
         lang = (data.get("lang") or "zh").strip()
         overwrite = bool(data.get("overwrite", False))
+        keep_txt = bool(data.get("keep_txt", True))
 
         def _resolve():
             out = []
@@ -972,7 +973,7 @@ class AdminSrtToolStart(BaseHandler):
         if not books:
             return {"err": "book.no_audio", "msg": _("所选书籍都没有音频目录")}
         ok, msg = await utils.run_in_threadpool(
-            srt_transcribe.start, books, model, lang, overwrite)
+            srt_transcribe.start, books, model, lang, overwrite, keep_txt)
         if not ok:
             return {"err": "task.start_failed", "msg": msg}
         rsp = {"err": "ok", "msg": msg}

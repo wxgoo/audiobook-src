@@ -165,7 +165,8 @@ def restart_tornado():
     return True, "正在重启 tornado，页面约 20 秒后恢复"
 
 
-def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = False):
+def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = False,
+          keep_txt: bool = True):
     """books: [{book_id, title, audio_dir}]——audio_dir 由调用方在 calibre 池解析好。"""
     global _thread, _stop, _snapshot
     with _lock:
@@ -182,7 +183,7 @@ def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = 
                            "或改用 PC 版 srt-tool（srt-tool/make_srt_gui.exe）")
         _stop = threading.Event()
         _snapshot = {
-            "state": "running", "model": model, "lang": lang,
+            "state": "running", "model": model, "lang": lang, "keep_txt": keep_txt,
             "books_total": len(books), "files_total": 0, "files_done": 0,
             "skipped": 0, "failed": 0, "current_index": 0,
             "current_book": "", "current_file": "", "current_pct": 0,
@@ -190,7 +191,7 @@ def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = 
         }
     real_books = [b for b in books if b.get("audio_dir")]
     _thread = threading.Thread(
-        target=_worker, args=(real_books, model, lang, overwrite), daemon=True)
+        target=_worker, args=(real_books, model, lang, overwrite, keep_txt), daemon=True)
     _thread.start()
     return True, "转写任务已启动"
 
@@ -204,7 +205,7 @@ def _finish(state: str, message: str):
     _set(state="idle", state_last=state, message=message)
 
 
-def _worker(books, model, lang, overwrite):
+def _worker(books, model, lang, overwrite, keep_txt):
     files = []
     for b in books:
         adir = b["audio_dir"]
@@ -241,6 +242,12 @@ def _worker(books, model, lang, overwrite):
             # 取消时采用已识别到停止点的部分结果（有比没有强，缓存/跳过逻辑保证不重复劳动）
             if segs:
                 srt_core.write_srt(segs, lp(spath))
+                if keep_txt:
+                    txt_name = Path(fn).with_suffix(".txt").name
+                    txt_path = os.path.join(adir, txt_name)
+                    text_content = "\n".join(s["text"] for s in segs)
+                    with open(lp(txt_path), "w", encoding="utf-8") as f:
+                        f.write(text_content)
                 _set(files_done=_snapshot.get("files_done", 0) + 1)
             elif _stop.is_set():
                 stopped = True

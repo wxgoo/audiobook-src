@@ -508,12 +508,6 @@
               </div>
             </template>
 
-            <template v-if="s.special === 'transcribe'">
-              <div id="f-TRANSCRIBE">
-                <transcribe-panel></transcribe-panel>
-              </div>
-            </template>
-
             <template v-if="s.special === 'devices'">
               <div id="f-DEVICES" class="pl-6">
               <template v-for="(device, idx) in settings.DEVICES">
@@ -1194,7 +1188,6 @@ import ReadingRangeDialog from "~/components/ReadingRangeDialog.vue";
 import BookNavEditor, { createCategory } from "~/components/BookNavEditor.vue";
 import ReaderDictEditor from "~/components/ReaderDictEditor.vue";
 import ReaderGroupEditor from "~/components/ReaderGroupEditor.vue";
-import TranscribePanel from "~/components/TranscribePanel.vue";
 import HomepageCardsEditor from "~/components/HomepageCardsEditor.vue";
 import { normalizeHomepageConfig } from "~/utils/homepage";
 import { languageOptions } from "~/utils/languageCodes";
@@ -1217,7 +1210,6 @@ const SPECIAL_BLOCKS = [
   { key: "READER_MYDICTS", label: "settings.sec_reader_dict", icon: "mdi-book-alphabet", gid: "reading", sid: "reader-dict", al: ["翻译"] },
   { key: "ENABLE_STAMP_FEATURE", label: "settings.enable_stamp_feature", icon: "mdi-picture-in-picture-bottom-right-outline", gid: "reading", sid: "reader-extended" },
   { key: "AUDIO_LINK_TO_EXISTING_BOOK", label: "settings.audio_link_to_existing_book", icon: "mdi-headphones", gid: "import", sid: "imp-upload", al: ["有声书", "有聲書", "音频", "音訊", "audiobook", "重复", "重複", "合并", "合併", "挂靠", "掛靠", "同名", "duplicate", "merge", "link"] },
-  { key: "TRANSCRIBE_KEEP_TXT", label: "settings.transcribe_keep_txt", icon: "mdi-text-recognition", gid: "reading", sid: "transcribe", al: ["转写", "轉寫", "txt", "字幕", "srt", "whisper", "transcribe"] },
   { key: "SOCIALS", label: "settings.select_socials", icon: "mdi-at", gid: "users", sid: "users-social", al: ["qq", "微信", "微博", "github", "oauth"] },
   { key: "DEVICES", label: "settings.device_mgt", icon: "mdi-tablet-cellphone", gid: "push", sid: "push-devices", al: ["kindle", "文石", "掌阅", "汉王", "当当", "koreader", "duokan", "ireader", "boox", "ftp"] },
   { key: "ENABLE_BOOKBARN", label: "settings.bookbarn_enable", icon: "mdi-key", gid: "services", sid: "svc-bookbarn" },
@@ -1765,7 +1757,6 @@ export default {
     "book-nav-editor": BookNavEditor,
     "reader-dict-editor": ReaderDictEditor,
     "reader-group-editor": ReaderGroupEditor,
-    "transcribe-panel": TranscribePanel,
     "homepage-cards-editor": HomepageCardsEditor,
   },
   created() {
@@ -2073,12 +2064,6 @@ export default {
             icon: "mdi-book-alphabet",
             title: "settings.sec_reader_dict",
             special: "reader_dicts",
-          },
-          {
-            id: "transcribe",
-            icon: "mdi-text-recognition",
-            title: "settings.sec_transcribe",
-            special: "transcribe",
           },
         ],
       },

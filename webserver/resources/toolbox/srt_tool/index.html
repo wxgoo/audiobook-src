@@ -91,6 +91,7 @@
         </select>
       </label>
       <label class="check"><input type="checkbox" id="overwrite"> 已有 .srt 也重做</label>
+      <label class="check"><input type="checkbox" id="keepTxt" checked> 同时生成 .txt 文稿</label>
       <span class="grow"></span>
       <span class="muted" id="pickedHint"></span>
     </div>
@@ -215,7 +216,8 @@
     if (!ids.length) return;
     api('/api/toolbox/srt_tool/start', { method: 'POST', body: JSON.stringify({
       book_ids: ids.map(Number), model: $('model').value, lang: $('lang').value,
-      overwrite: $('overwrite').checked
+      overwrite: $('overwrite').checked,
+      keep_txt: $('keepTxt').checked
     })}).then(function (rsp) {
       if (rsp.err !== 'ok') { $('msgLine').textContent = rsp.msg || '启动失败'; return; }
       $('okLine').style.display = 'none';

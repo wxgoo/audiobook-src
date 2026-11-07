@@ -78,6 +78,9 @@
             <v-col cols="12" sm="6" class="d-flex align-center">
               <v-checkbox dense hide-details v-model="overwrite"
                           :label="$t('srtTool.overwrite')" :disabled="running"
+                          class="mt-0 mr-4"></v-checkbox>
+              <v-checkbox dense hide-details v-model="keepTxt"
+                          :label="$t('srtTool.keepTxt')" :disabled="running"
                           class="mt-0"></v-checkbox>
             </v-col>
           </v-row>
@@ -142,6 +145,7 @@ export default {
     model: 'base',
     lang: 'zh',
     overwrite: false,
+    keepTxt: true,
     starting: false,
     running: false,
     task: null,
@@ -204,7 +208,7 @@ export default {
       this.starting = true;
       this.$backend('/toolbox/srt_tool/start', {
         method: 'POST',
-        body: { book_ids: this.picked, model: this.model, lang: this.lang, overwrite: this.overwrite },
+        body: { book_ids: this.picked, model: this.model, lang: this.lang, overwrite: this.overwrite, keep_txt: this.keepTxt },
       })
         .then((rsp) => {
           if (rsp.err !== 'ok') {

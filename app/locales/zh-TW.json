@@ -1314,6 +1314,7 @@
     "model": "模型",
     "lang": "語言",
     "overwrite": "已有 .srt 也重做",
+    "keepTxt": "同時產生 .txt 文稿",
     "start": "開始轉寫",
     "stop": "停止",
     "pickedHint": "已選 {n} 本",
