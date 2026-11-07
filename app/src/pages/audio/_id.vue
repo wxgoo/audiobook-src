@@ -205,6 +205,18 @@
           >
             <v-icon>mdi-skip-next</v-icon>
           </v-btn>
+
+          <!-- 收起到底部 -->
+          <v-btn
+            icon
+            large
+            @click="minimizeToBar"
+            :disabled="!currentAudio"
+            class="control-btn nav-btn"
+            :title="$t('audio.minimizeToBar')"
+          >
+            <v-icon>mdi-picture-in-picture-bottom-right</v-icon>
+          </v-btn>
         </div>
 
         <div class="secondary-controls">
@@ -883,6 +895,22 @@ export default {
       this._wantPlay = false;
       const player = this.$refs.audioPlayer;
       if (player) player.pause();
+    },
+
+    /** 收起到底部：把当前播放推到全局迷你播放条，用户可离开本页继续听。 */
+    minimizeToBar() {
+      const player = this.$refs.audioPlayer;
+      if (!player || !this.currentAudio) return;
+      const t = player.currentTime || 0;
+      const title = (this.book.title || '') + ' · ' +
+        (this.currentAudio.name || ('第' + (this.currentTrackIndex + 1) + '集'));
+      this.$store.commit('miniPlayer_play', {
+        title, url: this.currentAudio.url,
+        kind: 'audiobook', bookId: this.$route.params.id,
+        startTime: t,
+      });
+      player.pause();
+      this.$router.push('/');
     },
 
     // §统一的安全播放§ 裸调 play() 不接 Promise 的后果是：被中断时抛
