@@ -36,6 +36,8 @@ _lock = threading.Lock()
 _thread = None
 _stop = threading.Event()
 _snapshot = {"state": "idle"}
+_install_thread = None
+_PIP_SPECS = ["faster-whisper>=1.0", "ctranslate2==4.8.5"]
 
 
 _WIN = sys.platform == "win32"
@@ -105,6 +107,62 @@ def cancel():
         _snapshot["state"] = "stopping"
         _snapshot["message"] = "正在停止（当前文件识别到停止点为止，已完成的字幕保留）"
     return True, "已请求停止"
+
+
+# ==================== 依赖安装（页面一键装 faster-whisper） ====================
+
+def _pip_install(specs):
+    """pip 安装；默认源失败自动重试清华镜像。返回 (ok, 输出)。"""
+    import subprocess
+    def _run(extra):
+        cmd = [sys.executable, "-m", "pip", "install"] + specs + extra
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        return p.returncode == 0, (p.stdout or "") + (p.stderr or "")
+    try:
+        ok, out = _run([])
+        if not ok:
+            ok2, out2 = _run(["-i", "https://pypi.tuna.tsinghua.edu.cn/simple"])
+            return ok2, out + "\n== 默认源失败，重试清华镜像 ==\n" + out2
+        return ok, out
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)
+
+
+def install_deps():
+    """后台线程安装 faster-whisper（页面一键触发，输出进 snapshot.install.log）。"""
+    global _install_thread
+    with _lock:
+        if is_running():
+            return False, "转写任务进行中，请稍后再安装依赖"
+        if _install_thread is not None and _install_thread.is_alive():
+            return False, "依赖安装已在进行中"
+        if available():
+            return False, "依赖已安装，无需重复安装"
+        _snapshot["install"] = {"state": "running", "log": "启动 pip install…"}
+    inst = threading.Thread(target=_install_worker, daemon=True)
+    _install_thread = inst
+    inst.start()
+    return True, "依赖安装已开始"
+
+
+def _install_worker():
+    ok, out = _pip_install(_PIP_SPECS)
+    with _lock:
+        inst = _snapshot.setdefault("install", {})
+        inst["state"] = "done" if ok else "failed"
+        inst["log"] = out[-6000:]
+        inst["message"] = ("安装完成，点「重启服务」生效" if ok
+                           else "安装失败（见日志；可改用 PC 版 srt-tool）")
+    _log.info("[srt_tool] pip install faster-whisper ok=%s", ok)
+
+
+def restart_tornado():
+    """分离子进程重启 tornado（本进程随重启退出，必须立刻返回）。"""
+    import subprocess
+    subprocess.Popen(["supervisorctl", "restart", "tornado"],
+                     start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True, "正在重启 tornado，页面约 20 秒后恢复"
 
 
 def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = False):

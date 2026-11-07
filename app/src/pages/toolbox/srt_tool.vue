@@ -14,9 +14,21 @@
 
     <v-row justify="center">
       <v-col cols="12" md="10" lg="8">
-        <!-- 依赖未安装：降级提示 -->
+        <!-- 依赖未安装：降级提示 + 一键安装 -->
         <v-alert v-if="loaded && !available" type="warning" dense text rounded="lg" class="mb-4">
           {{ $t('srtTool.unavailable') }}
+          <div class="mt-2">
+            <v-btn small color="primary" class="mr-2" :loading="installing"
+                   :disabled="installState === 'running'" @click="installDeps">
+              {{ $t('srtTool.installBtn') }}
+            </v-btn>
+            <v-btn v-if="installState === 'done'" small color="success"
+                   :loading="restarting" @click="restartTornado">
+              {{ $t('srtTool.restartBtn') }}
+            </v-btn>
+          </div>
+          <div v-if="installLog" class="mt-2 text-caption grey--text"
+               style="max-height:140px;overflow:auto;white-space:pre-wrap;font-family:monospace">{{ installLog }}</div>
           <div class="mt-2 text--secondary">{{ $t('srtTool.unavailableHint') }}</div>
         </v-alert>
 
@@ -135,6 +147,10 @@ export default {
     task: null,
     lastMessage: '',
     pollTimer: null,
+    installing: false,
+    restarting: false,
+    installState: '',
+    installLog: '',
     modelItems: ['tiny', 'base', 'small', 'medium', 'large-v3'],
     langItems: [
       { text: 'auto', value: 'auto' },
@@ -226,12 +242,39 @@ export default {
           this.task = rsp.data.task;
           this.available = !!rsp.data.available;
           this.running = !!rsp.data.running;
+          const inst = this.task && this.task.install;
+          if (inst) {
+            this.installState = inst.state;
+            this.installLog = inst.log || '';
+          }
           if (!this.running) {
             this.stopPoll();
             if (this.task && this.task.message) this.lastMessage = this.task.message;
             this.loadBooks();
           }
         });
+    },
+    installDeps() {
+      this.installing = true;
+      this.$backend('/toolbox/srt_tool/install', { method: 'POST' })
+        .then((rsp) => {
+          if (rsp.err !== 'ok') {
+            this.$alert('error', rsp.msg || this.$t('srtTool.startFailed'));
+            this.installing = false;
+            return;
+          }
+          this.installState = 'running';
+          this.startPoll();
+        })
+        .catch(() => { this.installing = false; });
+    },
+    restartTornado() {
+      this.restarting = true;
+      this.$backend('/toolbox/srt_tool/restart', { method: 'POST' })
+        .then(() => {
+          // tornado 重启中，轮询会自动恢复
+        })
+        .catch(() => { this.restarting = false; });
     },
   },
   head() {

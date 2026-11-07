@@ -54,10 +54,12 @@
 
   <div id="unavailable" class="alert" style="display:none">
     <b>容器内未安装 faster-whisper，网页转写暂不可用。</b>
-    <div class="muted" style="margin-top:4px">
-      在容器内执行 <code>pip install faster-whisper ctranslate2==4.8.5</code> 后重启生效；
-      或改用 PC 版 srt-tool（仓库 webserver/toolbox/make_srt_gui.py）。
+    <div class="row" style="margin-top:8px">
+      <button class="primary" id="btnInstall">安装依赖（pip，约 1-2 分钟）</button>
+      <button class="ghost" id="btnRestart" style="display:none">重启服务（生效）</button>
     </div>
+    <pre id="installLog" style="display:none;max-height:180px;overflow:auto;background:#111;border:1px solid #333;border-radius:6px;padding:8px;font-size:11px;white-space:pre-wrap"></pre>
+    <div class="muted" style="margin-top:4px">也可在容器内手动执行 <code>pip install faster-whisper ctranslate2==4.8.5</code>；或改用 PC 版 srt-tool（仓库 webserver/toolbox/make_srt_gui.py）。</div>
   </div>
 
   <div class="card">
@@ -177,6 +179,30 @@
   var available = false;
   var running = false;
   var task = null;
+  var restarting = false;
+
+  function startInstall() {
+    api('/api/toolbox/srt_tool/install', { method: 'POST' }).then(function (rsp) {
+      if (rsp.err !== 'ok') { $('msgLine').textContent = rsp.msg || '无法开始安装'; return; }
+      $('installLog').style.display = '';
+      $('installLog').textContent = '启动 pip install…';
+      $('btnInstall').disabled = true;
+      if (!timer) startPoll();
+    }).catch(function () { $('msgLine').textContent = '安装请求失败'; });
+  }
+
+  function restartTornado() {
+    if (restarting) return;
+    restarting = true;
+    api('/api/toolbox/srt_tool/restart', { method: 'POST' }).then(function (rsp) {
+      $('okLine').style.display = '';
+      $('okLine').textContent = '正在重启 tornado，约 20 秒后自动恢复，页面会自行重新加载…';
+      setTimeout(function () { location.reload(); }, 15000);
+    }).catch(function () { restarting = false; $('msgLine').textContent = '重启请求失败'; });
+  }
+
+  $('btnInstall').addEventListener('click', startInstall);
+  $('btnRestart').addEventListener('click', restartTornado);
 
   function syncButtons() {
     $('btnStop').style.display = running ? '' : 'none';
@@ -210,7 +236,20 @@
       task = rsp.data.task;
       available = !!rsp.data.available;
       running = !!rsp.data.running;
-      syncButtons();
+      // 依赖安装进度（pip 后台线程写入 snapshot.install）
+      var inst = task && task.install;
+      if (inst && (inst.state === 'running' || inst.state === 'done' || inst.state === 'failed')) {
+        $('installLog').style.display = '';
+        var ls = (inst.log || '').split('\n');
+        $('installLog').textContent = ls.slice(-15).join('\n') || 'pip 运行中…';
+        if (inst.state === 'running') {
+          $('btnInstall').disabled = true;
+        } else {
+          $('msgLine').textContent = inst.message || '';
+          if (inst.state === 'done') { $('btnRestart').style.display = ''; $('btnInstall').disabled = true; }
+          else { $('btnInstall').disabled = false; }
+        }
+      }
       if (task && task.state === 'running') {
         $('barFill').style.width = pct() + '%';
         $('curLine').textContent = (task.current_book || '') + ' · ' + (task.current_file || '') +

@@ -1047,6 +1047,8 @@
     "pcFallback": "Without the container dependency you can also batch-generate on a PC with webserver/toolbox/make_srt_gui.py and copy results over (see docs/字幕生成与播放.md).",
     "unavailable": "faster-whisper is not installed in the container; web transcription is unavailable.",
     "unavailableHint": "Run pip install faster-whisper ctranslate2==4.8.5 inside the container and restart; or use the PC edition of srt-tool.",
+    "installBtn": "Install dependencies (pip)",
+    "restartBtn": "Restart service",
     "loadFailed": "Failed to load the book list",
     "startFailed": "Failed to start the transcription task"
   },

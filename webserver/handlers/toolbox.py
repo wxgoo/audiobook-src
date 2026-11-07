@@ -1004,6 +1004,28 @@ class AdminSrtToolStatus(BaseHandler):
         }}
 
 
+class AdminSrtToolInstall(BaseHandler):
+    """页面一键安装 faster-whisper（后台 pip，日志进 snapshot.install）。"""
+    @js
+    @is_admin
+    def post(self):
+        ok, msg = srt_transcribe.install_deps()
+        if not ok:
+            return {"err": "install.not_started", "msg": msg}
+        return {"err": "ok", "msg": msg}
+
+
+class AdminSrtToolRestart(BaseHandler):
+    """重启 tornado 使新装依赖生效。分离子进程执行，本请求立即返回。"""
+    @js
+    @is_admin
+    def post(self):
+        ok, msg = srt_transcribe.restart_tornado()
+        if not ok:
+            return {"err": "restart.failed", "msg": msg}
+        return {"err": "ok", "msg": msg}
+
+
 class AdminMimoTTSConvert(BaseHandler):
     @js
     @is_admin
@@ -1938,6 +1960,8 @@ def routes():
         (r"/api/toolbox/srt_tool/start", AdminSrtToolStart),
         (r"/api/toolbox/srt_tool/cancel", AdminSrtToolCancel),
         (r"/api/toolbox/srt_tool/status", AdminSrtToolStatus),
+        (r"/api/toolbox/srt_tool/install", AdminSrtToolInstall),
+        (r"/api/toolbox/srt_tool/restart", AdminSrtToolRestart),
                 (r"/api/toolbox/bookbarn_acceptor/status", AdminBookBarnAcceptorStatus),
                 (r"/api/toolbox/bookbarn_acceptor/toggle", AdminBookBarnAcceptorToggle),
                 (r"/api/toolbox/bookbarn_acceptor/apply_token", AdminBookBarnAcceptorApplyToken),

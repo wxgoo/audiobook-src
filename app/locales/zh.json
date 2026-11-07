@@ -1332,6 +1332,8 @@
     "pcFallback": "容器内未装依赖时，也可在 PC 上用仓库 webserver/toolbox/make_srt_gui.py 批量生成后拷入（见 docs/字幕生成与播放.md）。",
     "unavailable": "容器内未安装 faster-whisper，网页转写暂不可用。",
     "unavailableHint": "在容器内执行 pip install faster-whisper ctranslate2==4.8.5 后重启生效；或改用 PC 版 srt-tool。",
+    "installBtn": "安装依赖（pip）",
+    "restartBtn": "重启服务",
     "loadFailed": "书籍列表加载失败",
     "startFailed": "转写任务启动失败"
   },
