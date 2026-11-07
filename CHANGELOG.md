@@ -99,6 +99,9 @@
     后台任务可取消（取消点前的识别结果写入），已有字幕跳过；依赖 faster-whisper
     （requirements-optional.txt），未安装时页面降级提示改用 PC 版。此前 srt-tool
     与网页转写接口都没有任何 UI 入口（用户发现的"大 bug"），本条补齐。
+    **交付热修**：首版在 NAS 上启动循环——Dockerfile 未 COPY srt-tool/ 导致容器内
+    `import srt_core` 失败拖垮 tornado。已修：Dockerfile 补 COPY；srt_transcribe 的
+    srt_core 导入改为容错（缺失时工具降级，不再拖垮启动）。
 
 版本锁九处载体已由 `check-version-lock.py --set` 同步升号；CHANGELOG 本条为人工补写。
 

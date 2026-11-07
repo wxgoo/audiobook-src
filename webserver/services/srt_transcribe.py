@@ -26,7 +26,15 @@ _SRT_TOOL_DIR = Path(__file__).resolve().parents[2] / "srt-tool"
 if str(_SRT_TOOL_DIR) not in sys.path:
     sys.path.insert(0, str(_SRT_TOOL_DIR))
 
-import srt_core  # noqa: E402  # srt_core 对 faster_whisper 是惰性导入，缺依赖也能 import
+# srt_core 纯标准库实现，但镜像必须携带 srt-tool/（Dockerfile 已 COPY）。
+# 必须容错：就算镜像缺这个目录，也只能让本工具降级不可用，
+# 绝不能拖垮整个应用启动（build.22 交付事故教训）。
+try:
+    import srt_core  # noqa: E402
+    SRT_CORE_OK = True
+except ImportError:
+    srt_core = None
+    SRT_CORE_OK = False
 
 _lock = threading.Lock()
 _thread = None
@@ -46,7 +54,9 @@ def lp(p: str) -> str:
 
 
 def available() -> bool:
-    """容器内是否装了 faster-whisper（决定网页转写是否可用）。"""
+    """容器内是否具备网页转写条件：srt_core 可导入且 faster-whisper 已安装。"""
+    if not SRT_CORE_OK:
+        return False
     try:
         import faster_whisper  # noqa: F401
         return True
@@ -102,7 +112,7 @@ def cancel():
 
 
 def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = False):
-    """books: [{book_id, title, audio_dir}]——audio_dir 由调用方在 calibre 池内解析好。"""
+    """books: [{book_id, title, audio_dir}]——audio_dir 由调用方在 calibre 池解析好。"""
     global _thread, _stop, _snapshot
     with _lock:
         if is_running():
@@ -110,6 +120,9 @@ def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = 
         if not books:
             return False, "没有选择任何书籍"
         if not available():
+            if not SRT_CORE_OK:
+                return False, ("容器内缺少 srt-tool/srt_core.py（镜像未携带），"
+                               "请更新部署包；或改用 PC 版 srt-tool（srt-tool/make_srt_gui.exe）")
             return False, ("容器内未安装 faster-whisper：请在容器内执行 "
                            "pip install faster-whisper ctranslate2==4.8.5 后重启，"
                            "或改用 PC 版 srt-tool（srt-tool/make_srt_gui.exe）")
@@ -145,8 +158,8 @@ def _worker(books, model, lang, overwrite):
             files.append((b, adir, fn))
     _set(files_total=len(files), files_done=0, skipped=0, failed=0,
          message="共 %d 个音频文件" % len(files) if files else "没有可转写的音频文件")
-    if not files:
-        _finish("idle", "没有可转写的音频文件")
+    if not files or srt_core is None:
+        _finish("idle", "没有可转写的音频文件" if files else "srt_core 不可用")
         return
 
     stopped = False
