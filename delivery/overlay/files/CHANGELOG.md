@@ -100,6 +100,16 @@ doc_text），大库宽查询可达百毫秒~秒级，冻住全站。挪进 bloc
 退出码语义不变：0 成功 / 2 有警告 / 3 失败。新增 `tests/test_backup_run.py`
 （6 例，含「失败运行绝不触发保留策略」）。
 
+### 追记（未随 build.21 包，随下次构建发布）
+
+- **版本改版工具化**：`check-version-lock.py --set 4.6.0-build.<N>` 一条命令改写
+  全部九处载体（CARRIERS 表登记、预期次数不符拒绝盲改、改完立即复检）——
+  版本载体从「手工改七处」收敛为「单一权威 + 工具」；`WHY/SEMVER_NOTE` 函数化
+  （从 VERSION_LOCK 派生）。往返冒烟：build.21→22→21，9 用例全程绿。
+- **backup.sh 退出码拆分**：被跳过（锁占用/锁不可用）从 2 改为独立的 **4**——
+  原来与「有告警」同码，监控只盯 `>=3` 会把连续跳过当成正常；cron 告警条件
+  建议 `RC != 0`（演练文档表已同步）。
+
 ### 五、版本锁七处载体升号
 
 `version.py`、`docker-compose.yml`、`Dockerfile ARG`、`app/package.json`、

@@ -1,5 +1,5 @@
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 2d1a679..04e8a51 100644
+index 2d1a679..480d436 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
 @@ -1,9 +1,43 @@
@@ -49,7 +49,7 @@ index 2d1a679..04e8a51 100644
  
  > 想查某个改动为什么这么做：搜版本号，或看 [`docs/`](docs/) 下的专题记录。
  
-@@ -26,7 +60,116 @@
+@@ -26,7 +60,126 @@
  
  ---
  
@@ -93,6 +93,16 @@ index 2d1a679..04e8a51 100644
 +
 +退出码语义不变：0 成功 / 2 有警告 / 3 失败。新增 `tests/test_backup_run.py`
 +（6 例，含「失败运行绝不触发保留策略」）。
++
++### 追记（未随 build.21 包，随下次构建发布）
++
++- **版本改版工具化**：`check-version-lock.py --set 4.6.0-build.<N>` 一条命令改写
++  全部九处载体（CARRIERS 表登记、预期次数不符拒绝盲改、改完立即复检）——
++  版本载体从「手工改七处」收敛为「单一权威 + 工具」；`WHY/SEMVER_NOTE` 函数化
++  （从 VERSION_LOCK 派生）。往返冒烟：build.21→22→21，9 用例全程绿。
++- **backup.sh 退出码拆分**：被跳过（锁占用/锁不可用）从 2 改为独立的 **4**——
++  原来与「有告警」同码，监控只盯 `>=3` 会把连续跳过当成正常；cron 告警条件
++  建议 `RC != 0`（演练文档表已同步）。
 +
 +### 五、版本锁七处载体升号
 +
@@ -189,7 +199,7 @@ index 42b6c57..8108611 100644
      echo 'settings = {}' > /data/books/settings/auto.py; \
      chmod a+w /data/books/settings/auto.py; \
 diff --git a/Makefile b/Makefile
-index e39b832..71b7f8f 100644
+index e39b832..7c8f973 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -1,7 +1,15 @@
@@ -197,7 +207,7 @@ index e39b832..71b7f8f 100644
  
 -VER := $(shell git branch --show-current 2>/dev/null || echo local)
 -VER := $(if $(VER),$(VER),local)
-+# 运行期版本锁：4.6.0-build.21 =「上游已发布 tag 4.6.0」+「第 20 次本地构建」。
++# 运行期版本锁：4.6.0-build.21 =「上游已发布 tag 4.6.0」+「第 21 次本地构建」。
 +# 该写法同时是合法 semver 预发布标记与合法 Docker tag（字符集 [A-Za-z0-9_.-]），无需转换。
 +# 理由：以前用分支名当显示版本，会把 webserver/version.py 顶成 opt/p0-p1 之类，
 +# 既不可追溯也会让“是否真的生效”无法判断。这里改为不匹配即报错退出（fail-fast），
@@ -211,7 +221,7 @@ index e39b832..71b7f8f 100644
  REPO1 := poxenstudio/mybooks:latest
  TAG1 := poxenstudio/mybooks:server-side-render
 diff --git a/README.md b/README.md
-index 8b528c1..7408346 100644
+index 8b528c1..5b12434 100644
 --- a/README.md
 +++ b/README.md
 @@ -3,7 +3,7 @@
@@ -219,7 +229,7 @@ index 8b528c1..7408346 100644
  在 Calibre 书库之上提供 Web 阅读、听书、权限分级、元数据刮削、格式转换等能力。
  
 -> **当前版本：`4.6.0-14`**（基于上游 tag `4.6.0` 的第 14 版定制；v4.6.1 值得跟的改动已全部落地）
-+> **当前版本：`4.6.0-build.20`**（上游 tag `4.6.0` + 第 20 次本地构建；P0/P1 稳健性与性能专项已合入）
++> **当前版本：`4.6.0-build.20`**（上游 tag `4.6.0` + 第 21 次本地构建；P0/P1 稳健性与性能专项已合入）
  
  ---
  
@@ -236,7 +246,7 @@ index 8b528c1..7408346 100644
 -- tag **不带** `v` 前缀
 -
 -旧编号 `v4.8.x` 已废弃，`v4.8.2` 等价于 `4.6.0-1`，历史说明见 CHANGELOG 文末。
-+当前版本 **`4.6.0-build.20`**，语义是「上游 mybooks 已发布 tag `4.6.0` + 第 20 次本地构建」。
++当前版本 **`4.6.0-build.20`**，语义是「上游 mybooks 已发布 tag `4.6.0` + 第 21 次本地构建」。
 +上游 tag 无 `v` 前缀；自己改代码构建号 +1，上游正式发新 tag 后按主题合入再整体改号。
 +
 +| 标识 | 取值 | 写在哪 / 谁读它 |
@@ -1641,10 +1651,10 @@ index 0000000..c86c182
 +   （python tarfile 流式重建）已另行验证符号链接原样保留。
 diff --git a/docs/备份与恢复演练.md b/docs/备份与恢复演练.md
 new file mode 100644
-index 0000000..fed9432
+index 0000000..25cecd9
 --- /dev/null
 +++ b/docs/备份与恢复演练.md
-@@ -0,0 +1,360 @@
+@@ -0,0 +1,364 @@
 +# 备份与恢复演练（P0）
 +
 +> 对应脚本：[`scripts/backup.sh`](../scripts/backup.sh)、[`scripts/backup_run.py`](../scripts/backup_run.py)
@@ -1774,7 +1784,7 @@ index 0000000..fed9432
 +0 * * * *   /bin/sh /volume1/docker/audiobook/scripts/backup.sh --db-only >> /volume1/docker/audiobook-backup/backup.log 2>&1
 +```
 +
-+> 同一条命令不会并发跑：`backup.sh` 用 `.backup.lock` 做单实例锁，后到的直接跳过（退出码 2）。
++> 同一条命令不会并发跑：`backup.sh` 用 `.backup.lock` 做单实例锁，后到的直接跳过（退出码 4）。
 +
 +### 5.3 关键操作前临时备份
 +
@@ -1830,8 +1840,12 @@ index 0000000..fed9432
 +| 退出码 | 含义 | 处理 |
 +|---|---|---|
 +| 0 | 成功 | — |
-+| 2 | 完成但有告警（个别文件失败 / DB 校验异常 / 已有备份在跑而跳过） | 看日志 `!!` 行 |
-+| 3 | 失败/中止（数据目录不存在、空间不足、快照失败） | 立即排查；**上一份快照仍可用** |
++| 2 | 完成但有告警（个别文件失败 / DB 校验异常） | 看日志 `!!` 行 |
++| 3 | 失败/中止（数据目录不存在、空间不足、快照不完整） | 立即排查；**上一份快照仍可用** |
++| 4 | 被跳过（另一实例在运行/锁不可用） | 单次无害；**连续多日 4 = 锁或调度异常**，立即排查 |
++
++> cron 告警条件建议 `RC != 0`：2 是「备份可用但有隐患」，4 是「今天根本没备」——
++> 只盯 `>=3` 会把连续跳过当成正常（build.20 复审结论）。
 +
 +---
 +
@@ -2540,10 +2554,10 @@ index 019bd6e..082191f 100644
  | [`test-audio-dirs.py`](test-audio-dirs.py) | 音频路径逻辑自测（假 cache + 临时目录，47 项） | 不改数据，只在 /tmp 里折腾 |
 diff --git a/scripts/backup.sh b/scripts/backup.sh
 new file mode 100755
-index 0000000..8b2ac8f
+index 0000000..9ba5b96
 --- /dev/null
 +++ b/scripts/backup.sh
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,274 @@
 +#!/bin/sh
 +# ============================================================
 +# audiobook 数据备份（P0）
@@ -2568,7 +2582,8 @@ index 0000000..8b2ac8f
 +# 全部参数都可用环境变量覆盖，默认值见下方「参数」段。
 +# 备份根目录、保留份数、排除目录都是可调项，详见 docs/备份与恢复演练.md。
 +#
-+# 退出码：0 成功；2 部分成功（有告警，备份仍可用）；3 失败/中止。
++# 退出码：0 成功；2 部分成功（有告警，备份仍可用）；3 失败/中止；
++#         4 被跳过（已有实例在运行/锁不可用——连着多天 4 说明锁或调度异常，需人工看）。
 +# ============================================================
 +set -eu
 +
@@ -2732,9 +2747,9 @@ index 0000000..8b2ac8f
 +        [ -f "$LOCK_DIR/pid" ] && pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
 +        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
 +            if [ "$waited" -ge "$LOCK_WAIT" ]; then
-+                echo "!! 已有备份进程在运行（pid $pid），本次跳过"
++                echo "!! 已有备份进程在运行（pid $pid），本次跳过（退出码 4）"
 +                echo "   若确认是残留进程，可手工删除 $LOCK_DIR"
-+                exit 2
++                exit 4
 +            fi
 +        else
 +            # 无 pid 可能是刚抢到锁还没写，等 2 秒确认一次
@@ -2748,8 +2763,8 @@ index 0000000..8b2ac8f
 +            fi
 +        fi
 +        if [ "$waited" -ge "$LOCK_WAIT" ]; then
-+            echo "!! 无法获取备份锁，本次跳过"
-+            exit 2
++            echo "!! 无法获取备份锁，本次跳过（退出码 4）"
++            exit 4
 +        fi
 +        sleep 5
 +        waited=$((waited + 5))
@@ -3360,10 +3375,10 @@ index 0000000..7aed70a
 +        sys.exit(130)
 diff --git a/scripts/check-version-lock.py b/scripts/check-version-lock.py
 new file mode 100644
-index 0000000..2faa80a
+index 0000000..c108bcf
 --- /dev/null
 +++ b/scripts/check-version-lock.py
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,252 @@
 +#!/usr/bin/env python3
 +# -*- coding: utf-8 -*-
 +"""版本锁检查（防版本回退 / 防被交付标签覆盖）。
@@ -3381,8 +3396,15 @@ index 0000000..2faa80a
 +
 +用法：
 +    python3 scripts/check-version-lock.py [--root <仓库或发布包根目录>]
++    python3 scripts/check-version-lock.py --set 4.6.0-build.21   # 一条命令改全部载体
 +
 +退出码：0 全部通过；1 有断言失败。
++
++--set 的意义：版本载体有八处（version.py / compose / Dockerfile / package.json /
++package-lock / Makefile / 本脚本常量 / tests 字面量），手工逐处改必然漏。
++--set 统一改写后立即复检——新增载体时必须同步维护 CARRIERS 表。
++CHANGELOG 的版本条目是人工写的（内容随版本走），--set 不碰，打包前由
++pack.sh 从其首条版本标题取号——忘写会在打包时暴露。
 +"""
 +
 +import argparse
@@ -3393,13 +3415,19 @@ index 0000000..2faa80a
 +VERSION_LOCK = "4.6.0-build.21"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
 +PKG_VERSION_LOCK = "4.6.0-build.21"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
 +
-+WHY = ("这是防版本回退 / 防被交付标签覆盖的保护，不是普通测试失败。"
-+       "运行期版本已统一为 4.6.0-build.21（上游已发布 tag 4.6.0 + 第 21 次本地构建），"
-+       "旧 4.8.x 号段已封存，不得写回；也不得写成裸 4.6.0。")
++def _why():
++    """从 VERSION_LOCK 派生，--set 后同一进程内自动一致，无需手工同步。"""
++    return ("这是防版本回退 / 防被交付标签覆盖的保护，不是普通测试失败。"
++            "运行期版本已统一为 %s（上游已发布 tag 4.6.0 + 第 %s 次本地构建），"
++            "旧 4.8.x 号段已封存，不得写回；也不得写成裸 4.6.0。"
++            % (VERSION_LOCK, VERSION_LOCK.rsplit(".", 1)[-1]))
 +
-+SEMVER_NOTE = ("4.6.0-build.21 是 semver 预发布标记，整串排序低于 4.6.0；"
-+               "本程序不发布 npm、package.json 无 engines 校验，故无实际影响。"
-+               "同一上游基线的本地构建之间用 build.N 区分：版本检测不能只靠 > 比较，须比较 build.N 段。")
++
++def _semver_note():
++    return ("%s 是 semver 预发布标记，整串排序低于 4.6.0；"
++            "本程序不发布 npm、package.json 无 engines 校验，故无实际影响。"
++            "同一上游基线的本地构建之间用 build.N 区分：版本检测不能只靠 > 比较，须比较 build.N 段。"
++            % VERSION_LOCK)
 +
 +
 +def read(root: Path, rel: str) -> str:
@@ -3409,12 +3437,71 @@ index 0000000..2faa80a
 +    return p.read_text(encoding="utf-8", errors="replace")
 +
 +
++# §单一权威改版§ 载体清单：rel -> 预期出现次数（None = 不限，全量替换）。
++# 新增版本载体时必须在这里登记——--set 就是为此而存在，漏登记的载体
++# 会立即被下面的检查断言抓出来（这正是防线的工作方式：改版工具与检查器互为镜像）。
++CARRIERS = {
++    "webserver/version.py": 2,          # VERSION 行 + 文件尾注释
++    "docker-compose.yml": 2,            # GIT_VERSION + 注释示例
++    "Dockerfile": 1,                    # ARG GIT_VERSION 默认值
++    "app/package.json": 1,
++    "app/package-lock.json": 2,         # 顶层 version 两处
++    "Makefile": 2,                      # VERSION_LOCK + 头部注释
++    "README.md": None,                  # 升级规则说明里的示例
++    "scripts/check-version-lock.py": None,  # 本脚本常量 + 文案
++    "tests/test_version_lock.py": None,     # 用例字面量
++}
++
++
++def set_version(root: Path, new_ver: str) -> None:
++    """把全部载体统一改写为 new_ver。只接受本 fork 的 4.6.0-build.<N> 形式。"""
++    if not re.fullmatch(r"4\.6\.0-build\.\d{1,3}", new_ver):
++        raise SystemExit("!! 只接受 4.6.0-build.<N> 形式（v4.8.x、裸 4.6.0、空串都在封存/禁止列表）")
++    old = VERSION_LOCK
++    if old == new_ver:
++        print("== 已是 %s，无需改写" % new_ver)
++        return
++    old_n = old.rsplit(".", 1)[-1]
++    new_n = new_ver.rsplit(".", 1)[-1]
++
++    for rel, expected in sorted(CARRIERS.items()):
++        p = root / rel
++        if not p.is_file():
++            print("  !! 载体缺失，跳过: %s" % rel)
++            continue
++        text = p.read_text(encoding="utf-8")
++        n = text.count(old)
++        if n == 0:
++            print("  !! %s 里没有 %s（该文件可能已手工改过，请核对）" % (rel, old))
++            continue
++        if expected is not None and n != expected:
++            print("  !! %s 出现 %d 次（预期 %d），拒绝盲改——请人工核对后用 "
++                  "--set 前先手工对齐" % (rel, n, expected))
++            continue
++        new_text = text.replace(old, new_ver)
++        # 「第 N 次本地构建」文案到处都有（Makefile 注释/校验器/报告），
++        # 统一跟着 build.N 走——Makefile 注释里躺过一个「第 20 次」就是教训
++        new_text = re.sub(r"第 \d+ 次本地构建", "第 %s 次本地构建" % new_n, new_text)
++        p.write_text(new_text, encoding="utf-8")
++        print("  已改写 %-32s（%d 处）" % (rel, n))
++    print("== CHANGELOG 的版本条目请人工补写（内容随版本走，--set 不代劳；"
++          "pack.sh 从其首条版本标题取号）")
++
++
 +def main() -> int:
 +    ap = argparse.ArgumentParser(description="版本锁检查")
 +    ap.add_argument("--root", default=str(Path(__file__).resolve().parent.parent),
 +                    help="仓库或发布包根目录（默认脚本上级目录）")
++    ap.add_argument("--set", metavar="NEW_VER", default=None,
++                    help="把全部版本载体统一改写为 NEW_VER（4.6.0-build.<N>），改完立即复检")
 +    args = ap.parse_args()
 +    root = Path(args.root).resolve()
++
++    if args.set:
++        set_version(root, args.set)
++        # WHY/SEMVER_NOTE 已函数化（从 VERSION_LOCK 派生），刷新全局常量即可
++        global VERSION_LOCK, PKG_VERSION_LOCK
++        VERSION_LOCK = PKG_VERSION_LOCK = args.set
 +
 +    failures = []
 +
@@ -3423,7 +3510,7 @@ index 0000000..2faa80a
 +
 +    def bad(name, detail, fix):
 +        print("[FAIL] %-22s %s" % (name, detail))
-+        print("       %s" % WHY)
++        print("       %s" % _why())
 +        print("       补救：%s" % fix)
 +        failures.append(name)
 +
@@ -3497,7 +3584,7 @@ index 0000000..2faa80a
 +        elif m.group(1) != PKG_VERSION_LOCK:
 +            bad("app/package.json", "version=%r，应为 %r" % (m.group(1), PKG_VERSION_LOCK),
 +                "改回 \"version\": \"%s\"（须与运行期版本一致；%s）"
-+                % (PKG_VERSION_LOCK, SEMVER_NOTE))
++                % (PKG_VERSION_LOCK, _semver_note()))
 +        else:
 +            ok("app/package.json", '"version": "%s"' % PKG_VERSION_LOCK)
 +    except FileNotFoundError as e:
@@ -3535,10 +3622,10 @@ index 0000000..2faa80a
 +    print()
 +    if failures:
 +        print("❌ 版本锁检查失败：%d 项" % len(failures))
-+        print("   %s" % WHY)
++        print("   %s" % _why())
 +        return 1
 +    print("✅ 版本锁检查通过：运行期版本 %s 未被回退或被交付标签覆盖" % VERSION_LOCK)
-+    print("   注意：%s" % SEMVER_NOTE)
++    print("   注意：%s" % _semver_note())
 +    return 0
 +
 +
@@ -4682,7 +4769,7 @@ index 0000000..ae11473
 +    assert handler.calibre_calls == 0
 diff --git a/tests/test_version_lock.py b/tests/test_version_lock.py
 new file mode 100644
-index 0000000..ce22f5d
+index 0000000..ae8e319
 --- /dev/null
 +++ b/tests/test_version_lock.py
 @@ -0,0 +1,128 @@
@@ -4690,7 +4777,7 @@ index 0000000..ce22f5d
 +"""版本锁（防反弹）回归测试。
 +
 +背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.21`（上游已发布 tag 4.6.0
-++ 第 20 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
+++ 第 21 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
 +回退（写回 4.8.x、写回裸 4.6.0）、被构建参数顶成空串、Dockerfile/Makefile
 +守卫被删除，都必须失败。
 +
@@ -6517,7 +6604,7 @@ index cda4669..62a2f18 100644
              self.update_task_progress(task_id, 100, {
                  "status": "completed",
 diff --git a/webserver/version.py b/webserver/version.py
-index fead5c0..6af696a 100644
+index fead5c0..99dc37f 100644
 --- a/webserver/version.py
 +++ b/webserver/version.py
 @@ -1,4 +1,9 @@
@@ -6525,7 +6612,7 @@ index fead5c0..6af696a 100644
  # -*- coding: UTF-8 -*-
  
 -VERSION = "v4.8.0"
-+# 运行期版本号：4.6.0-build.21 =「上游 mybooks 4.6.0」+「第 20 次本地构建」，自本版起统一启用。
++# 运行期版本号：4.6.0-build.21 =「上游 mybooks 4.6.0」+「第 21 次本地构建」，自本版起统一启用。
 +# 旧 4.8.x 号段已封存，与本版本是纯号段重置，不对应任何版本先后关系。
 +# -build.N 是 semver 预发布标记：整串排序低于 4.6.0（本程序不发布 npm、无 engines 校验，无实际影响）；
 +# 同一上游基线的本地构建之间用 build.N 区分，版本检测不能只靠 > 比较，须比较 build.N 段。

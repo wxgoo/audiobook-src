@@ -22,7 +22,8 @@
 # 全部参数都可用环境变量覆盖，默认值见下方「参数」段。
 # 备份根目录、保留份数、排除目录都是可调项，详见 docs/备份与恢复演练.md。
 #
-# 退出码：0 成功；2 部分成功（有告警，备份仍可用）；3 失败/中止。
+# 退出码：0 成功；2 部分成功（有告警，备份仍可用）；3 失败/中止；
+#         4 被跳过（已有实例在运行/锁不可用——连着多天 4 说明锁或调度异常，需人工看）。
 # ============================================================
 set -eu
 
@@ -186,9 +187,9 @@ acquire_lock() {
         [ -f "$LOCK_DIR/pid" ] && pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             if [ "$waited" -ge "$LOCK_WAIT" ]; then
-                echo "!! 已有备份进程在运行（pid $pid），本次跳过"
+                echo "!! 已有备份进程在运行（pid $pid），本次跳过（退出码 4）"
                 echo "   若确认是残留进程，可手工删除 $LOCK_DIR"
-                exit 2
+                exit 4
             fi
         else
             # 无 pid 可能是刚抢到锁还没写，等 2 秒确认一次
@@ -202,8 +203,8 @@ acquire_lock() {
             fi
         fi
         if [ "$waited" -ge "$LOCK_WAIT" ]; then
-            echo "!! 无法获取备份锁，本次跳过"
-            exit 2
+            echo "!! 无法获取备份锁，本次跳过（退出码 4）"
+            exit 4
         fi
         sleep 5
         waited=$((waited + 5))
