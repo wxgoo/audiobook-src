@@ -1980,6 +1980,7 @@ export default {
                   { value: "rating", text: "appHeader.rating" },
                   { value: "booklists", text: "appHeader.booklists" },
                   { value: "friends", text: "appHeader.friendLinks" },
+                  { value: "printbooks", text: "appHeader.physicalBooks", requires: "ENABLE_PHYSICAL_BOOKS" },
                 ],
               },
             ],

@@ -746,10 +746,11 @@ export default {
             const navLinks = [
                 ...(showItem("folders") && this.sys.allow.folder ? [{ icon: "mdi-folder-multiple-outline", href: "/folder", text: "appHeader.folders", count: this.sys.folders, color: "amber darken-2" }] : []),
                 ...(showItem("audiobooks") ? [{ icon: "mdi-headphones", href: "/audiobooks", text: "appHeader.audioBooks", count: this.sys.audiobooks, color: "purple"}] : []),
-                // 实体书入口不参与上面的 SIDEBAR_ITEMS（侧边栏显示项目）：它是功能而非浏览维度，
-                // 由「站点与外观 → 实体书」开关（ENABLE_PHYSICAL_BOOKS / sys.allow.physical_books）
-                // 唯一决定——打开即显示，关闭即隐藏，与侧边栏勾选项无关。
-                ...(this.sys.allow.physical_books ? [{ icon: "mdi-bookshelf", href: "/printbooks", text: "appHeader.physicalBooks", count: this.sys.physicals, color: "orange"}] : []),
+                // 实体书入口由两个开关叠加控制：
+                // 1. SIDEBAR_ITEMS 勾选项（侧边栏显示项目，printbooks）— 管理员可勾选/取消
+                // 2. ENABLE_PHYSICAL_BOOKS（站点与外观 → 实体书功能开关）
+                // 两者同时开启才显示；任一关闭即隐藏。
+                ...(showItem("printbooks") && this.sys.allow.physical_books ? [{ icon: "mdi-bookshelf", href: "/printbooks", text: "appHeader.physicalBooks", count: this.sys.physicals, color: "orange"}] : []),
                 ...(showItem("authors") ? [{ icon: "mdi-account-group", href: "/author", text: "appHeader.authors", count: this.sys.authors, color: "blue darken-1"}] : []),
                 ...(showItem("categories") ? [{ icon: "mdi-shape-plus", href: "/categories", text: "appHeader.categoryBrowse", count: this.sys.categories, color: "green" }] : []),
                 ...(showItem("tags") ? [{ icon: "mdi-tag-heart", href: "/tag", text: "appHeader.tags", count: this.sys.tags, color: "deep-orange"}] : []),
