@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 """版本锁检查（防版本回退 / 防被交付标签覆盖）。
 
-背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.20`，语义是
-「上游 mybooks 已发布 tag 4.6.0 + 第 20 次本地构建」。旧的 4.8.x 号段已封存，
-与 4.6.0-build.20 是纯号段重置，不对应任何版本先后关系（详见 README 对照表）。
+背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.21`，语义是
+「上游 mybooks 已发布 tag 4.6.0 + 第 21 次本地构建」。旧的 4.8.x 号段已封存，
+与 4.6.0-build.21 是纯号段重置，不对应任何版本先后关系（详见 README 对照表）。
 
 本检查把这条约定变成显式断言：任何一处被回退（写回 4.8.x / 写回裸 4.6.0）、
 被交付标签顶掉、或被构建参数写成空串，都会直接失败。
 
-注意：`4.6.0-build.20` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.6.0`。
+注意：`4.6.0-build.21` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.6.0`。
 本程序不发布 npm 包、package.json 无 `engines` 校验，因此该排序差异无实际影响；
 同一上游基线的本地构建之间用 `build.N` 区分，版本检测不能只靠 `>` 比较，须比较 `build.N` 段。
 
@@ -24,14 +24,14 @@ import re
 import sys
 from pathlib import Path
 
-VERSION_LOCK = "4.6.0-build.20"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
-PKG_VERSION_LOCK = "4.6.0-build.20"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
+VERSION_LOCK = "4.6.0-build.21"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
+PKG_VERSION_LOCK = "4.6.0-build.21"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
 
 WHY = ("这是防版本回退 / 防被交付标签覆盖的保护，不是普通测试失败。"
-       "运行期版本已统一为 4.6.0-build.20（上游已发布 tag 4.6.0 + 第 20 次本地构建），"
+       "运行期版本已统一为 4.6.0-build.21（上游已发布 tag 4.6.0 + 第 21 次本地构建），"
        "旧 4.8.x 号段已封存，不得写回；也不得写成裸 4.6.0。")
 
-SEMVER_NOTE = ("4.6.0-build.20 是 semver 预发布标记，整串排序低于 4.6.0；"
+SEMVER_NOTE = ("4.6.0-build.21 是 semver 预发布标记，整串排序低于 4.6.0；"
                "本程序不发布 npm、package.json 无 engines 校验，故无实际影响。"
                "同一上游基线的本地构建之间用 build.N 区分：版本检测不能只靠 > 比较，须比较 build.N 段。")
 

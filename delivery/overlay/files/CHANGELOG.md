@@ -1,6 +1,6 @@
 # 变更日志（CHANGELOG）
 
-本项目的版本号规则：**`<上游 mybooks tag>-build.<自建构建号>`**，当前版本 **`4.6.0-build.20`**。
+本项目的版本号规则：**`<上游 mybooks tag>-build.<自建构建号>`**，当前版本 **`4.6.0-build.21`**。
 上游 tag 无 `v` 前缀；自己改代码构建号 +1，上游正式发新 tag 后按主题合入再整体改号。
 
 ### 号段重置说明（必读）
@@ -11,9 +11,9 @@
 
 | 项 | 取值 | 说明 |
 |---|---|---|
-| **运行期版本**（唯一权威） | `4.6.0-build.20` | 写 `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` / `package-lock.json`、`Makefile` 的 `VERSION_LOCK` |
+| **运行期版本**（唯一权威） | `4.6.0-build.21` | 写 `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` / `package-lock.json`、`Makefile` 的 `VERSION_LOCK` |
 | 上游基线 | mybooks tag `4.6.0`（2026-10-25，commit `3c5947c`） | 本源码事实上的来源版本 |
-| 交付标签 / 包名 | 与运行期版本相同：`4.6.0-build.20` | 出包文件名带它，便于区分 |
+| 交付标签 / 包名 | 与运行期版本相同：`4.6.0-build.21` | 出包文件名带它，便于区分 |
 | 上游未发布分支 | mybooks `develop` 上是 `4.6.1`（**无 tag、无 Release**） | **不跟号**：等上游正式发 tag 后按主题合入，届时再升 `4.6.1-build.20` |
 
 旧号 → 新号对照（便于翻旧记录）：
@@ -60,7 +60,56 @@
 
 ---
 
-## 4.6.0-build.20（当前）
+## 4.6.0-build.21（当前）
+
+> 相对 build.20 的增量：**1 个性能修复、1 个测试修复、2 个缓存标记缺口、
+> 备份脚本 3 个 fail-closed 缺口 + 版本锁七处载体升号**。共 6 个提交
+> （`6926057`、`36d3e71`、`da52091`、`503e9fb`、`bec66b6`、本版本提交）。
+
+### 一、检索 FTS 查询挪出事件循环（`6926057` / `503e9fb`，两人平行修复、取后者的注释）
+
+`cached_search_async` 里的 `search()` 原来直接跑在 ioloop 线程上：除 FTS MATCH 外
+还有纯 Python 的原文子串过滤（最多 `SEARCH_INDEX_MAX_RESULTS` 条 × 8000 字符
+doc_text），大库宽查询可达百毫秒~秒级，冻住全站。挪进 blocking_pool；
+`_connect_read` 每次新建只读连接并在 finally 关闭，线程池执行安全。
+
+### 二、有声书缓存测试的线程竞态（`6926057` / `da52091`）
+
+`test_audio_books_cache` 的假扫描是纯内存操作，后台刷新线程会抢在断言前写入
+新值，「立即返回旧值」变成猜运气（实测部分机器 5/5 必红）。用 Event 把扫描
+卡在半路，两条约束都变成确定性验证。
+
+### 三、写 `.audio/` 的路径补齐事件驱动缓存标记（`36d3e71`）
+
+- `scan_service._sync_sidecar_audio`（扫描导入 epub+mp3 混放/分季子目录）：
+  音频复制完不标 `mark_has_audio`，新书最长 6 小时兜底扫描后才进
+  `/api/audiobooks`；
+- `book_dedup._move_audio`（重复书合并搬音频）：两边标志都不动——保留书暂不
+  在列表、被合并书（随后删除）仍挂在列表里。
+
+### 四、备份脚本三个 fail-closed 缺口（`bec66b6`，附 6 例回归测试）
+
+1. **残缺快照顶替好快照**：逐文件复制失败只记 warning 退码 2，残缺快照反而
+   被 manifest 登记成最新一份、被保留策略优先保护。现在 `errors` 非空直接
+   判失败并清理本次目录（退出码 3）。
+2. **重跑同一 `--timestamp` 会删掉旧快照**：报「目标已存在」后异常路径无条件
+   `rmtree`。现在只清理本次亲手创建的目录。
+3. **manifest 非原子写**：改为 tmp + fsync + `os.replace`，写入失败清理本次
+   db/files 产物并退码 3。顺带：在线备份失败未开冷拷贝时清掉半截目标 db。
+
+退出码语义不变：0 成功 / 2 有警告 / 3 失败。新增 `tests/test_backup_run.py`
+（6 例，含「失败运行绝不触发保留策略」）。
+
+### 五、版本锁七处载体升号
+
+`version.py`、`docker-compose.yml`、`Dockerfile ARG`、`app/package.json`、
+`package-lock.json`、`Makefile VERSION_LOCK`、`check-version-lock.py`（校验器
+自带常量与文案）全部 `build.20 → build.21`；`tests/test_version_lock.py`
+同步。`check-version-lock.py` 与 `test_version_lock.py` 均通过。
+
+---
+
+## 4.6.0-build.20
 
 > 优化专项落地版：P0 备份闭环、P1 安全/性能、中文检索、游标分页、导入攒批、任务易用性，
 > 外加一套不依赖 git 的 NAS 交付与镜像自检脚本。逐项说明与回滚方式见
