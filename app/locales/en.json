@@ -2721,5 +2721,8 @@
     "testTranslators": "Translators detected",
     "testFailed": "Test failed",
     "openClean": "Open \"Toolbox → Author Cleanup\""
+  },
+  "miniPlayer": {
+    "error": "Playback error, please check the URL"
   }
 }

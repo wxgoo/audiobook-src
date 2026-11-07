@@ -2735,5 +2735,8 @@
     "testTranslators": "识别出译者",
     "testFailed": "测试失败",
     "openClean": "打开「工具箱 → 作者清理」"
+  },
+  "miniPlayer": {
+    "error": "播放出错了，请检查链接"
   }
 }

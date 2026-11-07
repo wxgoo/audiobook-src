@@ -1,4 +1,8 @@
 export const state = () => ({
+    miniPlayer: {
+        show: false, title: '', url: '',
+        kind: 'stream', bookId: null,
+    },
     nav: true, loading: true, count: 0, searchLoading: false, user: {
         is_admin: false,
         is_login: false,
@@ -41,7 +45,14 @@ export const state = () => ({
 })
 
 export const mutations = {
-    loading(state) {
+    miniPlayer_play(state, { title, url, kind, bookId }) {
+        state.miniPlayer = { show: true, title, url, kind: kind || 'stream', bookId: bookId || null };
+    }, miniPlayer_hide(state) {
+        state.miniPlayer.show = false;
+        state.miniPlayer.url = '';
+    }, miniPlayer_toggle(state) {
+        state.miniPlayer.show = !state.miniPlayer.show;
+    }, loading(state) {
         state.loading = true;
     }, loaded(state) {
         state.loading = false;

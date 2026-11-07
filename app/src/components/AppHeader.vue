@@ -59,7 +59,7 @@
                                 :href="!link.action && isExternalLink(link.href) ? link.href : undefined"
                                 :target="!link.action && isExternalLink(link.href) ? '_blank' : undefined"
                                 class="v-list-item--group-child"
-                                @click="link.action ? handleLinkAction(link.action) : undefined"
+                                  @click="link.action ? handleLinkAction(link.action, link) : undefined"
                             >
                                 <v-list-item-action class="mt-1 mb-1 mr-2" dense>
                                     <img v-if="link.favicon" :src="link.favicon" class="friend-favicon" @error="$event.target.style.display='none'" />
@@ -763,15 +763,15 @@ export default {
 
             const friendLinks = [
                 {
-                    icon: "mdi-link",
+                    icon: "mdi-radio-tower",
                     text: "appHeader.friendLinks",
                     color: "primary",
                     groups: this.sys.friends.map((friend) => ({
-                        icon: "mdi-open-in-new",
-                        href: friend.href,
+                        icon: "mdi-play-circle-outline",
+                        action: "playStream",
                         text: friend.text,
-                        color: "primary",
-                        favicon: friend.icon || "",
+                        streamUrl: friend.href,
+                        color: "green",
                     })),
                 }
             ];
@@ -1283,12 +1283,17 @@ export default {
         isPathMatch(path) {
             return this.$route.path.indexOf(path) === 0;
         },
-        handleLinkAction(action) {
+        handleLinkAction(action, link) {
             if (action === 'openFeedback') {
                 this.feedbackDialog = true;
             } else if (action === 'openMemo') {
                 this.resetMemo();
                 this.memoDialog = true;
+            } else if (action === 'playStream') {
+                this.$store.commit('miniPlayer_play', {
+                    title: link.text, url: link.streamUrl, kind: 'stream',
+                });
+            }
             }
         },
         submitMemo() {

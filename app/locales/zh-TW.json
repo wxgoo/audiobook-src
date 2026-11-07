@@ -2667,5 +2667,8 @@
     "testTranslators": "識別出譯者",
     "testFailed": "測試失敗",
     "openClean": "開啟「工具箱 → 作者清理」"
+  },
+  "miniPlayer": {
+    "error": "播放出錯了，請檢查連結"
   }
 }

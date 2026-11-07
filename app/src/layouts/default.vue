@@ -31,6 +31,7 @@
             </v-dialog>
         </v-main>
         <upload v-if="$store.state.nav"></upload>
+        <mini-player></mini-player>
     </v-app>
 </template>
 
@@ -40,6 +41,7 @@ import AppFooter from "~/components/AppFooter.vue"
 import AppPress from "~/components/AppPress.vue"
 import Loading from "~/components/Loading.vue"
 import Upload from "~/components/Upload.vue"
+import MiniPlayer from "~/components/MiniPlayer.vue"
 
 export default {
     name: 'DefaultLayout',
@@ -49,6 +51,7 @@ export default {
         AppPress,
         Loading,
         Upload,
+        MiniPlayer,
     },
     data: () => ({}),
     head() {
