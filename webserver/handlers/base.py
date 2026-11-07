@@ -1775,12 +1775,11 @@ class BaseHandler(web.RequestHandler):
         cache = self.search_cache()
         ids = cache.get(query, version)
         if ids is None:
-            # §FTS 查询不能占事件循环§（build.20 复审修正）search() 除了
-            # MATCH 本身还有纯 Python 的原文子串过滤（最多 max_results 条 ×
-            # 8000 字符的 doc_text），大库上宽查询可达百毫秒~秒级。它不是
-            # calibre 调用，不会进 run_calibre_read_async 的线程池，必须
-            # 显式丢进 blocking_pool——与下面的 calibre 回退同等对待。
-            ids = await utils.run_in_threadpool(get_search_index().search, query)
+            # FTS 检索是同步 SQLite 读：查询长、索引大时会占住 ioloop，把同进程所有请求
+            # 一起冻住。挪到 blocking_pool（联网长任务池）执行；search() 每次调用都新建
+            # 独立的只读连接（SearchIndexService._connect_read，mode=ro）并在 finally 关闭，
+            # 不复用、不跨线程共享连接，因此线程池执行是安全的。
+            ids = await utils.run_in_threadpool(lambda: get_search_index().search(query))
             if ids is None:
                 ids = tuple(await self.run_calibre_read_async(self.calibre_db_cache.search, query) or ())
             else:
