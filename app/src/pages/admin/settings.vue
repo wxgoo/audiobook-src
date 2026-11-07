@@ -454,7 +454,16 @@
               <v-row
                 v-for="(friend, idx) in settings.FRIENDS"
                 :key="'friend-' + friend.href"
+                align="center"
               >
+                <v-col class="py-0" cols="1">
+                  <div class="d-flex flex-column align-center">
+                    <v-btn x-small icon :disabled="idx <= 0"
+                           @click="moveFriend(idx, -1)"><v-icon>mdi-arrow-up</v-icon></v-btn>
+                    <v-btn x-small icon :disabled="idx >= settings.FRIENDS.length - 1"
+                           @click="moveFriend(idx, 1)"><v-icon>mdi-arrow-down</v-icon></v-btn>
+                  </div>
+                </v-col>
                 <v-col class="py-0" cols="3">
                   <v-text-field
                     flat
@@ -466,7 +475,7 @@
                     type="text"
                   ></v-text-field>
                 </v-col>
-                <v-col class="py-0" cols="9">
+                <v-col class="py-0" cols="8">
                   <v-text-field
                     flat
                     small
@@ -3221,6 +3230,12 @@ export default {
     }
   },
   methods: {
+    moveFriend(idx, dir) {
+      const arr = this.settings.FRIENDS;
+      const t = idx + dir;
+      if (t < 0 || t >= arr.length) return;
+      [arr[idx], arr[t]] = [arr[t], arr[idx]];
+    },
     // 网站图标下拉的预览地址。favicon_0 表示「沿用当前图标」，要展示站点此刻真正
     // 生效的 /logo/favicon.ico（保存其它图标时它会被覆盖），因此带时间戳绕过缓存；
     // 其余选项展示随附的 favicon_N.ico。

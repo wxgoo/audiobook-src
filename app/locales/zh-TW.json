@@ -1727,7 +1727,8 @@
     "regenerateNoEbook": "這本書沒有可用的電子書檔案（EPUB/TXT），無法產生音訊",
     "voiceLabel": "選擇語音",
     "convertProgress": "產生中 {percent}%",
-    "convertStage": "目前階段：{stage}"
+    "convertStage": "目前階段：{stage}",
+    "minimizeToBar": "收起到底部，邊瀏覽邊聽"
   },
   "syslog": {
     "title": "系統日誌",
@@ -2669,6 +2670,7 @@
     "openClean": "開啟「工具箱 → 作者清理」"
   },
   "miniPlayer": {
-    "error": "播放出錯了，請檢查連結"
+    "error": "播放出錯了，請檢查連結",
+    "hlsError": "瀏覽器不支援 HLS 播放"
   }
 }

@@ -1737,7 +1737,8 @@
     "regenerateNoEbook": "这本书没有可用的电子书文件（EPUB/TXT），无法生成音频",
     "voiceLabel": "选择语音",
     "convertProgress": "生成中 {percent}%",
-    "convertStage": "当前阶段：{stage}"
+    "convertStage": "当前阶段：{stage}",
+    "minimizeToBar": "收起到底部，边浏览边听"
   },
   "syslog": {
     "title": "系统日志",
@@ -2737,6 +2738,7 @@
     "openClean": "打开「工具箱 → 作者清理」"
   },
   "miniPlayer": {
-    "error": "播放出错了，请检查链接"
+    "error": "播放出错了，请检查链接",
+    "hlsError": "浏览器不支持 HLS 播放"
   }
 }

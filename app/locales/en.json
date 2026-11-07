@@ -1735,7 +1735,8 @@
     "regenerateNoEbook": "No ebook file (EPUB/TXT) available for this book, cannot generate audio",
     "voiceLabel": "Choose a voice",
     "convertProgress": "Generating {percent}%",
-    "convertStage": "Stage: {stage}"
+    "convertStage": "Stage: {stage}",
+    "minimizeToBar": "Minimize to bar, browse while listening"
   },
   "syslog": {
     "title": "System Log",
@@ -2723,6 +2724,7 @@
     "openClean": "Open \"Toolbox → Author Cleanup\""
   },
   "miniPlayer": {
-    "error": "Playback error, please check the URL"
+    "error": "Playback error, please check the URL",
+    "hlsError": "HLS playback not supported"
   }
 }
