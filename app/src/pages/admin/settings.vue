@@ -2058,9 +2058,13 @@ export default {
         title: "settings.group_users",
         sections: [
           {
-            id: "users-guest",
-            icon: "mdi-account",
-            title: "settings.sec_users_guest",
+            // 访问控制：门槛（必须登录）→ 访客权限 → 读者组（谁能看哪些书）。
+            // 4.6.0-19 起三块合一张卡——它们说的是同一条权限链，分开摆会让人
+            // 以为有三个互不相干的开关。
+            id: "users-access",
+            icon: "mdi-shield-account-outline",
+            title: "settings.sec_users_access",
+            desc: "settings.sec_users_access_desc",
             fields: [
               // 私人图书馆标准模式：开启后所有页面与接口都要求登录，下面各项访问权限随之失效
               {
@@ -2069,7 +2073,7 @@ export default {
                 tips: "settings.require_login_tips",
               },
               // 以下四项带 lockOn：REQUIRE_LOGIN 开启时置灰不可点（后端 allow_flags 也恒报 False），
-              // 但保存值保留，关掉总开关后原样恢复。见下方 users-guest 区块的关联说明块。
+              // 但保存值保留，关掉总开关后原样恢复。
               { icon: "mdi-read", key: "ALLOW_GUEST_READ", label: "settings.allow_guest_read", type: "checkbox", lockOn: "REQUIRE_LOGIN", tips: "settings.guest_locked_by_login" },
               { icon: "mdi-download", key: "ALLOW_GUEST_DOWNLOAD", label: "settings.allow_guest_download", type: "checkbox", lockOn: "REQUIRE_LOGIN", tips: "settings.guest_locked_by_login" },
               { icon: "mdi-upload", key: "ALLOW_GUEST_UPLOAD", label: "settings.allow_guest_upload", type: "checkbox", lockOn: "REQUIRE_LOGIN", tips: "settings.guest_locked_by_login" },
@@ -2085,106 +2089,6 @@ export default {
                 label: "settings.guest_login_relation_note",
                 tips: "settings.guest_login_relation_note_tips",
               },
-            ],
-          },
-          {
-            id: "users-reg",
-            icon: "mdi-at",
-            title: "settings.sec_users_reg",
-            fields: [
-              { icon: "mdi-subtitles-outline", key: "reset-mail-heading", label: "settings.sec_reset_mail", type: "subtitle" },
-              {
-                icon: "mdi-format-title",
-                key: "RESET_MAIL_TITLE",
-                label: "settings.reset_mail_title",
-              },
-              {
-                icon: "mdi-subtitles-outline",
-                key: "RESET_MAIL_CONTENT",
-                label: "settings.reset_mail_content",
-                type: "textarea",
-              },
-            ],
-            groups: [
-              {
-                icon: "mdi-security",
-                key: "INVITE_MODE",
-                label: "settings.private_library_mode",
-                al: ["访问码", "私人"],
-                fields: [
-                  {
-                    icon: "mdi-lock",
-                    key: "INVITE_CODE",
-                    label: "settings.access_code",
-                  },
-                  {
-                    icon: "mdi-account",
-                    key: "INVITE_MESSAGE",
-                    type: "textarea",
-                    label: "settings.invite_message",
-                  },
-                ],
-              },
-              {
-                icon: "mdi-at",
-                key: "ALLOW_REGISTER",
-                label: "settings.allow_guest_register",
-                al: ["注册"],
-                fields: [
-                  {
-                    icon: "mdi-format-title",
-                    key: "SIGNUP_MAIL_TITLE",
-                    label: "settings.signup_mail_title",
-                  },
-                  {
-                    icon: "mdi-subtitles-outline",
-                    key: "SIGNUP_MAIL_CONTENT",
-                    label: "settings.signup_mail_content",
-                    type: "textarea",
-                  },
-                  {
-                    icon: "mdi-account-check-outline",
-                    key: "ENABLE_AUTO_NEW_USER_APPROVAL",
-                    label: "settings.enable_auto_new_user_approval",
-                    type: "checkbox",
-                  }
-                ],
-              },
-            ],
-          },
-          {
-            id: "users-default",
-            icon: "mdi-download-lock-outline",
-            title: "settings.sec_users_default",
-            fields: [
-              { icon: "mdi-book-multiple", key: "ALLOW_NEW_USER_MANAGE_BOOK", label: "settings.allow_new_user_manage_book", type: "checkbox" },
-              { icon: "mdi-tablet-cellphone", key: "ALLOW_NEW_USER_PUSH_BOOK", label: "settings.allow_new_user_push_book", type: "checkbox" },
-            ],
-            groups: [
-              {
-                key: "ENABLE_DOWNLOAD_QUOTA",
-                icon: "mdi-download-lock-outline",
-                label: "settings.enable_download_quota",
-                al: ["配额", "下载"],
-                fields: [
-                  {
-                    icon: "mdi-counter",
-                    key: "GLOBAL_DOWNLOAD_QUOTA",
-                    label: "settings.global_download_quota",
-                    type: "number",
-                  }
-                ],
-              },
-            ],
-          },
-          {
-            // 读者组紧跟在「默认权限与配额」下面：这两块说的是同一件事
-            // （谁能看哪些书），分开摆会让人以为有两个互不相干的权限系统。
-            // 总开关放在这一节的第一位，因为它关掉时整个读者组都不生效。
-            id: "reader-groups",
-            icon: "mdi-account-lock-outline",
-            title: "settings.sec_reader_groups",
-            fields: [
               {
                 // 读者组总开关（4.6.0-19）：只关组规则这一层，用户自身的
                 // read_limit/limit_* 不受影响；成员归属保留，重开即恢复
@@ -2233,6 +2137,89 @@ export default {
               },
             ],
             special: "reader_groups",
+          },
+          {
+            // 注册/邀请 + 新用户默认权限：新用户从注册进来，默认给什么权限
+            // 说的是同一条链路，合并一张卡。
+            id: "users-reg",
+            icon: "mdi-at",
+            title: "settings.sec_users_reg_broad",
+            fields: [
+              { icon: "mdi-subtitles-outline", key: "reset-mail-heading", label: "settings.sec_reset_mail", type: "subtitle" },
+              {
+                icon: "mdi-format-title",
+                key: "RESET_MAIL_TITLE",
+                label: "settings.reset_mail_title",
+              },
+              {
+                icon: "mdi-subtitles-outline",
+                key: "RESET_MAIL_CONTENT",
+                label: "settings.reset_mail_content",
+                type: "textarea",
+              },
+              { icon: "mdi-book-multiple", key: "ALLOW_NEW_USER_MANAGE_BOOK", label: "settings.allow_new_user_manage_book", type: "checkbox" },
+              { icon: "mdi-tablet-cellphone", key: "ALLOW_NEW_USER_PUSH_BOOK", label: "settings.allow_new_user_push_book", type: "checkbox" },
+            ],
+            groups: [
+              {
+                icon: "mdi-security",
+                key: "INVITE_MODE",
+                label: "settings.private_library_mode",
+                al: ["访问码", "私人"],
+                fields: [
+                  {
+                    icon: "mdi-lock",
+                    key: "INVITE_CODE",
+                    label: "settings.access_code",
+                  },
+                  {
+                    icon: "mdi-account",
+                    key: "INVITE_MESSAGE",
+                    type: "textarea",
+                    label: "settings.invite_message",
+                  },
+                ],
+              },
+              {
+                icon: "mdi-at",
+                key: "ALLOW_REGISTER",
+                label: "settings.allow_guest_register",
+                al: ["注册"],
+                fields: [
+                  {
+                    icon: "mdi-format-title",
+                    key: "SIGNUP_MAIL_TITLE",
+                    label: "settings.signup_mail_title",
+                  },
+                  {
+                    icon: "mdi-subtitles-outline",
+                    key: "SIGNUP_MAIL_CONTENT",
+                    label: "settings.signup_mail_content",
+                    type: "textarea",
+                  },
+                  {
+                    icon: "mdi-account-check-outline",
+                    key: "ENABLE_AUTO_NEW_USER_APPROVAL",
+                    label: "settings.enable_auto_new_user_approval",
+                    type: "checkbox",
+                  }
+                ],
+              },
+              {
+                key: "ENABLE_DOWNLOAD_QUOTA",
+                icon: "mdi-download-lock-outline",
+                label: "settings.enable_download_quota",
+                al: ["配额", "下载"],
+                fields: [
+                  {
+                    icon: "mdi-counter",
+                    key: "GLOBAL_DOWNLOAD_QUOTA",
+                    label: "settings.global_download_quota",
+                    type: "number",
+                  }
+                ],
+              },
+            ],
           },
           {
             id: "users-social",

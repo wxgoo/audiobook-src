@@ -17,6 +17,12 @@
         <v-alert type="info" text dense class="mb-4">
           <div class="text-body-2">{{ $t('authorNorm.intro') }}</div>
           <div class="text-caption mt-1">{{ $t('authorNorm.intro2') }}</div>
+          <div class="mt-2">
+            <v-btn small text color="primary" class="px-0"
+                   @click="$router.push('/toolbox/author_clean')">
+              <v-icon small left>mdi-broom</v-icon>{{ $t('authorNorm.openClean') }}
+            </v-btn>
+          </div>
         </v-alert>
 
         <v-tabs v-model="tab" background-color="transparent" grow class="mb-4">
@@ -122,6 +128,10 @@
               </tbody>
             </v-simple-table>
             <div class="text-caption text--secondary mt-2">{{ $t('authorNorm.dirtyFooter') }}</div>
+            <div class="mt-1">
+              <a style="text-decoration: underline; cursor: pointer"
+                 @click="$router.push('/toolbox/author_clean')">{{ $t('authorNorm.openClean') }}</a>
+            </div>
           </v-card>
 
           <!-- 空结果 -->

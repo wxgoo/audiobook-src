@@ -1009,7 +1009,10 @@
     "reader_group_logic_tips": "Categories and tags are OR-ed: a book is visible if it matches either one. Filling only one side is enough.",
     "allow_read_range_setting_tips": "This is the master switch for reader groups. When off, every reader-group rule is ignored — per-group category/tag limits, strict mode and the default range below all stop applying, and every signed-in user can see the whole library. Turn it off only to temporarily lift restrictions while troubleshooting. Guests can always only see books without categories and tags.",
     "default_read_range_heading": "Default reading range for new users",
-    "default_read_range_hint": "Only affects users created afterwards. Existing users keep whatever was applied when their account was created."
+    "default_read_range_hint": "Only affects users created afterwards. Existing users keep whatever was applied when their account was created.",
+    "sec_users_access": "Access Control & Reader Groups",
+    "sec_users_access_desc": "Who gets in (login gate / guest permissions) and who sees what (reader-group rules) — one permission chain, configured in one place",
+    "sec_users_reg_broad": "Registration, Invitations & New Users"
   },
   "book": {
     "readingStats": {
@@ -2665,7 +2668,7 @@
     "title": "Author Normalization",
     "close": "Close",
     "intro": "Unify different spellings of the same author (simplified/traditional, nationality prefix, punctuation) into one standard name, so one author is not split into multiple folders.",
-    "intro2": "This page only maintains rules and shows reports — it never modifies books. Use Author Cleanup for existing books; newly imported books apply rules automatically.",
+    "intro2": "This page maintains rules and reports only — it never edits books. To rewrite existing books use \"Author Clean\" (Toolbox → Author Clean); newly imported books pick up the rules automatically.",
     "tabScan": "Author Scan",
     "tabAlias": "Alias Table",
     "scanBtn": "Run Scan",
@@ -2682,7 +2685,7 @@
     "ruleStaged": "Rule staged: {name} (remember to save)",
     "dirty": "Dirty names ({n})",
     "dirtyHint": "Names that L1 cleaning would change (strip nationality prefix / duty suffix). New imports already use the clean form.",
-    "dirtyFooter": "For existing dirty names use Author Cleanup; the alias table cannot fix what is already in the library.",
+    "dirtyFooter": "Rewrite legacy names one by one with \"Author Clean\" (Toolbox → Author Clean); the alias table cannot fix data already stored in the library.",
     "colDirtyName": "Current",
     "colCleanName": "Cleaned",
     "colBooks": "Books",
@@ -2705,6 +2708,7 @@
     "testBtn": "Test",
     "testNoHit": "No rule hit; returns L1-cleaned value",
     "testTranslators": "Translators detected",
-    "testFailed": "Test failed"
+    "testFailed": "Test failed",
+    "openClean": "Open \"Author Clean\""
   }
 }
