@@ -220,9 +220,9 @@ COPY docker/ /var/www/mybooks/docker/
 COPY webserver/ /var/www/mybooks/webserver/
 # 运维工具（如 tools/category_backfill.py 读者组 #category 回填），容器内 docker exec 直接可用
 COPY tools/ /var/www/mybooks/tools/
-# srt-tool/（音频转写文稿的识别内核 srt_core.py，工具箱「音频转写文稿」网页版依赖；
-# faster-whisper 本体见 requirements-optional.txt，未装时工具页面自动降级提示）
-COPY srt-tool/ /var/www/mybooks/srt-tool/
+# 注：音频转写文稿的识别内核 srt_core.py 已随 webserver/ 一起进入镜像
+# （webserver/toolbox/srt-tool/，工具箱「音频转写文稿」网页版依赖）；
+# faster-whisper 本体见 requirements-optional.txt，未装时工具页面自动降级提示
 # third-party/foliate-js 与 edge-tts 已随源码包内置（从上游仓库拉取后去 .git），
 # 不再依赖 git submodule。以下逻辑保留两分支作为兜底：万一目录被清空，
 # foliate-js 缺失只影响微信读书批注导入（警告不中断），

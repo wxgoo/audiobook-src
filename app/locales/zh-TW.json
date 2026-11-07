@@ -1320,7 +1320,7 @@
     "progress": "進度：{done} / {total}",
     "counters": "跳過 {skip} · 失敗 {fail}",
     "playNote": "產生的 .srt 與音訊同目錄同名，網頁播放器重新整理後即可顯示字幕。",
-    "pcFallback": "容器內未裝依賴時，也可在 PC 上用倉庫 srt-tool/make_srt_gui.exe 批次產生後拷入（見 docs/字幕生成與播放.md）。",
+    "pcFallback": "容器內未裝依賴時，也可在 PC 上用倉庫 webserver/toolbox/make_srt_gui.py 批次產生後拷入（見 docs/字幕生成與播放.md）。",
     "unavailable": "容器內未安裝 faster-whisper，網頁轉寫暫不可用。",
     "unavailableHint": "在容器內執行 pip install faster-whisper ctranslate2==4.8.5 後重啟生效；或改用 PC 版 srt-tool。",
     "loadFailed": "書籍清單載入失敗",

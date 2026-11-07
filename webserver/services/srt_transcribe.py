@@ -21,16 +21,12 @@ _log = logging.getLogger("srt_transcribe")
 
 AUDIO_EXTS = (".mp3", ".m4a", ".flac", ".ogg", ".wav", ".wma", ".aac")
 
-# srt-tool/ 与 webserver/ 同级（容器内 /var/www/mybooks/srt-tool）
-_SRT_TOOL_DIR = Path(__file__).resolve().parents[2] / "srt-tool"
-if str(_SRT_TOOL_DIR) not in sys.path:
-    sys.path.insert(0, str(_SRT_TOOL_DIR))
-
-# srt_core 纯标准库实现，但镜像必须携带 srt-tool/（Dockerfile 已 COPY）。
-# 必须容错：就算镜像缺这个目录，也只能让本工具降级不可用，
+# 识别内核 srt_core.py / make_srt*.py 平铺在 webserver/toolbox/ 下（与其它工具模块
+# 同层，随 webserver/ 一起 COPY 进镜像）；srt_core 对 faster_whisper 惰性导入。
+# 必须容错：就算镜像缺文件，也只能让本工具降级不可用，
 # 绝不能拖垮整个应用启动（build.22 交付事故教训）。
 try:
-    import srt_core  # noqa: E402
+    from webserver.toolbox import srt_core  # noqa: E402
     SRT_CORE_OK = True
 except ImportError:
     srt_core = None

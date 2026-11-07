@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>音频转写文稿</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: #1e1e1e; color: #eee;
+    font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  .sub { color: #9e9e9e; font-size: 12px; margin: 0 0 14px; }
+  .card { background: #252526; border: 1px solid #333; border-radius: 12px; padding: 16px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .grow { flex: 1; }
+  select, button {
+    font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid #444;
+    background: #2d2d2d; color: #eee; cursor: pointer;
+  }
+  select { padding: 6px; }
+  button.primary { background: #1976d2; border-color: #1976d2; }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  button.stop { background: transparent; border-color: #e53935; color: #ef5350; }
+  button.ghost { background: transparent; border-color: #555; }
+  button:disabled { opacity: .45; cursor: default; }
+  .list { max-height: 300px; overflow-y: auto; border: 1px solid #333; border-radius: 8px; margin: 10px 0; }
+  label.book { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; }
+  label.book:hover { background: #2d2d2d; }
+  label.book input { accent-color: #1976d2; }
+  .count { color: #9e9e9e; font-size: 12px; margin-left: auto; }
+  .muted { color: #9e9e9e; font-size: 12px; }
+  .warn { color: #ffb74d; font-size: 12px; margin-top: 8px; }
+  .bar { height: 10px; background: #333; border-radius: 5px; overflow: hidden; margin: 8px 0 4px; }
+  .bar > div { height: 100%; background: #1976d2; width: 0; transition: width .4s; }
+  .cur { color: #bdbdbd; font-size: 12px; min-height: 18px; }
+  .msg { color: #ffb74d; font-size: 12px; min-height: 18px; margin-top: 4px; }
+  .ok { color: #81c784; font-size: 13px; margin-top: 10px; }
+  .err { color: #ef5350; font-size: 13px; margin-top: 10px; }
+  .alert { border: 1px solid #ffb74d; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .check { display: flex; align-items: center; gap: 6px; }
+  .check input { accent-color: #1976d2; }
+  .hint { margin-top: 12px; padding-top: 10px; border-top: 1px solid #333; }
+  .empty { color: #9e9e9e; padding: 14px 10px; }
+  a { color: #64b5f6; }
+</style>
+</head>
+<body>
+  <h2>音频转写文稿</h2>
+  <p class="sub">faster-whisper 批量把书籍 .audio/ 里的音频转写成同名 .srt 字幕，播放器自动加载</p>
+
+  <div id="unavailable" class="alert" style="display:none">
+    <b>容器内未安装 faster-whisper，网页转写暂不可用。</b>
+    <div class="muted" style="margin-top:4px">
+      在容器内执行 <code>pip install faster-whisper ctranslate2==4.8.5</code> 后重启生效；
+      或改用 PC 版 srt-tool（仓库 webserver/toolbox/make_srt_gui.py）。
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <b>选择书籍</b>
+      <span class="grow"></span>
+      <button class="ghost" id="btnAll">全选</button>
+      <button class="ghost" id="btnNone">全不选</button>
+      <button class="ghost" id="btnReload">重新扫描</button>
+    </div>
+    <div class="list" id="bookList"><div class="empty">加载中…</div></div>
+
+    <div class="row">
+      <label class="check">模型
+        <select id="model">
+          <option value="tiny">tiny</option>
+          <option value="base" selected>base</option>
+          <option value="small">small</option>
+          <option value="medium">medium</option>
+          <option value="large-v3">large-v3</option>
+        </select>
+      </label>
+      <label class="check">语言
+        <select id="lang">
+          <option value="auto">auto</option>
+          <option value="zh" selected>中文 (zh)</option>
+          <option value="en">English (en)</option>
+          <option value="ja">日本語 (ja)</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="overwrite"> 已有 .srt 也重做</label>
+      <span class="grow"></span>
+      <span class="muted" id="pickedHint"></span>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="btnStart" disabled>开始转写</button>
+      <button class="stop" id="btnStop" style="display:none">停止</button>
+    </div>
+
+    <div id="progressBox" style="display:none">
+      <div class="bar"><div id="barFill"></div></div>
+      <div class="cur" id="curLine"></div>
+    </div>
+    <div class="msg" id="msgLine"></div>
+    <div class="ok" id="okLine" style="display:none"></div>
+
+    <div class="hint muted">
+      生成的 .srt 与音频同目录同名，网页播放器刷新后即可显示字幕。NAS CPU 上 base 模型
+      1 小时音频约需 1-3 小时，建议过夜批量；已有字幕的文件自动跳过，可随时停止
+      （当前文件识别到停止点为止，已完成的字幕保留）。
+    </div>
+  </div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var books = [];
+  var picked = {};
+  var timer = null;
+
+  function api(path, opts) {
+    return fetch(path, Object.assign({ credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' } }, opts || {}))
+      .then(function (r) { return r.json(); });
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function renderBooks() {
+    var box = $('bookList');
+    if (!books.length) {
+      box.innerHTML = '<div class="empty">书库里没有发现带音频的书籍（音频需在书籍目录的 .audio/ 下）。</div>';
+      return;
+    }
+    box.innerHTML = books.map(function (b) {
+      return '<label class="book"><input type="checkbox" data-id="' + b.book_id + '"' +
+        (picked[b.book_id] ? ' checked' : '') + (!available || running ? ' disabled' : '') + '>' +
+        '<span>' + esc(b.title || ('#' + b.book_id)) + '</span>' +
+        '<span class="count">' + b.audio_count + ' 个音频' +
+        (b.srt_count ? ' · 已有 ' + b.srt_count + ' 个字幕' : '') + '</span></label>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('input[type=checkbox]'), function (cb) {
+      cb.addEventListener('change', function () {
+        picked[cb.getAttribute('data-id')] = cb.checked;
+        updateHint();
+      });
+    });
+    updateHint();
+  }
+
+  function updateHint() {
+    var n = Object.keys(picked).filter(function (k) { return picked[k]; }).length;
+    $('pickedHint').textContent = n ? ('已选 ' + n + ' 本') : '';
+    $('btnStart').disabled = !n || running || !available;
+  }
+
+  function loadBooks() {
+    $('bookList').innerHTML = '<div class="empty">加载中…</div>';
+    api('/api/toolbox/srt_tool/books').then(function (rsp) {
+      if (rsp.err !== 'ok') { $('bookList').innerHTML = '<div class="empty">' + esc(rsp.msg || '加载失败') + '</div>'; return; }
+      books = rsp.data.books || [];
+      available = !!rsp.data.available;
+      $('unavailable').style.display = available ? 'none' : '';
+      if (rsp.data.running) { running = true; task = rsp.data.task; startPoll(); }
+      renderBooks();
+      syncButtons();
+    }).catch(function () {
+      $('bookList').innerHTML = '<div class="empty">加载失败</div>';
+    });
+  }
+
+  var available = false;
+  var running = false;
+  var task = null;
+
+  function syncButtons() {
+    $('btnStop').style.display = running ? '' : 'none';
+    $('progressBox').style.display = (task && (task.state === 'running' || task.state === 'stopping')) ? '' : 'none';
+    updateHint();
+  }
+
+  function start() {
+    var ids = Object.keys(picked).filter(function (k) { return picked[k]; });
+    if (!ids.length) return;
+    api('/api/toolbox/srt_tool/start', { method: 'POST', body: JSON.stringify({
+      book_ids: ids.map(Number), model: $('model').value, lang: $('lang').value,
+      overwrite: $('overwrite').checked
+    })}).then(function (rsp) {
+      if (rsp.err !== 'ok') { $('msgLine').textContent = rsp.msg || '启动失败'; return; }
+      $('okLine').style.display = 'none';
+      running = true;
+      startPoll();
+    }).catch(function () { $('msgLine').textContent = '启动失败'; });
+  }
+
+  function stop() {
+    api('/api/toolbox/srt_tool/cancel', { method: 'POST' }).then(function (rsp) {
+      if (rsp.err !== 'ok') $('msgLine').textContent = rsp.msg || '';
+    });
+  }
+
+  function poll() {
+    api('/api/toolbox/srt_tool/status').then(function (rsp) {
+      if (rsp.err !== 'ok') return;
+      task = rsp.data.task;
+      available = !!rsp.data.available;
+      running = !!rsp.data.running;
+      syncButtons();
+      if (task && task.state === 'running') {
+        $('barFill').style.width = pct() + '%';
+        $('curLine').textContent = (task.current_book || '') + ' · ' + (task.current_file || '') +
+          (task.current_pct ? ' · ' + task.current_pct + '%' : '') +
+          '   进度 ' + (task.files_done || 0) + '/' + (task.files_total || 0) +
+          '   跳过 ' + (task.skipped || 0) + ' · 失败 ' + (task.failed || 0);
+        $('msgLine').textContent = task.message || '';
+      } else if (task && task.message && task.state_last) {
+        $('msgLine').textContent = '';
+        $('okLine').style.display = '';
+        $('okLine').textContent = task.message;
+        running = false;
+        stopPoll();
+        loadBooks();
+      }
+      if (!available) $('unavailable').style.display = '';
+    });
+  }
+
+  function pct() {
+    if (!task || !task.files_total) return task && task.state === 'running' ? 5 : 0;
+    return Math.min(100, Math.round((task.files_done || 0) / task.files_total * 100 +
+      (task.current_pct || 0) / task.files_total));
+  }
+
+  function startPoll() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(poll, 3000);
+    poll();
+  }
+  function stopPoll() { if (timer) { clearInterval(timer); timer = null; } }
+
+  $('btnAll').addEventListener('click', function () {
+    books.forEach(function (b) { picked[b.book_id] = true; });
+    renderBooks();
+  });
+  $('btnNone').addEventListener('click', function () {
+    picked = {}; renderBooks();
+  });
+  $('btnReload').addEventListener('click', loadBooks);
+  $('btnStart').addEventListener('click', start);
+  $('btnStop').addEventListener('click', stop);
+
+  loadBooks();
+})();
+</script>
+<!-- 工具箱承载页桥：上报实际内容高度，宿主 iframe 自动撑高 -->
+<script src="/static/toolbox-bridge.js"></script>
+</body>
+</html>

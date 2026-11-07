@@ -768,6 +768,27 @@ class ToolIconHandler(BaseHandler):
             self.write(f.read())
 
 
+class BundledToolFrontendHandler(BaseHandler):
+    """bundled 内置工具的自包含前端页（webserver/resources/toolbox/<tool_id>/index.html）。
+
+    srt_tool 等 bundled 工具的静态 Vue 页面要等前端重建后才存在于 dist；在 dist
+    就绪前，通用承载页 iframe 的 /get/tool/<id>/index.html 会落到通用 handler 并 404。
+    这里按 tool_id 精确匹配资源目录里的自包含页面顶上（dist 重建后 Nuxt 静态路由
+    优先，承载页不再进 iframe，此页面自动闲置，无需下线）。
+    """
+
+    def get(self, tool_id):
+        base = CONF.get("resource_path") or os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "resources")
+        index_path = os.path.join(base, "toolbox", tool_id, "index.html")
+        if not os.path.exists(index_path):
+            raise web.HTTPError(404, "Tool frontend not found")
+        self.set_header("Content-Type", "text/html; charset=utf-8")
+        self.set_header("Cache-Control", "no-cache")
+        with open(index_path, "rb") as f:
+            self.write(f.read())
+
+
 class ToolFrontendIndexHandler(BaseHandler):
     """工具前端入口页面，见 document/Toolbox_Dynamic_Design.md 4.4 节。
 
@@ -957,6 +978,7 @@ class SpaStaticHandler(web.StaticFileHandler):
 def routes():
     static_config = {"path": CONF["html_path"], "default_filename": "index.html"}
     return [
+        (r"/get/tool/(srt_tool)/index\.html", BundledToolFrontendHandler),
         (r"/get/tool/([^/]+)/icon", ToolIconHandler),
         (r"/get/tool/([a-z0-9_]+)/index\.html", ToolFrontendIndexHandler),
         (r"/get/tool/([a-z0-9_]+)/(.+)", ToolFrontendAssetHandler),
