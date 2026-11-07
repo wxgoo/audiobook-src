@@ -15,8 +15,15 @@
 
 用法：
     python3 scripts/check-version-lock.py [--root <仓库或发布包根目录>]
+    python3 scripts/check-version-lock.py --set 4.6.0-build.21   # 一条命令改全部载体
 
 退出码：0 全部通过；1 有断言失败。
+
+--set 的意义：版本载体有八处（version.py / compose / Dockerfile / package.json /
+package-lock / Makefile / 本脚本常量 / tests 字面量），手工逐处改必然漏。
+--set 统一改写后立即复检——新增载体时必须同步维护 CARRIERS 表。
+CHANGELOG 的版本条目是人工写的（内容随版本走），--set 不碰，打包前由
+pack.sh 从其首条版本标题取号——忘写会在打包时暴露。
 """
 
 import argparse
@@ -27,13 +34,19 @@ from pathlib import Path
 VERSION_LOCK = "4.6.0-build.21"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
 PKG_VERSION_LOCK = "4.6.0-build.21"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
 
-WHY = ("这是防版本回退 / 防被交付标签覆盖的保护，不是普通测试失败。"
-       "运行期版本已统一为 4.6.0-build.21（上游已发布 tag 4.6.0 + 第 21 次本地构建），"
-       "旧 4.8.x 号段已封存，不得写回；也不得写成裸 4.6.0。")
+def _why():
+    """从 VERSION_LOCK 派生，--set 后同一进程内自动一致，无需手工同步。"""
+    return ("这是防版本回退 / 防被交付标签覆盖的保护，不是普通测试失败。"
+            "运行期版本已统一为 %s（上游已发布 tag 4.6.0 + 第 %s 次本地构建），"
+            "旧 4.8.x 号段已封存，不得写回；也不得写成裸 4.6.0。"
+            % (VERSION_LOCK, VERSION_LOCK.rsplit(".", 1)[-1]))
 
-SEMVER_NOTE = ("4.6.0-build.21 是 semver 预发布标记，整串排序低于 4.6.0；"
-               "本程序不发布 npm、package.json 无 engines 校验，故无实际影响。"
-               "同一上游基线的本地构建之间用 build.N 区分：版本检测不能只靠 > 比较，须比较 build.N 段。")
+
+def _semver_note():
+    return ("%s 是 semver 预发布标记，整串排序低于 4.6.0；"
+            "本程序不发布 npm、package.json 无 engines 校验，故无实际影响。"
+            "同一上游基线的本地构建之间用 build.N 区分：版本检测不能只靠 > 比较，须比较 build.N 段。"
+            % VERSION_LOCK)
 
 
 def read(root: Path, rel: str) -> str:
@@ -43,12 +56,71 @@ def read(root: Path, rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+# §单一权威改版§ 载体清单：rel -> 预期出现次数（None = 不限，全量替换）。
+# 新增版本载体时必须在这里登记——--set 就是为此而存在，漏登记的载体
+# 会立即被下面的检查断言抓出来（这正是防线的工作方式：改版工具与检查器互为镜像）。
+CARRIERS = {
+    "webserver/version.py": 2,          # VERSION 行 + 文件尾注释
+    "docker-compose.yml": 2,            # GIT_VERSION + 注释示例
+    "Dockerfile": 1,                    # ARG GIT_VERSION 默认值
+    "app/package.json": 1,
+    "app/package-lock.json": 2,         # 顶层 version 两处
+    "Makefile": 2,                      # VERSION_LOCK + 头部注释
+    "README.md": None,                  # 升级规则说明里的示例
+    "scripts/check-version-lock.py": None,  # 本脚本常量 + 文案
+    "tests/test_version_lock.py": None,     # 用例字面量
+}
+
+
+def set_version(root: Path, new_ver: str) -> None:
+    """把全部载体统一改写为 new_ver。只接受本 fork 的 4.6.0-build.<N> 形式。"""
+    if not re.fullmatch(r"4\.6\.0-build\.\d{1,3}", new_ver):
+        raise SystemExit("!! 只接受 4.6.0-build.<N> 形式（v4.8.x、裸 4.6.0、空串都在封存/禁止列表）")
+    old = VERSION_LOCK
+    if old == new_ver:
+        print("== 已是 %s，无需改写" % new_ver)
+        return
+    old_n = old.rsplit(".", 1)[-1]
+    new_n = new_ver.rsplit(".", 1)[-1]
+
+    for rel, expected in sorted(CARRIERS.items()):
+        p = root / rel
+        if not p.is_file():
+            print("  !! 载体缺失，跳过: %s" % rel)
+            continue
+        text = p.read_text(encoding="utf-8")
+        n = text.count(old)
+        if n == 0:
+            print("  !! %s 里没有 %s（该文件可能已手工改过，请核对）" % (rel, old))
+            continue
+        if expected is not None and n != expected:
+            print("  !! %s 出现 %d 次（预期 %d），拒绝盲改——请人工核对后用 "
+                  "--set 前先手工对齐" % (rel, n, expected))
+            continue
+        new_text = text.replace(old, new_ver)
+        # 「第 N 次本地构建」文案到处都有（Makefile 注释/校验器/报告），
+        # 统一跟着 build.N 走——Makefile 注释里躺过一个「第 20 次」就是教训
+        new_text = re.sub(r"第 \d+ 次本地构建", "第 %s 次本地构建" % new_n, new_text)
+        p.write_text(new_text, encoding="utf-8")
+        print("  已改写 %-32s（%d 处）" % (rel, n))
+    print("== CHANGELOG 的版本条目请人工补写（内容随版本走，--set 不代劳；"
+          "pack.sh 从其首条版本标题取号）")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="版本锁检查")
     ap.add_argument("--root", default=str(Path(__file__).resolve().parent.parent),
                     help="仓库或发布包根目录（默认脚本上级目录）")
+    ap.add_argument("--set", metavar="NEW_VER", default=None,
+                    help="把全部版本载体统一改写为 NEW_VER（4.6.0-build.<N>），改完立即复检")
     args = ap.parse_args()
     root = Path(args.root).resolve()
+
+    if args.set:
+        set_version(root, args.set)
+        # WHY/SEMVER_NOTE 已函数化（从 VERSION_LOCK 派生），刷新全局常量即可
+        global VERSION_LOCK, PKG_VERSION_LOCK
+        VERSION_LOCK = PKG_VERSION_LOCK = args.set
 
     failures = []
 
@@ -57,7 +129,7 @@ def main() -> int:
 
     def bad(name, detail, fix):
         print("[FAIL] %-22s %s" % (name, detail))
-        print("       %s" % WHY)
+        print("       %s" % _why())
         print("       补救：%s" % fix)
         failures.append(name)
 
@@ -131,7 +203,7 @@ def main() -> int:
         elif m.group(1) != PKG_VERSION_LOCK:
             bad("app/package.json", "version=%r，应为 %r" % (m.group(1), PKG_VERSION_LOCK),
                 "改回 \"version\": \"%s\"（须与运行期版本一致；%s）"
-                % (PKG_VERSION_LOCK, SEMVER_NOTE))
+                % (PKG_VERSION_LOCK, _semver_note()))
         else:
             ok("app/package.json", '"version": "%s"' % PKG_VERSION_LOCK)
     except FileNotFoundError as e:
@@ -169,10 +241,10 @@ def main() -> int:
     print()
     if failures:
         print("❌ 版本锁检查失败：%d 项" % len(failures))
-        print("   %s" % WHY)
+        print("   %s" % _why())
         return 1
     print("✅ 版本锁检查通过：运行期版本 %s 未被回退或被交付标签覆盖" % VERSION_LOCK)
-    print("   注意：%s" % SEMVER_NOTE)
+    print("   注意：%s" % _semver_note())
     return 0
 
 

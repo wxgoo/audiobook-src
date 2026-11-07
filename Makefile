@@ -1,6 +1,6 @@
 .PHONY: all build push test plugin
 
-# 运行期版本锁：4.6.0-build.21 =「上游已发布 tag 4.6.0」+「第 20 次本地构建」。
+# 运行期版本锁：4.6.0-build.21 =「上游已发布 tag 4.6.0」+「第 21 次本地构建」。
 # 该写法同时是合法 semver 预发布标记与合法 Docker tag（字符集 [A-Za-z0-9_.-]），无需转换。
 # 理由：以前用分支名当显示版本，会把 webserver/version.py 顶成 opt/p0-p1 之类，
 # 既不可追溯也会让“是否真的生效”无法判断。这里改为不匹配即报错退出（fail-fast），
