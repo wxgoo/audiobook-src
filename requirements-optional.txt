@@ -2,3 +2,9 @@
 # 安装后 mybooks 会自动启用「音频转写文稿」管理接口；不装则功能隐藏，不影响其他功能。
 # torch 体积很大，请按服务器 CUDA 情况选择安装方式（见 https://pytorch.org）。
 openai-whisper==20240930
+
+# 工具箱「音频转写文稿」（srt_tool，build.22）：faster-whisper 内核，
+# CPU 友好、无需 torch；与仓库根 srt-tool/（PC 版）同一识别内核。
+# 连不上 huggingface 的环境先设 HF_ENDPOINT=https://hf-mirror.com
+faster-whisper>=1.0
+ctranslate2==4.8.5

@@ -1023,6 +1023,33 @@
     "feedback_github_url_tips": "Target of the dialog button; set to - to hide the button (stop pointing at the upstream repository).",
     "sec_users_reg_broad": "Registration, Invitations & New Users"
   },
+  "srtTool": {
+    "title": "Audio Transcription",
+    "subtitle": "Batch-transcribe a book's .audio/ audio into same-name .srt subtitles with faster-whisper; the web player loads them automatically",
+    "close": "Close",
+    "description": "Pick books and click Start: files are transcribed one by one and each .srt is written next to its audio. Defaults: model base, language zh (for Chinese audiobooks use zh so the priming prompt works). Files with an existing .srt are skipped. The first run downloads the model; on a NAS expect 1-3 hours per hour of audio (base) — best run overnight.",
+    "pickBooks": "Pick books",
+    "selectAll": "Select all",
+    "selectNone": "Select none",
+    "reload": "Rescan",
+    "noBooks": "No books with audio found (audio must live in the book's .audio/ directory).",
+    "audioCount": "{n} audio files",
+    "srtCount": "{n} subtitles already",
+    "model": "Model",
+    "lang": "Language",
+    "overwrite": "Redo existing .srt",
+    "start": "Start transcription",
+    "stop": "Stop",
+    "pickedHint": "{n} selected",
+    "progress": "Progress: {done} / {total}",
+    "counters": "skipped {skip} · failed {fail}",
+    "playNote": "Generated .srt files sit next to the audio with the same name; refresh the player page to see subtitles.",
+    "pcFallback": "Without the container dependency you can also batch-generate on a PC with srt-tool/make_srt_gui.exe and copy results over (see docs/字幕生成与播放.md).",
+    "unavailable": "faster-whisper is not installed in the container; web transcription is unavailable.",
+    "unavailableHint": "Run pip install faster-whisper ctranslate2==4.8.5 inside the container and restart; or use the PC edition of srt-tool.",
+    "loadFailed": "Failed to load the book list",
+    "startFailed": "Failed to start the transcription task"
+  },
   "book": {
     "readingStats": {
       "durationMinutes": "{minutes}m",

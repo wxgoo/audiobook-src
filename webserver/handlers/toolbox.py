@@ -28,6 +28,7 @@ from webserver.toolbox.utils import epub_fixer_lib
 from webserver.toolbox.epub_split import EpubSplitTool
 from webserver.toolbox.author_clean_tool import AuthorCleanTool
 from webserver.services import audio_transcode
+from webserver.services import srt_transcribe
 from webserver.toolbox.mimo_tts import MimoTTSTool
 try:
     from webserver.toolbox.text_replace import TextReplaceTool
@@ -892,6 +893,115 @@ class AdminAudioTranscodeProgress(BaseHandler):
     def get(self):
         snap = audio_transcode.task_snapshot()
         return {"err": "ok", "data": {"task": snap}}
+
+
+class AdminSrtToolBooks(BaseHandler):
+    """列出全库含音频的书（供「音频转写文稿」选择），标注已有 .srt 数量。
+
+    复用 audio_dir 的全库目录扫描（find_audios_by_scanning_library），
+    书名在 calibre 池内批量取；进线程池避免冻住 ioloop。
+    """
+    @js
+    @is_admin
+    async def get(self):
+        def _scan():
+            books = srt_transcribe.scan_books()
+            for b in books:
+                try:
+                    b["title"] = self.calibre_db_cache.field_for("title", b["book_id"]) or ""
+                except Exception:
+                    b["title"] = ""
+            return books
+
+        try:
+            books = await self.run_calibre_read_async(_scan)
+        except Exception:
+            books = []
+        books.sort(key=lambda b: b.get("title") or "")
+        return {"err": "ok", "data": {"books": books,
+                                      "available": srt_transcribe.available(),
+                                      "running": srt_transcribe.is_running(),
+                                      "task": srt_transcribe.task_snapshot()}}
+
+
+class AdminSrtToolStart(BaseHandler):
+    """启动转写：{book_ids:[...], model, lang, overwrite}。
+
+    音频目录在 calibre 池里解析好再交给转写线程（后台线程不持有 calibre 对象），
+    书名顺便批量取一次；服务在自身线程里列音频文件并逐个转写。
+    """
+    @js
+    @is_admin
+    async def post(self):
+        data = self.get_json_body() or {}
+        raw_ids = data.get("book_ids") or []
+        if not isinstance(raw_ids, (list, tuple)) or not raw_ids:
+            return {"err": "params.book_ids.missing", "msg": _("请选择至少一本书")}
+        try:
+            book_ids = sorted({int(x) for x in raw_ids})
+        except (TypeError, ValueError):
+            return {"err": "params.book_ids.invalid", "msg": _("书籍 ID 必须是数字")}
+        if srt_transcribe.is_running():
+            return {"err": "task.running", "msg": _("已有转写任务在进行中"),
+                    "data": {"task": srt_transcribe.task_snapshot()}}
+
+        model = (data.get("model") or "base").strip()
+        lang = (data.get("lang") or "zh").strip()
+        overwrite = bool(data.get("overwrite", False))
+
+        def _resolve():
+            out = []
+            for bid in book_ids:
+                try:
+                    adir = audio_transcode.book_audio_dir(self.calibre_db, bid)
+                except Exception:
+                    adir = None
+                try:
+                    title = self.calibre_db_cache.field_for("title", bid) or ""
+                except Exception:
+                    title = ""
+                out.append({"book_id": bid, "title": title, "audio_dir": adir})
+            return out
+
+        try:
+            books = await self.run_calibre_read_async(_resolve)
+        except Exception:
+            books = []
+        missing = [b["book_id"] for b in books if not b["audio_dir"]]
+        books = [b for b in books if b["audio_dir"]]
+        if not books:
+            return {"err": "book.no_audio", "msg": _("所选书籍都没有音频目录")}
+        ok, msg = await utils.run_in_threadpool(
+            srt_transcribe.start, books, model, lang, overwrite)
+        if not ok:
+            return {"err": "task.start_failed", "msg": msg}
+        rsp = {"err": "ok", "msg": msg}
+        if missing:
+            rsp["msg"] += "；以下书籍没有音频目录已跳过：%s" % ", ".join(str(x) for x in missing)
+        return rsp
+
+
+class AdminSrtToolCancel(BaseHandler):
+    """取消转写：粒度「当前文件」——正在识别的小段结束即中断，
+    已写到磁盘的 .srt 保留（取消点的半截识别结果也会写入）。"""
+    @js
+    @is_admin
+    def post(self):
+        ok, msg = srt_transcribe.cancel()
+        if not ok:
+            return {"err": "task.not_running", "msg": msg}
+        return {"err": "ok", "msg": msg}
+
+
+class AdminSrtToolStatus(BaseHandler):
+    @js
+    @is_admin
+    def get(self):
+        return {"err": "ok", "data": {
+            "task": srt_transcribe.task_snapshot(),
+            "available": srt_transcribe.available(),
+            "running": srt_transcribe.is_running(),
+        }}
 
 
 class AdminMimoTTSConvert(BaseHandler):
@@ -1824,6 +1934,10 @@ def routes():
         (r"/api/toolbox/audio_transcode/start", AdminAudioTranscodeStart),
         (r"/api/toolbox/audio_transcode/cancel", AdminAudioTranscodeCancel),
         (r"/api/toolbox/audio_transcode/progress", AdminAudioTranscodeProgress),
+        (r"/api/toolbox/srt_tool/books", AdminSrtToolBooks),
+        (r"/api/toolbox/srt_tool/start", AdminSrtToolStart),
+        (r"/api/toolbox/srt_tool/cancel", AdminSrtToolCancel),
+        (r"/api/toolbox/srt_tool/status", AdminSrtToolStatus),
                 (r"/api/toolbox/bookbarn_acceptor/status", AdminBookBarnAcceptorStatus),
                 (r"/api/toolbox/bookbarn_acceptor/toggle", AdminBookBarnAcceptorToggle),
                 (r"/api/toolbox/bookbarn_acceptor/apply_token", AdminBookBarnAcceptorApplyToken),

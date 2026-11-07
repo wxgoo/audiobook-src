@@ -124,6 +124,7 @@ class ToolSet:
         # 补注册只为在 /admin/toolbox 列表里可见、可从工具箱跳转。
         from .audio_transcode_tool import AudioTranscodeTool
         from .book_dedup_tool import BookDedupTool
+        from .srt_tool import SrtTool
 
         ToolSet.register(MergeFormatsTool.info())
         ToolSet.register(EpubBeautifyTool.info())
@@ -144,6 +145,7 @@ class ToolSet:
         ToolSet.register(BookBarnAcceptorTool.info())
         ToolSet.register(AudioTranscodeTool.info())
         ToolSet.register(BookDedupTool.info())
+        ToolSet.register(SrtTool.info())
 
         MinifyPdfTool.cleanup_old_files()
 
