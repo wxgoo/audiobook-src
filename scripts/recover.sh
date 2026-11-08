@@ -112,17 +112,6 @@ fi
 if [ "$HAVE_IMAGE" = "1" ]; then
     say "[2] 镜像已存在，跳过构建，直接校验"
 else
-    say "[1.5] 基础镜像预检（构建只依赖 mybooks_base；node 镜像自 build.28 起不再需要）"
-    if [ -f "$PROJ/scripts/base-image.sh" ]; then
-        # shellcheck source=scripts/base-image.sh
-        . "$PROJ/scripts/base-image.sh"
-        ensure_base_image "$PROJ" "$PWD" \
-            || say "  !! 基础镜像拿不到 —— 先在别的机器 sh scripts/export-images.sh，把 images/ 拷过来再重跑"
-    else
-        say "  （包内没有 scripts/base-image.sh，跳过）"
-    fi
-    hr
-
     say "[2] 重启 Docker 守护进程（btrfs 下重建层索引，layer does not exist 的主解药）"
     restart_docker || exit 1
     hr

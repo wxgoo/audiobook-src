@@ -1,6 +1,6 @@
 # 变更日志（CHANGELOG）
 
-本项目的版本号规则：**`<上游 mybooks tag>-build.<自建构建号>`**，当前版本 **`4.6.0-build.28`**。
+本项目的版本号规则：**`<上游 mybooks tag>-build.<自建构建号>`**，当前版本 **`4.6.0-build.27`**。
 上游 tag 无 `v` 前缀；自己改代码构建号 +1，上游正式发新 tag 后按主题合入再整体改号。
 
 ### 号段重置说明（必读）
@@ -11,9 +11,9 @@
 
 | 项 | 取值 | 说明 |
 |---|---|---|
-| **运行期版本**（唯一权威） | `4.6.0-build.28` | 写 `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` / `package-lock.json`、`Makefile` 的 `VERSION_LOCK` |
+| **运行期版本**（唯一权威） | `4.6.0-build.27` | 写 `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` / `package-lock.json`、`Makefile` 的 `VERSION_LOCK` |
 | 上游基线 | mybooks tag `4.6.0`（2026-10-25，commit `3c5947c`） | 本源码事实上的来源版本 |
-| 交付标签 / 包名 | 与运行期版本相同：`4.6.0-build.28` | 出包文件名带它，便于区分；不再使用 `rebuiltN` 后缀 |
+| 交付标签 / 包名 | 与运行期版本相同：`4.6.0-build.27` | 出包文件名带它，便于区分；不再使用 `rebuiltN` 后缀 |
 | 上游未发布分支 | mybooks `develop` 上是 `4.6.1`（**无 tag、无 Release**） | **不跟号**：等上游正式发 tag 后按主题合入，届时再升 `4.6.1-build.20` |
 
 旧号 → 新号对照（便于翻旧记录）：
@@ -60,49 +60,7 @@
 
 ---
 
-## 4.6.0-build.28（当前）
-
-> 主题：**构建不再需要 node 镜像，基础镜像可以离线携带。**
-> 现场每次构建都要两个外部镜像 —— `node:20-alpine`（构建阶段）与 `mybooks_base`（运行环境），
-> 合计接近 2GB；而出网 TLS 被中间人改写时（`x509: certificate is not valid for any names`），
-> 任何拉取都会失败，构建直接卡在 `FROM`。
-
-### 变更
-
-1. **去掉 `node:20-alpine`**：`Dockerfile` 的 builder 阶段改为 `FROM mybooks_base`。
-   依据是包内 `app/dist` 已是构建好的 SPA 产物，builder 只做 `cp`，不跑 npm；而
-   `mybooks_base` 里本来就有 Node 22（MyReader 用 `gosu mybooks node app/server.js` 启动、
-   `cfi_gen` 用 `npm ci` 装依赖）。构建期外部镜像从 2 个降为 1 个，`docker images`
-   里不再有 node，`docker image prune` 也不会再误伤它。前端的 Node 版本守卫保留。
-2. **新增 `scripts/base-image.sh`**：`ensure_base_image()` 三级取镜像 ——
-   本地已有 → `images/` 离线包 `docker load` → 才联网 `docker pull`；离线包标签与
-   `docker.1ms.run/poxenstudio/mybooks_base:latest` 不一致时自动补 tag。
-3. **新增 `scripts/export-images.sh` / `scripts/load-images.sh`**：
-   `docker save | gzip -1` 导出离线包（可 `--with-app` 连成品镜像一起），
-   导入前先核 `SHA256SUMS`（1.6GB+ 传到一半被截断会 load 出半个库）。
-4. **`deploy.sh`**：新增 `[3/6] 基础镜像预检`（步骤重编号为 /6）；支持 `SKIP_BUILD=1`
-   —— 配合 `--with-app` 导出的成品镜像**零构建**部署，但仍强制核对镜像内 `VERSION`
-   与包内版本，不一致拒绝启动。
-5. **`upgrade.sh` / `recover.sh`**：构建前同样跑基础镜像预检。
-6. **文档**：`docs/部署包说明.md` 新增「镜像来源与离线部署（build.28）」一节，
-   写清「base 不是构建工具而是运行环境本体」「标签可删、层不会释放」「想瘦身先量再动手」；
-   修正了此前被批量替换误伤的 build.26 / build.27 历史段落包名。
-
-### 不变
-
-- 前端**一行未改**，`app/dist` 与 build.27 **逐字节相同**（`index.html` 仍 `56565065…`）。
-- 后端、compose 的挂载与端口、数据目录布局全部未动。
-- 版本门禁全套保留（build.25 的 `--build-arg` + 镜像内 `VERSION` 强校验、build.26 的
-  `tr -d '\r'` 与 lock 脚本 LF 写入）。
-
-### 没做的事（及原因）
-
-- **没有瘦身 `mybooks_base`**：它是运行环境（nginx/supervisor/calibre/python/ffmpeg/node），
-  去掉就没法跑；能减的只有 `WITH_WHISPER=0`（−250MB）与剥 `doc/man/locale`（−100~200MB），
-  但 base 一改所有站点都要重新导入近 2GB，磁盘并不紧张，收益不抵成本。
-  真要减，先动 `WITH_WHISPER=0` 这一档，零风险。
-
-## 4.6.0-build.27
+## 4.6.0-build.27（当前）
 
 > 主题：**有声书一集播完自动进下一集**，收起成迷你条之后同样生效；迷你条补上「上一首 / 下一首」。
 > 起因是现场反馈：点最小化收起后听完一集就停住，得重新点开播放页才会继续；

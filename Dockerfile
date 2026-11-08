@@ -1,21 +1,9 @@
 
 # ----------------------------------------
-# 第一阶段：前端产物整理（只在包内没带预构建 dist 时才真的跑 npm）
-#
-# 【为什么基座是 mybooks_base 而不是 node:20-alpine】
-# 原来这里写的是 `FROM node:20-alpine`。但在发布包里 app/dist 已经是构建好的产物，
-# 这一阶段实际只做两件不碰 npm 的事：把 dist 拷到 /app-static、补两个配置文件。
-# 为了这点活，每次构建都要多拉一个 node 镜像（约 180MB 压缩层），而现场一旦出网 TLS
-# 被中间人改写（x509: certificate is not valid for any names），这条拉取就会让整个
-# 构建在第一步失败。
-# mybooks_base 里本来就有 Node（Dockerfile.base 通过 deb.nodesource.com 装了
-# setup_22.x 的 nodejs + npm：运行时 `gosu mybooks node app/server.js` 启 MyReader、
-# 本文件后面 `npm ci` 装 cfi_gen 依赖，都靠它）。基座换成 base 之后：
-#   - 构建期需要的镜像从 2 个降为 1 个（base 生产阶段本来就要用，层共享，不额外占空间）
-#   - `docker images` 里不再有 node:20-alpine，`docker image prune` 也不会误删它
-#   - 版本要求仍然满足：base 里是 Node 22（>= 20.12），下面的版本守卫照样生效
-# 仍然要求 Node 20+：@clack/core 用了 node:util 的 styleText（Node >= 20.12 才有）。
-FROM docker.1ms.run/poxenstudio/mybooks_base:latest AS builder
+# 第一阶段，拉取 node 基础镜像并安装依赖，执行构建
+# 必须用 Node 20+：@clack/core 使用了 node:util 的 styleText（Node >= 20.12 才有），
+# Node 16 会在 import 阶段直接 SyntaxError。node:16-alpine 已 EOL，禁止回退。
+FROM docker.1ms.run/library/node:20-alpine AS builder
 ARG BUILD_COUNTRY=""
 ARG APP_VERSION=""
 
@@ -166,7 +154,7 @@ CMD ["pytest", "/var/www/mybooks/tests"]
 # 生产环境（必须是最后一个 FROM：Docker 默认构建最后阶段）
 FROM docker.1ms.run/poxenstudio/mybooks_base:latest AS production
 ARG BUILD_COUNTRY="CN"
-ARG GIT_VERSION="4.6.0-build.28"
+ARG GIT_VERSION="4.6.0-build.27"
 # 是否安装 faster-whisper（音频转写）。默认装：不带 torch，只多约 250MB，
 # x86 上比 openai-whisper 快 4 倍以上，ARM/低端 CPU 也能跑 tiny/base。
 # 不需要时构建加 --build-arg WITH_WHISPER=0 即可跳过，镜像体积回落。
