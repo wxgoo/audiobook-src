@@ -2,20 +2,20 @@
 # -*- coding: utf-8 -*-
 """版本锁检查（防版本回退 / 防被交付标签覆盖）。
 
-背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.22`，语义是
-「上游 mybooks 已发布 tag 4.6.0 + 第 22 次本地构建」。旧的 4.8.x 号段已封存，
-与 4.6.0-build.22 是纯号段重置，不对应任何版本先后关系（详见 README 对照表）。
+背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.27`，语义是
+「上游 mybooks 已发布 tag 4.6.0 + 第 27 次本地构建」。旧的 4.8.x 号段已封存，
+与 4.6.0-build.27 是纯号段重置，不对应任何版本先后关系（详见 README 对照表）。
 
 本检查把这条约定变成显式断言：任何一处被回退（写回 4.8.x / 写回裸 4.6.0）、
 被交付标签顶掉、或被构建参数写成空串，都会直接失败。
 
-注意：`4.6.0-build.22` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.6.0`。
+注意：`4.6.0-build.27` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.6.0`。
 本程序不发布 npm 包、package.json 无 `engines` 校验，因此该排序差异无实际影响；
 同一上游基线的本地构建之间用 `build.N` 区分，版本检测不能只靠 `>` 比较，须比较 `build.N` 段。
 
 用法：
     python3 scripts/check-version-lock.py [--root <仓库或发布包根目录>]
-    python3 scripts/check-version-lock.py --set 4.6.0-build.22   # 一条命令改全部载体
+    python3 scripts/check-version-lock.py --set 4.6.0-build.27   # 一条命令改全部载体
 
 退出码：0 全部通过；1 有断言失败。
 
@@ -31,8 +31,8 @@ import re
 import sys
 from pathlib import Path
 
-VERSION_LOCK = "4.6.0-build.22"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
-PKG_VERSION_LOCK = "4.6.0-build.22"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
+VERSION_LOCK = "4.6.0-build.27"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
+PKG_VERSION_LOCK = "4.6.0-build.27"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
 
 def _why():
     """从 VERSION_LOCK 派生，--set 后同一进程内自动一致，无需手工同步。"""
@@ -101,7 +101,12 @@ def set_version(root: Path, new_ver: str) -> None:
         # 「第 N 次本地构建」文案到处都有（Makefile 注释/校验器/报告），
         # 统一跟着 build.N 走——Makefile 注释里躺过一个「第 20 次」就是教训
         new_text = re.sub(r"第 \d+ 次本地构建", "第 %s 次本地构建" % new_n, new_text)
-        p.write_text(new_text, encoding="utf-8")
+        # 必须显式 newline="\n"：Path.write_text 在 Windows 上按 os.linesep 换行，
+        # 会把 version.py 写成 CRLF —— 而 shell 侧 sed 取值只替换到收尾引号，
+        # 行尾 \r 会残留在变量里，导致 check-version.sh 五个值看着一样却全线 FAIL
+        # （build.25 现场的真凶）。这里统一成 LF，从源头断掉。
+        with open(p, "w", encoding="utf-8", newline="\n") as f:
+            f.write(new_text)
         print("  已改写 %-32s（%d 处）" % (rel, n))
     print("== CHANGELOG 的版本条目请人工补写（内容随版本走，--set 不代劳；"
           "pack.sh 从其首条版本标题取号）")

@@ -8,7 +8,7 @@
 #
 # 为什么需要它
 # ------------
-# upgrade.sh 走的是「全新解压 + docker compose build + up -d」，全量构建在
+# upgrade.sh 走的是「全新解压 + legacy 构建（--no-cache）+ up -d --no-build」，全量构建在
 # NAS 上要十几分钟。但绝大多数修复（比如 4.6.0-14 的 db.cache）只改了
 # webserver/ 下的 .py——这部分在 Dockerfile 里就是 `COPY webserver/`，
 # 纯 Python，不参与编译。

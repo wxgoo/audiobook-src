@@ -1,6 +1,6 @@
 {
   "name": "mybooks",
-  "version": "4.6.0-build.22",
+  "version": "4.6.0-build.27",
   "private": true,
   "scripts": {
     "dev": "nuxt",
@@ -17,6 +17,7 @@
     "core-js": "^3.19.3",
     "cropperjs": "^1.6.2",
     "dompurify": "^2.5.9",
+    "hls.js": "^1.7.4",
     "marked": "^4.3.0",
     "nuxt": "^2.18.1",
     "qrcode": "^1.5.4",

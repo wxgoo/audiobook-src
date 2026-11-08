@@ -152,6 +152,14 @@ else
     tar -xzf "$PKG" -C "$SRC"
 fi
 
+# 包内运行期版本（唯一权威）。构建时显式传给 Dockerfile，不依赖 compose 里的 GIT_VERSION：
+# 现场常会保留自己那份 compose（PUID/PGID、路径本地化），里面版本号可能还是上一版，
+# 用它构建就会把旧号写进 webserver/version.py，页脚一直显示旧版本（dist 却是新的）。
+# 另：version.py 为 CRLF 时 sed 会残留行尾 \r，必须洗掉再当 --build-arg 用。
+PKG_VER=$(sed -n 's/^VERSION[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "$SRC/webserver/version.py" 2>/dev/null | head -1 | tr -d '\r')
+[ -n "$PKG_VER" ] || { echo "    !! 读不出 $SRC/webserver/version.py 的 VERSION"; exit 1; }
+echo "    包内版本: $PKG_VER"
+
 # ---------- 6. 污染自检 ----------
 echo "==> [6/8] 源码目录污染自检"
 DIRTY_PATHS=""
@@ -184,12 +192,52 @@ if ! grep -q "audiobook-data:/data" "$SRC/docker-compose.yml"; then
 fi
 echo "    OK：数据挂载指向 audiobook-data"
 
+# compose 里的版本号只服务于「手工 docker compose build」，本脚本用 --build-arg 覆盖。
+# 但两者不一致时提示一句：手工 compose build 会写回旧版本，正是页脚显示旧号的成因。
+CVER=$(sed -n 's/^[[:space:]]*GIT_VERSION:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$SRC/docker-compose.yml" 2>/dev/null | head -1 | tr -d '\r')
+if [ -n "$CVER" ] && [ "$CVER" != "$PKG_VER" ]; then
+    echo "    ! 注意：compose 的 GIT_VERSION=$CVER，与包内 $PKG_VER 不同"
+    echo "      本脚本构建时会覆盖成 $PKG_VER；但别手工 docker compose build，否则会写回旧号。"
+fi
+
+# ---------- 6.5 默认图标/二维码（只补缺失，绝不覆盖存量） ----------
+# 镜像里的 /data/books/logo 会被宿主机 audiobook-data 的 bind mount 盖住，
+# 所以包内 dist/logo 里的默认图标不会自己出现在数据目录。这里按“缺失才补”的原则：
+# 全新部署（空数据目录）拿到包内新 favicon.ico / link_gongzhonghao.jpg；
+# 存量站点已有文件一律不动，需要换由管理员手工放或后台选图上传。
+seed_logo_defaults() {
+    logo_src="$SRC/app/public/logo"
+    logo_dst="$DATA/books/logo"
+    [ -d "$logo_src" ] || return 0
+    mkdir -p "$logo_dst" 2>/dev/null || return 0
+    for f in favicon.ico link_gongzhonghao.jpg; do
+        if [ ! -e "$logo_dst/$f" ] && [ -e "$logo_src/$f" ]; then
+            cp "$logo_src/$f" "$logo_dst/$f" && chmod 644 "$logo_dst/$f" 2>/dev/null || true
+            echo "    + 初始化默认图标: $logo_dst/$f"
+        fi
+    done
+}
+seed_logo_defaults
+
 # ---------- 7. 构建 ----------
 if [ "$SKIP_BUILD" = "1" ]; then
     echo "==> [7/8] 跳过构建（SKIP_BUILD=1）"
 else
     echo "==> [7/8] 构建镜像（耗时较久，请耐心）"
-    ( cd "$SRC" && docker compose build )
+    ( cd "$SRC" && DOCKER_BUILDKIT=0 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" -t mybooks-local:latest . ) || exit 1
+    host_sha=$(sha256sum "$SRC/app/dist/index.html" | awk '{print $1}')
+    img_sha=$(docker run --rm mybooks-local:latest sha256sum /var/www/mybooks/app/dist/index.html | awk '{print $1}')
+    if [ "$host_sha" != "$img_sha" ]; then
+        echo "!! 镜像内 index.html 与包内不一致：$img_sha != $host_sha"
+        exit 1
+    fi
+    echo "==> 镜像内 index.html: $img_sha"
+    # 版本门禁：镜像内 version.py 必须等于包内版本。
+    # 旧门禁只看 index.html，抓不到「dist 新、版本号旧」这种半新半旧的镜像。
+    ( cd "$SRC" && CONTAINER="$CONTAINER" sh scripts/check-version.sh --image ) || {
+        echo "!! 版本门禁未通过，已停止（容器未启动，站点仍是旧版本，不受影响）"
+        exit 1
+    }
 fi
 
 # ---------- 8. 启动与验证 ----------
@@ -197,7 +245,7 @@ if [ "$SKIP_UP" = "1" ] || [ "$SKIP_BUILD" = "1" ]; then
     echo "==> [8/8] 跳过启动"
     echo
     echo "后续手动执行："
-    echo "  cd $SRC && docker compose up -d"
+    echo "  cd $SRC && docker compose up -d --force-recreate --no-build"
     echo "  确认无误后清理旧源码: rm -rf $OLD"
     exit 0
 fi
@@ -223,7 +271,7 @@ if docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "    检测到同名容器存在（可能是手动 docker run 建的，不属于本项目），删除后由 compose 重建..."
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 fi
-( cd "$SRC" && docker compose up -d )
+( cd "$SRC" && docker compose up -d --force-recreate --no-build )
 
 # ---------- 等容器真正跑起来再检查 ----------
 # 踩过的坑：这里原来 fixed sleep 20 就直接 supervisorctl status，结果经常报
@@ -309,6 +357,15 @@ try:
 except Exception as e:
     print('    读取失败:', e)
 PY
+
+echo
+echo "==> 版本自检（页脚显示的就是这个值）"
+if ! ( cd "$SRC" && CONTAINER="$CONTAINER" sh scripts/check-version.sh ); then
+    echo " !! 版本链路不一致，页脚会显示旧版本。"
+    echo "    先跑 sh $SRC/scripts/check-version.sh 看是哪一环；"
+    echo "    旧源码仍保留在 $OLD，需要回滚可: rm -rf $SRC && mv $OLD $SRC"
+    exit 1
+fi
 
 if [ "$KEEP_OLD" != "1" ]; then
     echo

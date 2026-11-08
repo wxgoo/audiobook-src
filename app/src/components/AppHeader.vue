@@ -537,6 +537,7 @@
 <script>
 import AppearanceMenu from "~/components/AppearanceMenu.vue";
 import { isLightBackground, resolveBrandColor, unifiedIconColor } from "~/utils/appearance";
+import { getFriendMeta } from "~/utils/friendMeta";
 
 export default {
     components: { AppearanceMenu },
@@ -766,13 +767,17 @@ export default {
                     icon: "mdi-radio-tower",
                     text: "appHeader.friendLinks",
                     color: "primary",
-                    groups: this.sys.friends.map((friend) => ({
-                        icon: "mdi-play-circle-outline",
-                        action: "playStream",
-                        text: friend.text,
-                        streamUrl: friend.href,
-                        color: "green",
-                    })),
+                    // 图标与点击行为都由管理员选择的 friend.type 决定：
+                    // 只有「电台」触发播放，其余一律普通外链跳转
+                    groups: this.sys.friends.map((friend) => {
+                        const meta = getFriendMeta(friend);
+                        return Object.assign(
+                            { icon: meta.icon, text: friend.text },
+                            meta.isStream
+                                ? { action: "playStream", streamUrl: friend.href, color: "green" }
+                                : { href: friend.href }
+                        );
+                    }),
                 }
             ];
 
@@ -1293,7 +1298,6 @@ export default {
                 this.$store.commit('miniPlayer_play', {
                     title: link.text, url: link.streamUrl, kind: 'stream',
                 });
-            }
             }
         },
         submitMemo() {

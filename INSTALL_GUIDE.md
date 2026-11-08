@@ -51,7 +51,7 @@
 
 ### 第 2 步：获取项目
 
-把交付的 `audiobook-deploy-4.6.0-10.tar.gz` 解压到一个**路径里不含中文和空格**的目录，例如：
+把交付的 `audiobook-deploy-4.6.0-build.26.tar.gz` 解压到一个**路径里不含中文和空格**的目录，例如：
 
 ```
 D:\audiobook\
@@ -65,11 +65,14 @@ D:\audiobook\
 
 ```powershell
 cd D:\audiobook
-docker compose up -d --build
+$env:DOCKER_BUILDKIT="0"; docker build --no-cache -t mybooks-local:latest .
+docker compose up -d --force-recreate --no-build
 ```
 
 说明：
-- `--build` 表示**用本项目源码构建镜像**（包含你这次的前后端改动），首次构建约 5～15 分钟，取决于网络。
+- 本机 compose 内嵌 BuildKit 会按 `(mtime,size)` 复用旧上下文快照，因此**不要**用
+  `docker compose build` / `up -d --build`；必须 legacy 构建 + `--no-build` 启动。
+- 首次构建约 5～15 分钟，取决于网络；`--no-cache` 是规定动作。
 - `docker-compose.yml` 中同时写了 `build: .` 和 `image: mybooks-local:latest`：有 `build:` 时 Compose 会从当前目录源码构建并把结果打上该标签，**不会**再去拉取远程镜像。如果只写 `image:` 不写 `build:`，Compose 只会拉取远程同名镜像、忽略本地改动——本包已修复此问题。
 - 看到 `Started` 字样即启动成功。
 
@@ -144,7 +147,7 @@ SSH 登录 NAS 后，**三行命令**完成部署：
 
 ```bash
 cd /volume1/docker
-tar -xzf audiobook-deploy-4.6.0-10.tar.gz
+tar -xzf audiobook-deploy-4.6.0-build.26.tar.gz
 cd audiobook && sh scripts/deploy.sh
 ```
 
@@ -154,8 +157,8 @@ cd audiobook && sh scripts/deploy.sh
    supervisor/nginx 配置、回填脚本，缺一个直接报错停止；
 2. **符号链接抽查**——`app/node_modules` 首层应为 3 个链接（next/react/react-dom）、
    全产物合计应为 127 个，数量异常说明被解压工具压扁，会给出正确解压命令；
-3. `docker compose build`（从源码构建镜像）；
-4. `docker compose up -d`（启动容器）；
+3. `DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .`（legacy builder 构建镜像）；
+4. `docker compose up -d --force-recreate --no-build`（启动容器）；
 5. 等 20 秒后自动输出 supervisor 各进程状态和 myreader 日志尾部，一眼确认
    `myreader RUNNING`、日志无 `SyntaxError`。
 
@@ -170,12 +173,14 @@ cd audiobook && sh scripts/deploy.sh
 3. 打开 Container Manager → **项目** → 新增：
    - 路径选择 `/docker/audiobook/`（它会自动读取里面的 docker-compose.yml）
    - 点击「构建」→ 等待完成 →「启动」。
-   - 也可以 SSH 进 NAS 在项目目录直接执行：`sudo docker compose up -d --build`。
+   - 也可以 SSH 进 NAS 在项目目录直接执行：
+     `sudo env DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .`
+     `&& sudo docker compose up -d --force-recreate --no-build`。
 
 ### 威联通 QTS
 
 1. App Center 安装 **Container Station**。
-2. SSH 进 NAS，进入项目目录执行 `docker compose up -d --build`。
+2. SSH 进 NAS，进入项目目录执行 `DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . && docker compose up -d --force-recreate --no-build`。
 
 ### 纯 Linux 服务器
 
@@ -184,7 +189,8 @@ cd audiobook && sh scripts/deploy.sh
 sudo apt install docker-compose-plugin
 
 cd /path/to/audiobook
-sudo docker compose up -d --build
+sudo env DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
+sudo docker compose up -d --force-recreate --no-build
 ```
 
 ### NAS 专属注意事项
@@ -510,7 +516,9 @@ pnpm --filter @poxenstudio/myreader build-docker-dist
 
 # 6. 拿回 MyBooks
 rsync -a --delete app/myreader-dist/ <mybooks 路径>/myreader-dist/
-cd <mybooks 路径> && docker compose build && docker compose up -d
+cd <mybooks 路径>
+DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
+docker compose up -d --force-recreate --no-build
 ```
 
 > 第 5 步的脚本输出目录结构就是 MyBooks 的 `Dockerfile` 期望的
@@ -756,7 +764,7 @@ git ls-remote --heads https://github.com/PoxenStudio/mybooks.git \
 
 #### 脚本做的事
 
-fetch 上游 → merge 到本站 → 无冲突直接 `docker compose build && up -d`；
+fetch 上游 → merge 到本站 → 无冲突直接 legacy 构建 + `docker compose up -d --force-recreate --no-build`；
 有冲突则停下列出冲突文件，处理原则写在提示里（`webserver/`、`app/src/` 下
 优先保我们的改动，纯上游新文件直接 add）。
 
@@ -780,7 +788,8 @@ vi <冲突文件>                        # 找 <<<<<<< 标记手工融合
 git add <解决完的文件>
 git commit
 # 然后手工收尾：
-docker compose build && docker compose up -d
+DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
+docker compose up -d --force-recreate --no-build
 ```
 
 #### git 仓库放在哪、为什么、怎么防删
@@ -810,12 +819,12 @@ GIT_DIR=/volume1/docker/audiobook-git GIT_WORK_TREE=/volume1/docker/audiobook gi
 | 升级前 | `git status` 干净（没有未提交的手工改动）；磁盘余量 ≥ 5GB（构建需要） |
 | 构建后 | `docker compose exec mybooks supervisorctl status` 四进程全 RUNNING |
 | 访问验证 | 首页出书、点一本能进阅读器、有声书能播、管理后台读者组模板还在 |
-| 回滚（有问题时） | `git reset --hard ORIG_HEAD && docker compose build && docker compose up -d` |
+| 回滚（有问题时） | `git reset --hard ORIG_HEAD && DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . && docker compose up -d --force-recreate --no-build` |
 
 #### 配套使用习惯
 
 - 每次手工改过本站代码后 `git add -A && git commit`，让"我们的补丁层"保持成一条干净的提交线；
-- 升级出问题 24 小时内都能秒回：`git reset --hard ORIG_HEAD && docker compose build && docker compose up -d`；
+- 升级出问题 24 小时内都能秒回：`git reset --hard ORIG_HEAD && DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . && docker compose up -d --force-recreate --no-build`；
 - 长期不跟随上游也没关系，本站自洽；想同步时再跑一次脚本即可，git 历史永远在。
 
 ### 一次性：把数据目录分离出源码目录（v4.8.2 布局，强烈建议）
@@ -862,7 +871,7 @@ docker exec audiobook-mybooks-1 python3 -c \
 
 ```bash
 cd /volume1/docker
-sh audiobook/scripts/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-10.tar.gz
+sh audiobook/scripts/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-build.26.tar.gz
 ```
 
 它做的事（详见 [`docs/部署包说明.md`](docs/部署包说明.md) 的步骤表）核心只有一句：
@@ -978,7 +987,7 @@ calibre-webserver.db + audios 音频）。
 > - `tools/hotfix-from-src.sh`（本节讲这个）：从**当前源码目录**（git 仓库）挑改过的 `.py` 推容器。你手里有源码、在改代码时用它。
 > - `scripts/hotfix.sh`：从**指定部署包** `.tar.gz` 解出后挑 `.py` 推容器。只有部署包、没有源码时用它，用法 `sh audiobook/scripts/hotfix.sh <包> [--restart]`。
 
-完整 `docker compose build` 最慢的一步是 `npm run build-spa`（前端编译，CPU 密集）。
+完整镜像构建（`DOCKER_BUILDKIT=0 docker build --no-cache`）最慢的一步是 `npm run build-spa`（前端编译，CPU 密集）。
 如果只改了 **Python 后端**，没必要为它等构建，用热更新把改动直接推进运行中的容器：
 
 ```bash
@@ -996,7 +1005,7 @@ mtime，只把**改过的**用 `docker cp` 推进去 → `chown mybooks` → 清
 | 改动位置 | 能否热更 | 说明 |
 |---|---|---|
 | `webserver/**.py`、`server.py`、`tools/*.py` | ✅ 能 | 脚本自动处理 |
-| `app/**/*.vue`、`app/locales/*.json` | ❌ 不能 | 已编译进静态 `dist/`，必须 `docker compose build` |
+| `app/**/*.vue`、`app/locales/*.json` | ❌ 不能 | 已编译进静态 `dist/`，必须 `DOCKER_BUILDKIT=0 docker build --no-cache` 重建镜像 |
 | `conf/nginx/*`、`conf/supervisor/*` | ❌ 不能 | 需重建镜像或手工 `docker cp` + reload |
 
 **关键提醒**：热更新**不持久**——容器重建、镜像重建、`docker compose down` 之后就回到
@@ -1004,49 +1013,49 @@ mtime，只把**改过的**用 `docker cp` 推进去 → `chown mybooks` → 清
 
 ```bash
 sh tools/hotfix-from-src.sh --frontend   # 验证后端（同时提醒前端未生效）
-docker compose build && docker compose up -d   # 验证通过后固化进镜像
+DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .   # 验证通过后固化进镜像
+docker compose up -d --force-recreate --no-build
 ```
 
-固化构建时 npm 依赖层有缓存，不会重新下载，耗时主要在 `npm run build-spa`。
+`--no-cache` 会重建全部层（含 npm 依赖安装与 `npm run build-spa`），这是为了避免新旧
+`dist` 混装的规定动作；不要为了省时间改成带缓存的构建。
 
 ---
 
-## 十一、构建加速（慢的话先看这节）
+## 十一、构建耗时（慢的话先看这节）
 
-构建慢是**有解**的。慢的原因基本是三块，对策各不相同：
+构建慢的主要原因仍是基础镜像与依赖安装；但**本机的构建口径固定为 legacy + `--no-cache`**，
+不再提供层缓存加速。优化重点只能放在网络（镜像加速）与磁盘速度上。
 
 ### 为什么会慢：三块耗时
 
 | 耗时来源 | 体积/时长 | 能否避免 |
 |---|---|---|
 | ① 拉 `mybooks_base` 基础镜像（Ubuntu 24.04 + Calibre 7.6 + FFmpeg + Node） | 约 **1.5 GB** | 首次必拉，之后命中本地缓存 |
-| ② 前端 `npm ci` + webpack 打包 | 约 **3～6 分钟** | 改代码后可缓存复用 |
-| ③ Python 依赖 `pip install` | 约 **2～5 分钟** | 层缓存命中后跳过 |
+| ② 前端 `npm ci` + webpack 打包 | 约 **3～6 分钟** | 每次全量重跑（规定动作） |
+| ③ Python 依赖 `pip install` | 约 **2～5 分钟** | 每次全量重跑（规定动作） |
 
 **首次构建 5～15 分钟是正常的**，因为 ①②③ 全都要跑。
 
-### 加速方法一：用 `make fast-build`（改代码后重建，最推荐）
+### 正确命令（规定动作，没有缓存捷径）
 
-项目自带 Makefile 目标，用 BuildKit 本地缓存，**改代码后重建通常 1 分钟内**：
+本机的 compose 内嵌 BuildKit 会按 `(mtime, size)` 复用旧上下文快照，导致「新 `_nuxt` +
+旧 `index.html`」。因此构建一律走 legacy builder + 全量重建：
 
 ```bash
-# 首次：仍然要拉基础镜像、装依赖（慢，属正常）
-make fast-build
-
-# 之后每次改了 Python/Vue 代码：
-make fast-build        # 只重跑变化的层
-make fast-up           # 或一步到位：构建 + 启动
+DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
+docker compose up -d --force-recreate --no-build
 ```
 
-原理：`--cache-to type=local,dest=.buildcache` 把每一层缓存到 `.buildcache` 目录，
-`--cache-from` 再读回来。`mode=max` 保证连中间层（不只是最终层）都缓存。
+- 不要用 `docker compose build` / `docker compose up -d --build` / `make fast-build`：
+  它们会回到带缓存的路径，正是事故来源。
+- `--no-cache` 会让 ①②③ 全量重跑，这是为了产物一致，不是可优化项。
+- 清理旧镜像用 `docker image prune -f`；**禁止 `docker system prune -a`**（会删基础镜像）。
 
-> `.buildcache` 会占几个 GB 磁盘，可随时 `make clean-cache` 删掉。
+### 唯一可做的加速：配好 Docker 镜像加速（国内必做）
 
-### 加速方法二：配好 Docker 镜像加速（国内必做）
-
-`docker.1ms.run` 已在 Dockerfile 里内置（我没改它，它是可用的）。若你拉镜像仍然慢，
-说明你本机 Docker 没配加速，在 Docker Desktop → Settings → Docker Engine 里加：
+`docker.1ms.run` 已在 Dockerfile 里内置。若拉镜像仍然慢，说明本机 Docker 没配加速，
+在 Docker Desktop → Settings → Docker Engine 里加：
 
 ```json
 {
@@ -1058,21 +1067,7 @@ make fast-up           # 或一步到位：构建 + 启动
 }
 ```
 
-然后 `Apply & Restart`。这三个源我实测都通（HTTP 200/401，响应 0.04～0.27 秒）。
-
-### 加速方法三：减少重复构建
-
-| 做法 | 效果 |
-|---|---|
-| `docker compose up -d --build` **而不是** `build --no-cache` | 保留层缓存，只重跑变化层 |
-| 只改了 Python 后端 | 前端 `npm ci` 层会缓存命中，跳过几分钟 |
-| 只改了前端 | Python 依赖层缓存命中 |
-| 不要频繁 `docker system prune` | 它会清掉构建缓存，下次又得从头来 |
-
-### 加速方法四：只构建生产阶段
-
-`docker-compose.yml` 已加 `target: production`，跳过 `test` 阶段
-（否则会多跑一次完整 `pip install` + 装 pytest，纯属浪费）。
+然后 `Apply & Restart`。这三个源实测都通（HTTP 200/401，响应 0.04～0.27 秒）。
 
 ### 实测数据（本机 Node 20 / Linux）
 
@@ -1088,12 +1083,14 @@ npm run build-spa   → Compiled successfully in 36s   （含 ESLint）
 ## 十二、常见问题排查
 
 ### 构建很慢或失败
-- 先看上面的「构建加速」章节，`make fast-build` 能省掉大部分时间。
-- 网络问题。国内给 Docker 配镜像加速（见上）；重试 `docker compose up -d --build`。
-- 构建日志看具体报错：`docker compose build`（不带 `-d`），或
-  `docker compose build --progress=plain` 看到每一层的完整输出。
-- **不要**随手 `--no-cache`：那会让所有层重建，慢一倍以上。只在改了 Dockerfile
-  基础镜像或依赖彻底乱掉时才用。
+- 本机 `docker compose build` 会走 compose 内嵌 BuildKit，且会复用旧上下文快照
+  （表现为「新 `_nuxt` + 旧 `index.html`」），**不要用**；统一用
+  `DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .`。
+- 网络问题。国内给 Docker 配镜像加速（见上）；重试同一条 legacy 构建命令。
+- legacy builder 没有 `--progress=plain`，直接看 `docker build` 的 `Step N/M` 输出即可；
+  想只看末尾报错：`DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . 2>&1 | tail -50`。
+- `--no-cache` 是**规定动作**，不是可选项：本机曾因缓存/上下文判重吃过「新旧 dist 混装」，
+  交付与升级一律全量重建。
 
 ### 构建卡在 `Step N/M` 某一层很久
 多半是在拉 `mybooks_base`（1.5GB）。看进度：另开一个窗口执行
@@ -1136,11 +1133,12 @@ curl -sI https://registry.npmmirror.com | head -1
 或给 Docker 配代理（群晖：`/var/packages/Docker/etc/dockerd.json` 里加
 `"proxies": {"http-proxy": "...", "https-proxy": "..."}`）。
 
-**想跳过 npm 阶段验证其它部分**：`docker compose build --target production`
-仍会走到前端，没有捷径；但可以先用 `--progress=plain` 看完整输出定位到具体包：
+**想定位到具体包**：legacy builder 不支持 `--progress`，用
+`DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . 2>&1 | tail -50`
+看末尾报错。`--target production` 仍依赖 builder 阶段的产物，不是绕过前端的捷径。
 
 ```bash
-docker compose build --progress=plain 2>&1 | tail -50
+DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . 2>&1 | tail -50
 ```
 
 ### `COPY failed: no source files were specified`（myreader-dist）
@@ -1160,7 +1158,12 @@ nginx 连不上 9100 上的 MyReader 服务。根因通常是 `myreader-dist/` �
 git submodule update --init third-party/foliate-js
 ```
 
-然后重新 `make fast-build`。
+然后重新执行规定构建命令：
+
+```bash
+DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
+docker compose up -d --force-recreate --no-build
+```
 
 ### 访问不了 9800
 - `docker compose ps` 看容器是否 Up；`docker compose logs mybooks | tail -50` 看日志。
@@ -1190,7 +1193,8 @@ sudo docker exec audiobook-mybooks-1 python3 -c "import faster_whisper; print('O
 `WITH_WHISPER: "1"` 确认无误后重新构建：
 
 ```bash
-sudo docker compose build && sudo docker compose up -d
+sudo env DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
+sudo docker compose up -d --force-recreate --no-build
 ```
 
 若报 `av 版本过高`，说明镜像里的 `av` 被升到 16+ 了（faster-whisper 不兼容），执行：
@@ -1410,7 +1414,7 @@ print(f'共 {n} 个用户带个人设置（这些人组配置不生效）')
 2. **一层一层剥**：浏览器 502 → nginx 到 9100 不通 → supervisor FATAL → 日志 SyntaxError，
    每层只回答「这一层通不通」，不通就停在这一层查，不要跳到别的层改东西；
 3. **改配置类操作**（nginx conf、supervisor conf）都在镜像里，容器内手改
-   只是临时生效，`docker compose build` 重建才是根治；
+   只是临时生效，`DOCKER_BUILDKIT=0 docker build --no-cache` + `up -d --no-build` 重建才是根治；
 4. **写脚本要实测阈值**：deploy.sh 的符号链接检查就曾把「正确的 3 个」
    误判为异常（链接大头在根层 node_modules），任何自动检查先在好的环境
    上跑一遍校准再上线。

@@ -25,6 +25,21 @@ else
 fi
 cd "$DIR"
 CONTAINER="${CONTAINER:-audiobook-mybooks-1}"
+DATA="${DATA:-/volume1/docker/audiobook-data}"
+
+# 包内运行期版本（唯一权威）。构建时显式传给 Dockerfile，构建后再强校验一次。
+# 为什么要显式传：docker-compose.yml 的 GIT_VERSION 只服务于「手工 docker compose build」。
+# 现场常会保留自己那份 compose（PUID/PGID、路径是本地化的），里面版本号还是上一版，
+# 用它构建就会把旧号写进 webserver/version.py，页脚一直显示旧版本 —— 而 dist 是新的，
+# 光比对 index.html 的旧门禁根本发现不了。这里以包内 version.py 为准，compose 写错也不影响。
+# 另外：version.py 若是 CRLF 行尾，sed 只替换到收尾引号，行尾 \r 会留在变量里，
+# 一旦把它当 --build-arg 传下去，镜像里就会多一个看不见的控制符。统一 tr -d '\r'。
+PKG_VER=$(sed -n 's/^VERSION[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' webserver/version.py | head -1 | tr -d '\r')
+if [ -z "$PKG_VER" ]; then
+    echo "!! 读不出 webserver/version.py 的 VERSION"
+    exit 1
+fi
+echo "==> 包内版本: $PKG_VER"
 
 echo "==> [0/5] 源码目录污染自检"
 # 布局（自 4.6.0-1 起）数据外置到 /volume1/docker/audiobook-data，
@@ -90,16 +105,54 @@ if [ "$valid" -lt 100 ]; then
 fi
 [ "$broken" -gt 0 ] && echo "    ! 提示：$broken 个断链（多在 myreader-dist/static/），无用残留，不影响运行"
 
-echo "==> [3/5] Docker 构建镜像"
+echo "    OK：MyReader 产物完整"
+
+# 默认图标/二维码：只在目标不存在时补一份（全新部署自动生效；存量站点不动已有文件）
+seed_logo_defaults() {
+    logo_src="$DIR/app/public/logo"
+    logo_dst="$DATA/books/logo"
+    [ -d "$logo_src" ] || return 0
+    mkdir -p "$logo_dst" 2>/dev/null || return 0
+    for f in favicon.ico link_gongzhonghao.jpg; do
+        if [ ! -e "$logo_dst/$f" ] && [ -e "$logo_src/$f" ]; then
+            cp "$logo_src/$f" "$logo_dst/$f" && chmod 644 "$logo_dst/$f" 2>/dev/null || true
+            echo "    + 初始化默认图标: $logo_dst/$f"
+        fi
+    done
+}
+seed_logo_defaults
+
+echo "==> [3/5] Docker 构建镜像（legacy builder + --no-cache）"
+# 本机没有 buildx 插件，docker compose build 会走 compose 内嵌的 BuildKit；
+# 其上下文快照按 (mtime,size) 判重，包内 index.html 体积与上一代相同、mtime 又是固定常量时，
+# 会复用旧快照，产出「新 _nuxt + 旧 index.html」的坏镜像。这里固定用 legacy builder + --no-cache。
+build_image() {
+    DOCKER_BUILDKIT=0 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" \
+        -t mybooks-local:latest . || return 1
+    host_sha=$(sha256sum app/dist/index.html | awk '{print $1}')
+    img_sha=$(docker run --rm mybooks-local:latest sha256sum /var/www/mybooks/app/dist/index.html | awk '{print $1}')
+    if [ "$host_sha" != "$img_sha" ]; then
+        echo "!! 镜像内 index.html 与包内不一致：$img_sha != $host_sha"
+        return 1
+    fi
+    echo "==> 镜像内 index.html: $img_sha"
+    # 版本门禁：镜像内 version.py 必须等于包内版本。
+    # 这一条就是「部署完页脚还是旧版本」的拦网 —— 那个值和 dist 无关，只跟构建参数有关。
+    CONTAINER="$CONTAINER" sh scripts/check-version.sh --image || {
+        echo "!! 版本门禁未通过，停止部署（容器未启动，站点仍是旧版本，不受影响）"
+        return 1
+    }
+}
 if [ "$1" = "build-only" ]; then
-    docker compose build
-    echo "==> 完成（build-only，未启动）。启动请执行: docker compose up -d"
+    build_image || exit 1
+    echo "==> 完成（build-only，未启动）。启动请执行: docker compose up -d --force-recreate --no-build"
     exit 0
 fi
-docker compose build
+build_image || exit 1
 
 echo "==> [4/5] 启动容器"
-docker compose up -d
+# --no-build 不可省：up 一旦发现镜像缺失就会重新走 compose 的内嵌 BuildKit 路径。
+docker compose up -d --force-recreate --no-build
 
 echo "==> [5/5] 启动验证"
 # 不能 fixed sleep 就直接 supervisorctl status：容器里 start.sh 要先补目录、
@@ -135,6 +188,13 @@ docker exec "$CONTAINER" supervisorctl status 2>&1 | sed 's/^/    /' || true
 echo
 echo "    myreader 日志末尾（应看到 Next.js Ready，无 SyntaxError）："
 docker exec "$CONTAINER" tail -5 /data/log/myreader.log 2>/dev/null | sed 's/^/    /' || true
+echo
+echo "==> 版本自检（页脚显示的就是这个值）"
+if ! CONTAINER="$CONTAINER" sh scripts/check-version.sh; then
+    echo " !! 版本链路不一致，页脚会显示旧版本。"
+    echo "    容器内/接口版本与 $PKG_VER 不一致，先看: sh scripts/check-version.sh"
+    exit 1
+fi
 echo
 echo "==> 部署完成。浏览器打开 http://<NAS_IP>:9800 验证；"
 echo "    阅读链路测试: http://<NAS_IP>:9800/read/1?format=epub"

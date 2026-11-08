@@ -4,7 +4,9 @@
         <client-only>
             <app-header v-if="$store.state.nav"></app-header>
         </client-only>
-        <v-main>
+        <!-- 迷你条实测高度 = 行 38px + 进度线 2px + 上边框 1px = 41px；
+             safe-area 内边距同时补在条与 v-main 上，避免 iPhone 底部遮挡 -->
+        <v-main :style="miniVisible ? { paddingBottom: 'calc(41px + env(safe-area-inset-bottom, 0px))' } : null">
             <v-container fluid>
                 <app-press v-if="$store.state.nav"></app-press>
                 <Nuxt/>
@@ -31,7 +33,10 @@
             </v-dialog>
         </v-main>
         <upload v-if="$store.state.nav"></upload>
-        <mini-player></mini-player>
+        <!-- 挂在布局层、不在 Nuxt 内：路由切换不会重建，播放不中断 -->
+        <client-only>
+            <mini-player></mini-player>
+        </client-only>
     </v-app>
 </template>
 
@@ -54,6 +59,11 @@ export default {
         MiniPlayer,
     },
     data: () => ({}),
+    computed: {
+        miniVisible() {
+            return !!this.$store.state.miniPlayer.visible
+        },
+    },
     head() {
         return {
             title: this.$store.state.site_title,

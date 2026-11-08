@@ -155,7 +155,7 @@ if [ "$RUNNER" = "docker" ]; then
         exit 3
     fi
     if ! docker image inspect "$BACKUP_IMAGE" >/dev/null 2>&1; then
-        echo "!! 找不到镜像 $BACKUP_IMAGE，请先 cd 到源码目录执行 docker compose build，"
+        echo "!! 找不到镜像 $BACKUP_IMAGE，请先 cd 到源码目录执行 DOCKER_BUILDKIT=0 docker build --no-cache -t $BACKUP_IMAGE .，"
         echo "   或改用 RUNNER=local 并保证本机有 python3"
         exit 3
     fi

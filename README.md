@@ -3,7 +3,7 @@
 基于 [PoxenStudio/mybooks](https://github.com/PoxenStudio/mybooks) 的私人图书服务器定制版。
 在 Calibre 书库之上提供 Web 阅读、听书、权限分级、元数据刮削、格式转换等能力。
 
-> **当前版本：`4.6.0-build.20`**（上游 tag `4.6.0` + 第 22 次本地构建；P0/P1 稳健性与性能专项已合入）
+> **当前版本：`4.6.0-build.26`**（上游 tag `4.6.0` + 第 26 次本地构建；P0/P1 稳健性与性能专项已合入）
 
 ---
 
@@ -71,9 +71,9 @@ audiobook-src/
 ### 部署（NAS / Linux，推荐）
 
 ```sh
-# 把 audiobook-deploy-4.6.0-10.tar.gz 放到 /volume1/docker/
-tar -xzf audiobook-deploy-4.6.0-10.tar.gz
-sh audiobook/scripts/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-10.tar.gz
+# 把 audiobook-deploy-4.6.0-build.26.tar.gz 放到 /volume1/docker/
+tar -xzf audiobook-deploy-4.6.0-build.26.tar.gz
+sh audiobook/scripts/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-build.26.tar.gz
 ```
 
 `scripts/upgrade.sh` 做**原子替换**（`mv audiobook audiobook.old` → 解压到全新目录），
@@ -108,32 +108,32 @@ cd app && npm run build-spa
 
 ## 版本号规则
 
-当前版本 **`4.6.0-build.20`**，语义是「上游 mybooks 已发布 tag `4.6.0` + 第 22 次本地构建」。
+当前版本 **`4.6.0-build.26`**，语义是「上游 mybooks 已发布 tag `4.6.0` + 第 26 次本地构建」。
 上游 tag 无 `v` 前缀；自己改代码构建号 +1，上游正式发新 tag 后按主题合入再整体改号。
 
 | 标识 | 取值 | 写在哪 / 谁读它 |
 |---|---|---|
-| **运行期版本**（唯一权威） | `4.6.0-build.20` | `webserver/version.py`（界面与日志显示它）；`docker-compose.yml` 的 `GIT_VERSION`（构建时 Dockerfile 用它覆写 `version.py`）；`app/package.json` / `app/package-lock.json`；`Makefile` 的 `VERSION_LOCK` |
+| **运行期版本**（唯一权威） | `4.6.0-build.26` | `webserver/version.py`（界面与日志显示它）；`docker-compose.yml` 的 `GIT_VERSION`（构建时 Dockerfile 用它覆写 `version.py`）；`app/package.json` / `app/package-lock.json`；`Makefile` 的 `VERSION_LOCK` |
 | **上游基线** | mybooks tag `4.6.0`（2026-10-25，commit `3c5947c`） | 只记在本文与 CHANGELOG，用来判断「我们建在哪个上游版本上」 |
-| **交付标签 / 包名** | 与运行期版本相同：`4.6.0-build.20` | 包文件名、README、CHANGELOG |
+| **交付标签 / 包名** | 与运行期版本相同：`4.6.0-build.26` | 包文件名、README、CHANGELOG |
 
-- 只改本地代码 → 构建号 +1（`4.6.0-build.22`），上游段不动；
+- 只改本地代码 → 构建号 +1（`4.6.0-build.26`），上游段不动；
 - 上游**正式发布 tag** 后按主题合入 → 整体改号（如 `4.6.1-build.20`），构建号仍从 20 起；
 - 上游 `develop` 上虽已是 `4.6.1`，但**没有 tag、没有 Release 就不跟号**，避免与上游未来正式发布的内容脱节。
 
 ### 旧 `4.8.x` 号段已封存
 
-`v4.7.1 ~ v4.8.x` 全部封存，与 `4.6.0-build.20` **没有任何版本先后关系**——这是**号段重置**，
+`v4.7.1 ~ v4.8.x` 全部封存，与 `4.6.0-build.26` **没有任何版本先后关系**——这是**号段重置**，
 因为「新程序」的第一版要从上游已发布 tag 起算。旧 `v4.8.2` / `v4.8.3` 对应 `4.6.0-1`，
 `4.6.0-2` 之后构建号连续、无需换算；完整对照表见 [CHANGELOG 开头的「号段重置说明」](CHANGELOG.md)。
 
 ### 四条不要搞错的事
 
 1. **整串排序低于 `4.6.0`，不能拿来和 `4.6.0` 比大小。** `-build.20` 是 semver 的预发布标记
-   （prerelease），`4.6.0-build.20 < 4.6.0`。本程序不发布 npm 包、`app/package.json` 无 `engines`
+   （prerelease），`4.6.0-build.26 < 4.6.0`。本程序不发布 npm 包、`app/package.json` 无 `engines`
    校验，所以这个排序差异没有实际影响；这么写是为了让「建在上游哪个 tag 上」一眼可见。
 2. **同一上游基线的本地构建之间，只能靠 `build.N` 区分。** `>` 比较整体版本会漏判
-   （`4.6.0-build.22` 与 `4.6.0-build.20` 的主版本段相同），要比较就单独取出 `build.N` 数值段。
+   （`4.6.0-build.26` 与 `4.6.0-build.22` 的主版本段相同），要比较就单独取出 `build.N` 数值段。
    本仓库现有的版本展示/比对都是一次性字符串比较（`main.py`、`handlers/admin.py`），没有排序比较逻辑。
 3. **该写法同时是合法 Docker tag**（字符集 `[A-Za-z0-9_.-]`），可以直接用进镜像 tag，
    不需要为 `+` 或其它字符做转义。
@@ -210,23 +210,19 @@ MyBooks 特性包括：
 
 ### 从源码构建（推荐，本包必须用这个）
 
-`docker-compose.yml` 已配好 `build:` + `image:`，两条命令即可：
+`docker-compose.yml` 已配好 `build:` + `image:`。**必须用 legacy builder 构建**，
+再以 `--no-build` 启动（本机 compose 内嵌 BuildKit 会复用旧上下文快照）：
 
 ```bash
-docker compose up -d --build      # 首次构建约 5～15 分钟
+DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .   # 首次约 5～15 分钟
+docker compose up -d --force-recreate --no-build
 docker compose logs -f mybooks    # 看启动日志
 ```
 
-**嫌慢？用带缓存的构建方式**（改代码后重建通常 1 分钟内）：
-
-```bash
-make fast-build     # 构建（BuildKit + 本地层缓存）
-make fast-up        # 构建并启动
-make clean-cache    # 缓存出问题时清掉
-```
-
-> 首次构建慢主要是因为要拉 ~1.5GB 的 `mybooks_base`（Ubuntu+Calibre+FFmpeg），
-> 属正常现象；之后都会命中缓存。**不要随手 `--no-cache`**，那等于每次从头来。
+> **不要用 `docker compose build` / `docker compose up -d --build` / `make fast-build`**：
+> 它们会走带缓存的路径，可能拼出「新 `_nuxt` + 旧 `index.html`」的坏镜像。
+> `--no-cache` 是规定动作，不是可选项；清理旧镜像用 `docker image prune -f`，
+> **禁止 `docker system prune -a`**（会删基础镜像）。
 
 要点：
 
@@ -267,13 +263,14 @@ Windows 用户请先安装 [Docker Desktop](https://www.docker.com/products/dock
 
 ```powershell
 cd D:\mybooks
-docker compose up -d --build
+$env:DOCKER_BUILDKIT="0"; docker build --no-cache -t mybooks-local:latest .
+docker compose up -d --force-recreate --no-build
 ```
 
 启动后浏览器访问 `http://localhost:8080`。数据目录即 docker-compose.yml 中挂载的本地目录（默认 `./data`），可直接查看与备份。
 
-> 注意不要单独执行 `docker compose up -d`（不带 `--build`）就在源码目录里跑：
-> 若本地还没有构建过镜像，Compose 会去拉同名远程镜像。
+> 注意必须先完成 legacy 构建再启动；`docker compose up -d` 若本地还没有同名镜像，
+> 会去拉远程镜像，而不是用你刚改的源码。
 
 ## 使用WebDAV连接
 WebDAV URL地址: `http://<ip or domain>:<port>/books`

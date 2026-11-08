@@ -205,21 +205,22 @@
           >
             <v-icon>mdi-skip-next</v-icon>
           </v-btn>
-
-          <!-- 收起到底部 -->
-          <v-btn
-            icon
-            large
-            @click="minimizeToBar"
-            :disabled="!currentAudio"
-            class="control-btn nav-btn"
-            :title="$t('audio.minimizeToBar')"
-          >
-            <v-icon>mdi-picture-in-picture-bottom-right</v-icon>
-          </v-btn>
         </div>
 
         <div class="secondary-controls">
+          <!-- 收起到底部迷你条：文字按钮（只放图标辨识度太低，用户找不到），离开本页继续播 -->
+          <v-btn
+            text
+            small
+            @click="collapseToMini"
+            class="collapse-btn"
+            :disabled="!currentAudio"
+            :title="$t('audio.minimizeToBar')"
+          >
+            <v-icon small left>mdi-window-minimize</v-icon>
+            {{ $t('audio.minimizeToBar') }}
+          </v-btn>
+
           <!-- 字幕开关 -->
           <v-btn
             v-if="subtitleCues.length > 0"
@@ -640,6 +641,28 @@ export default {
       }
 
       return true;
+    },
+
+    // 迷你条「当前在放什么」的签名：切源/切换书时触发下面的 watch
+    miniPlayerSig() {
+      const mp = this.$store.state.miniPlayer;
+      return mp.visible ? (mp.kind + '|' + (mp.audioId || '') + '|' + mp.url) : '';
+    }
+  },
+
+  watch: {
+    miniPlayerSig() {
+      const mp = this.$store.state.miniPlayer;
+      if (!mp || !mp.visible) return;
+      const sameBook = mp.kind === 'audio' && mp.audioId
+        && String(mp.audioId) === String(this.$route.params.id);
+      if (sameBook) return;
+      // 迷你条切成了别的音源（电台/别的书）：本页立即停声并清掉播放意图，
+      // 否则会出现两条同时出声，或看门狗把旧音轨又拉起来
+      this._wantPlay = false;
+      this.isPlaying = false;
+      const player = this.$refs.audioPlayer;
+      if (player && !player.paused) player.pause();
     }
   },
 
@@ -651,6 +674,7 @@ export default {
     this._wantPlay = false;
     this._wdStuckTicks = 0;
     this._wdReloads = 0;
+    this._adoptedFromMini = false;
     this.restoreSubtitlePreference();
     // 移动端没有封面视图，默认直接展示字幕整篇；用户手动关掉过的尊重用户选择
     if (this.$vuetify.breakpoint.smAndDown && process.client) {
@@ -693,6 +717,8 @@ export default {
     if (this.audioStatus === 'processing') {
       this.startAudioPolling();
     }
+    // 从底部迷你条点「回到播放页」进来：接管播放 / 停掉不相关的那条流
+    this.adoptFromMini();
   },
 
   beforeDestroy() {
@@ -717,6 +743,105 @@ export default {
   },
 
   methods: {
+    // 收起到底部迷你条：把当前音轨与进度交给全局 MiniPlayer（挂在 default 布局，路由切换不销毁），
+    // 本页音频停掉后离开；离开页面后继续播由迷你条接管。
+    collapseToMini() {
+      const player = this.$refs.audioPlayer;
+      if (!player || !this.currentAudio) return;
+      const base = this.currentAudio.start_time || 0;
+      // §把整张播放列表一起交给迷你条§ 本页随后会被销毁，nextTrack/onTrackEnded
+      // 那套自动续播逻辑就没人执行了；不带列表，收起后听完一集就停住。
+      // base 是该集在整轨里的起始秒，迷你条换集时用它当「这一集的开头」。
+      const list = (this.audioFiles || []).map((f) => ({
+        url: f.url,
+        title: this.getDisplayName(f.filename),
+        base: f.start_time || 0,
+      }));
+      this.$store.commit('miniPlayer_play', {
+        // 条上显示「集名」而不是书名：自动续播换集后，条上的字要跟着变，
+        // 否则用户看不出已经切到下一集了（书名整本书都一样）。
+        title: this.getDisplayName(this.currentAudio.filename)
+          || this.book.title || this.$t('audio.audioBook'),
+        url: this.currentAudio.url,
+        kind: 'audio',
+        audioId: this.$route.params.id,
+        // 播放页的 currentTime 是绝对秒（含 start_time 偏移），迷你条直接用绝对秒续播
+        startTime: player.currentTime || base,
+        playing: !player.paused,
+        rate: this.playbackRate,
+        list,
+        index: this.currentTrackIndex,
+      });
+      player.pause();
+      this.$router.push('/');
+    },
+    // 从迷你条回到本页：接管播放，位置沿用迷你条的进度；放的是别的内容就先停掉，避免两条一起响。
+    // §不要在这里裸 play()§ 迷你条传回来的位置往往要在 loadedmetadata 之后才写进元素，
+    // 此时 play() 要么被浏览器判成「被新的 load/seek 打断」直接丢弃（AbortError），
+    // 要么一直 pending；而本页的看门狗只认 _wantPlay，裸 play() 没设意图 → 没人救，
+    // 表现就是「回到播放页没声音，点播放才有」。统一改走 _wantPlay + _playWhenReady。
+    adoptFromMini() {
+      const mp = this.$store.state.miniPlayer;
+      if (!mp || !mp.visible) return;
+      const sameBook = mp.kind === 'audio' && mp.audioId
+        && String(mp.audioId) === String(this.$route.params.id);
+      if (!sameBook) {
+        // 迷你条在放别的音源（电台/别的书）：本页保持静音，不抢播，
+        // 也不动迷你条（原先这里 commit miniPlayer_pause，会把电台掐掉）
+        return;
+      }
+      const wantPlay = mp.playing;
+      const at = mp.currentTime || 0;
+      // §迷你条可能已经在放别的集了§ 收起后自动续播/点「下一首」都会改 index，
+      // 本页的 currentTrackIndex 还是离开时那一集。这里必须按迷你条的 index 重新定位，
+      // 否则回到播放页看到的是旧集的标题/字幕，声音却是新集的。
+      const miniIndex = (typeof mp.index === 'number' && mp.index >= 0
+        && mp.index < this.audioFiles.length) ? mp.index : this.currentTrackIndex;
+      this.$store.commit('miniPlayer_close');
+      // 迷你条给的位置一定比 localStorage/服务端新：标记已接管，
+      // 让 loadTrack 的定位重试链与服务端恢复让路，别把进度改回去。
+      this._adoptedFromMini = true;
+      const player = this.$refs.audioPlayer;
+      if (!player) return;
+      if (miniIndex !== this.currentTrackIndex) {
+        // 换集那条路交给 loadTrack 统一处理：它会换 src、等 canplay 再定位，
+        // 位置换算成「相对章节秒数」（at 是绝对秒，含 start_time）。这里不再
+        // 自己写 player.currentTime —— 新旧 src 混着写会把位置写到上一集的时间轴上。
+        const base = (this.audioFiles[miniIndex] && this.audioFiles[miniIndex].start_time) || 0;
+        this._positionAppliedFor = -1;
+        this.loadTrack(miniIndex, Math.max(0, at - base));
+        this._positionAppliedFor = miniIndex;
+        if (wantPlay) {
+          this._wantPlay = true;
+          this._playWhenReady(miniIndex);
+        } else {
+          this._wantPlay = false;
+        }
+        return;
+      }
+      this._positionAppliedFor = this.currentTrackIndex;
+      const adopt = () => {
+        if (at > 0) {
+          try { player.currentTime = at; } catch (e) { /* 忽略 */ }
+        }
+        const base = (this.currentAudio && this.currentAudio.start_time) || 0;
+        this.currentTime = Math.max(0, at - base);
+        if (this.duration > 0) {
+          this.progress = Math.min(100, (this.currentTime / this.duration) * 100);
+        }
+        if (wantPlay) {
+          this._wantPlay = true;
+          this._playWhenReady(this.currentTrackIndex);  // 等 canplay + 就绪重试，AbortError 会自动重来
+        } else {
+          this._wantPlay = false;
+        }
+      };
+      if (player.readyState >= 1) {
+        this.$nextTick(adopt);
+      } else {
+        player.addEventListener('loadedmetadata', adopt, { once: true });
+      }
+    },
     initializePlayer() {
       if (this.audioFiles.length > 0) {
         // §不再在这里 loadTrack§ 旧代码 initializePlayer() 先 loadTrack(0)，
@@ -895,22 +1020,6 @@ export default {
       this._wantPlay = false;
       const player = this.$refs.audioPlayer;
       if (player) player.pause();
-    },
-
-    /** 收起到底部：把当前播放推到全局迷你播放条，用户可离开本页继续听。 */
-    minimizeToBar() {
-      const player = this.$refs.audioPlayer;
-      if (!player || !this.currentAudio) return;
-      const t = player.currentTime || 0;
-      const title = (this.book.title || '') + ' · ' +
-        (this.currentAudio.name || ('第' + (this.currentTrackIndex + 1) + '集'));
-      this.$store.commit('miniPlayer_play', {
-        title, url: this.currentAudio.url,
-        kind: 'audiobook', bookId: this.$route.params.id,
-        startTime: t,
-      });
-      player.pause();
-      this.$router.push('/');
     },
 
     // §统一的安全播放§ 裸调 play() 不接 Promise 的后果是：被中断时抛
@@ -1190,6 +1299,15 @@ export default {
 
     onPlay() {
       this.isPlaying = true;
+      const mp = this.$store.state.miniPlayer;
+      if (mp && mp.visible) {
+        const sameBook = mp.kind === 'audio' && mp.audioId
+          && String(mp.audioId) === String(this.$route.params.id);
+        if (!sameBook) {
+          // 本页开始播：停掉迷你条里的电台/别的书，避免两条同时出声
+          this.$store.commit('miniPlayer_close');
+        }
+      }
     },
 
     onPause() {
@@ -1691,6 +1809,9 @@ export default {
     // 更新时才跳转）。两台设备都听过时以「更晚保存」的一方为准。
     async tryRestoreFromServer(localRestored) {
       try {
+        // 刚从迷你条接管：位置来自「刚刚还在播的元素」，一定比服务端新。
+        // 这里若再 loadTrack 一次，会把接管写的 currentTime 冲掉，还会打断在飞的 play()。
+        if (this._adoptedFromMini) return;
         const rsp = await this.$backend(`/audio/${this.bookId}/progress`);
         if (!rsp || rsp.err !== "ok" || !rsp.data) return;
         const { track_index, position, updated_at } = rsp.data;
@@ -2454,10 +2575,21 @@ export default {
 
 .speed-btn,
 .timer-btn,
-.subtitle-btn {
+.subtitle-btn,
+.collapse-btn {
   background-color: #404040 !important;
   color: white !important;
   position: relative;
+}
+
+/* 文字按钮：与控制区其它按钮同一底色，文案不做大写、不换行；
+   窄屏下由 .secondary-controls 的 flex-wrap 整体换行，不挤压其它控件 */
+.collapse-btn {
+  text-transform: none !important;
+  letter-spacing: 0;
+  font-size: 12px;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .speed-text {

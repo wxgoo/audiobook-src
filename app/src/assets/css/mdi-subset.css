@@ -602,10 +602,6 @@
   content: "\F102B";
 }
 
-.mdi-file-delimited::before {
-  content: "\F0218";
-}
-
 .mdi-file-document::before {
   content: "\F0219";
 }
@@ -704,6 +700,10 @@
 
 .mdi-format-title::before {
   content: "\F05F4";
+}
+
+.mdi-forum::before {
+  content: "\F028C";
 }
 
 .mdi-forum-outline::before {
@@ -902,6 +902,10 @@
   content: "\F0387";
 }
 
+.mdi-newspaper::before {
+  content: "\F0395";
+}
+
 .mdi-note-multiple-outline::before {
   content: "\F06B9";
 }
@@ -1022,6 +1026,14 @@
   content: "\F0995";
 }
 
+.mdi-radio::before {
+  content: "\F0439";
+}
+
+.mdi-radio-tower::before {
+  content: "\F043B";
+}
+
 .mdi-radiobox-blank::before {
   content: "\F043D";
 }
@@ -1092,6 +1104,10 @@
 
 .mdi-shield-account::before {
   content: "\F088F";
+}
+
+.mdi-shield-account-outline::before {
+  content: "\F0A12";
 }
 
 .mdi-shield-check-outline::before {
@@ -1218,6 +1234,10 @@
   content: "\F1223";
 }
 
+.mdi-text-box-outline::before {
+  content: "\F09ED";
+}
+
 .mdi-text-recognition::before {
   content: "\F113D";
 }
@@ -1278,6 +1298,10 @@
   content: "\F0552";
 }
 
+.mdi-video::before {
+  content: "\F0567";
+}
+
 .mdi-view-dashboard-outline::before {
   content: "\F0A1D";
 }
@@ -1316,6 +1340,10 @@
 
 .mdi-white-balance-sunny::before {
   content: "\F05A8";
+}
+
+.mdi-window-minimize::before {
+  content: "\F05B0";
 }
 
 .mdi-wrench::before {
