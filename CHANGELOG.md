@@ -1,6 +1,6 @@
 # 变更日志（CHANGELOG）
 
-本项目的版本号规则：**`<上游 mybooks tag>-build.<自建构建号>`**，当前版本 **`4.6.0-build.28`**。
+本项目的版本号规则：**`<上游 mybooks tag>-build.<自建构建号>`**，当前版本 **`4.6.0-build.29`**。
 上游 tag 无 `v` 前缀；自己改代码构建号 +1，上游正式发新 tag 后按主题合入再整体改号。
 
 ### 号段重置说明（必读）
@@ -11,9 +11,9 @@
 
 | 项 | 取值 | 说明 |
 |---|---|---|
-| **运行期版本**（唯一权威） | `4.6.0-build.28` | 写 `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` / `package-lock.json`、`Makefile` 的 `VERSION_LOCK` |
+| **运行期版本**（唯一权威） | `4.6.0-build.29` | 写 `webserver/version.py`、`docker-compose.yml` 的 `GIT_VERSION`、`app/package.json` / `package-lock.json`、`Makefile` 的 `VERSION_LOCK` |
 | 上游基线 | mybooks tag `4.6.0`（2026-10-25，commit `3c5947c`） | 本源码事实上的来源版本 |
-| 交付标签 / 包名 | 与运行期版本相同：`4.6.0-build.28` | 出包文件名带它，便于区分；不再使用 `rebuiltN` 后缀 |
+| 交付标签 / 包名 | 与运行期版本相同：`4.6.0-build.29` | 出包文件名带它，便于区分；不再使用 `rebuiltN` 后缀 |
 | 上游未发布分支 | mybooks `develop` 上是 `4.6.1`（**无 tag、无 Release**） | **不跟号**：等上游正式发 tag 后按主题合入，届时再升 `4.6.1-build.20` |
 
 旧号 → 新号对照（便于翻旧记录）：
@@ -60,7 +60,50 @@
 
 ---
 
-## 4.6.0-build.28（当前）
+## 4.6.0-build.29（当前）
+
+> 主题：**基础镜像瘦身 —— 剥掉文档、手册、系统翻译。**
+> build.28 只解决了「构建期要拉几个镜像」，`mybooks_base` 本身一个字节没动。它里面躺着
+> 整套 `/usr/share/doc`、`man`、`info`、系统 `locale` 翻译和 npm 自带手册，运行时都用不上。
+
+### 变更
+
+1. **`Dockerfile.base` 在装包那条 `RUN` 末尾删除**
+   `/usr/share/doc/*`、`/usr/share/info/*`、`/usr/share/man/*`、`/usr/share/lintian`、
+   `/var/cache/man`、`/usr/lib/node_modules/npm/{docs,man}`，以及 `/usr/share/locale`
+   下的一级子目录（保留 `locale.alias`，整目录删空会有程序告警）。
+   **必须同层删**：另起 `RUN rm -rf` 只会多一个白障层，文件仍在下层，体积不变 —— 这是
+   Docker 层叠加机制决定的。保留 `/usr/lib/locale`（glibc locale 归档）与
+   `/usr/share/zoneinfo`（`/etc/localtime` 指向它）。
+2. **新增 `scripts/build-base.sh`**：`build`（默认，备份旧 base 为 `:pre-slim-<日期>` →
+   最小上下文构建 → 功能自检 → 前后体积对比）、`report`（量各目录占用）、
+   `verify`（只自检）。构建上下文只取 `Dockerfile.base`/`prebuilt`/`calibre/7.6`/
+   `requirements.txt` 约 5MB，不把 200MB+ 的 `app/dist`、`myreader-dist` 塞给 daemon。
+   自检项：nginx、node、npm、ffmpeg、python3、`date +%Z`、`locale.alias`、
+   python 依赖导入、`calibre` / `ebook-convert`。
+3. **文档**：`docs/部署包说明.md` 把「不建议现在动 base」那段换成「怎么剥、怎么重建、
+   怎么回滚」，并列出还没动的两项（`WITH_WHISPER=0` −250MB、拆 dev 依赖）。
+
+### 收益与代价
+
+- 未压缩 100~180MB，`docker images` 口径约 40~80MB（文档是文本，压缩比高）。
+- base 一改，每台站点要重新导入一次约 1.5GB；可用 `scripts/export-images.sh` 离线带走。
+- 回滚：`docker tag <pre-slim 标签> <原名>` 后 `sh scripts/deploy.sh build-only`。
+
+### 不变
+
+- **前端一行未改**，`app/dist` 与 build.28 **逐字节相同**（`index.html` 仍 `56565065…`）。
+- 主 `Dockerfile` 未动（build.28 的 `FROM mybooks_base` 保留），构建流程、端口、挂载全未动。
+- 版本门禁全套保留（构建期 `--build-arg` + 镜像内 `VERSION` 强校验 + `tr -d '\r'`）。
+
+### 注意
+
+- **不重建 base 也能用**：本版只改了 `Dockerfile.base` 与脚本，业务镜像内容不受影响，
+  体积要等实际重建 base 才下降。
+- 构建 base 需要联网（apt 华为云镜像 / deb.nodesource.com、pip aliyun），
+  这是整条链路里唯一需要外网的一步。
+
+## 4.6.0-build.28
 
 > 主题：**构建不再需要 node 镜像，基础镜像可以离线携带。**
 > 现场每次构建都要两个外部镜像 —— `node:20-alpine`（构建阶段）与 `mybooks_base`（运行环境），
