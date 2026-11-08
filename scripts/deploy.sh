@@ -41,7 +41,7 @@ if [ -z "$PKG_VER" ]; then
 fi
 echo "==> 包内版本: $PKG_VER"
 
-echo "==> [0/5] 源码目录污染自检"
+echo "==> [0/6] 源码目录污染自检"
 # 布局（自 4.6.0-1 起）数据外置到 /volume1/docker/audiobook-data，
 # 源码目录里不应出现 books/ data/ 等运行数据目录。
 DIRTY=""
@@ -61,7 +61,7 @@ if [ -n "$DIRTY" ]; then
 fi
 echo "    OK：源码目录干净"
 
-echo "==> [1/5] 目录与文件校验"
+echo "==> [1/6] 目录与文件校验"
 fail=0
 for f in Dockerfile docker-compose.yml myreader-dist/app/server.js \
          conf/supervisor/mybooks.conf conf/nginx/mybooks.conf \
@@ -73,7 +73,7 @@ done
 [ "$fail" = "1" ] && { echo "==> 校验失败，包不完整，停止。"; exit 1; }
 echo "    OK：关键文件齐全"
 
-echo "==> [2/5] MyReader 产物完整性（之前 502 事故的教训：产物不全 → 书页空白）"
+echo "==> [2/6] MyReader 产物完整性（之前 502 事故的教训：产物不全 → 书页空白）"
 # 原来这里只数符号链接总数（<100 就报错）。问题：myreader-dist/static/ 里有
 # 127 个断链（指向不存在的 f1.js…），正好把总数凑够，检查永远通过；
 # 而真正该在的三层 node_modules 一个都没有时，阅读器启动即
@@ -107,6 +107,19 @@ fi
 
 echo "    OK：MyReader 产物完整"
 
+# ---------- 3. 基础镜像预检 ----------
+# 构建只需要一个外部镜像 mybooks_base（从 build.28 起 builder 阶段也基于它，
+# 不再需要 node:20-alpine）。这里保证「本地有 or 离线包导入 or 联网拉」，
+# 拿不到就立刻停，不要等到 docker build 在 FROM 那一步才报错。
+echo "==> [3/6] 基础镜像预检（构建不再需要 node 镜像）"
+# shellcheck source=scripts/base-image.sh
+. "$DIR/scripts/base-image.sh"
+# 找 images/ 的顺序：包根 → 当前目录（老包把它放在根目录）
+ensure_base_image "$DIR" "$PWD" || {
+    echo "!! 基础镜像不可用，停止部署（未改动任何现有容器/数据）"
+    exit 1
+}
+
 # 默认图标/二维码：只在目标不存在时补一份（全新部署自动生效；存量站点不动已有文件）
 seed_logo_defaults() {
     logo_src="$DIR/app/public/logo"
@@ -122,7 +135,7 @@ seed_logo_defaults() {
 }
 seed_logo_defaults
 
-echo "==> [3/5] Docker 构建镜像（legacy builder + --no-cache）"
+echo "==> [4/6] Docker 构建镜像（legacy builder + --no-cache）"
 # 本机没有 buildx 插件，docker compose build 会走 compose 内嵌的 BuildKit；
 # 其上下文快照按 (mtime,size) 判重，包内 index.html 体积与上一代相同、mtime 又是固定常量时，
 # 会复用旧快照，产出「新 _nuxt + 旧 index.html」的坏镜像。这里固定用 legacy builder + --no-cache。
@@ -143,18 +156,33 @@ build_image() {
         return 1
     }
 }
-if [ "$1" = "build-only" ]; then
+if [ "${SKIP_BUILD:-0}" = "1" ]; then
+    # 零构建部署：目标机导入了离线成品镜像（export-images.sh --with-app）时用。
+    # 不做 --no-cache 重建，全靠镜像自带内容，唯一要验的是版本别串。
+    echo "==> 跳过构建（SKIP_BUILD=1），直接使用本地镜像"
+    if ! docker image inspect mybooks-local:latest >/dev/null 2>&1; then
+        echo "!! 本地没有 mybooks-local:latest，无法跳过构建"
+        echo "   先导入离线成品镜像: sh scripts/load-images.sh"
+        exit 1
+    fi
+    if ! CONTAINER="$CONTAINER" sh scripts/check-version.sh --image; then
+        echo "!! 本地镜像版本与包内 $PKG_VER 不一致，不能直接用（会部署出半新半旧的东西）"
+        echo "   要么导入匹配版本的离线镜像，要么去掉 SKIP_BUILD 正常构建"
+        exit 1
+    fi
+elif [ "$1" = "build-only" ]; then
     build_image || exit 1
     echo "==> 完成（build-only，未启动）。启动请执行: docker compose up -d --force-recreate --no-build"
     exit 0
+else
+    build_image || exit 1
 fi
-build_image || exit 1
 
-echo "==> [4/5] 启动容器"
+echo "==> [5/6] 启动容器"
 # --no-build 不可省：up 一旦发现镜像缺失就会重新走 compose 的内嵌 BuildKit 路径。
 docker compose up -d --force-recreate --no-build
 
-echo "==> [5/5] 启动验证"
+echo "==> [6/6] 启动验证"
 # 不能 fixed sleep 就直接 supervisorctl status：容器里 start.sh 要先补目录、
 # 跑 --syncdb 和 --update-config，这期间 supervisord 还没起来，
 # 会报 "unix:///var/run/supervisor.sock no such file"（不是启动失败）。

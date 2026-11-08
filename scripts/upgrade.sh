@@ -223,6 +223,15 @@ seed_logo_defaults
 if [ "$SKIP_BUILD" = "1" ]; then
     echo "==> [7/8] 跳过构建（SKIP_BUILD=1）"
 else
+    echo "==> [7/8] 基础镜像预检（构建不再需要 node 镜像）"
+    # 构建只依赖 mybooks_base 一个外部镜像；本地没有时先找离线包，最后才联网拉。
+    # 现场 TLS 被中间人改写时 pull 必失败，所以离线包是主路径。
+    # shellcheck source=scripts/base-image.sh
+    . "$SRC/scripts/base-image.sh"
+    ensure_base_image "$SRC" "$OLD" "$(dirname "$PKG")" || {
+        echo "!! 基础镜像不可用，停止升级（容器未停止之后的步骤未执行）"
+        exit 1
+    }
     echo "==> [7/8] 构建镜像（耗时较久，请耐心）"
     ( cd "$SRC" && DOCKER_BUILDKIT=0 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" -t mybooks-local:latest . ) || exit 1
     host_sha=$(sha256sum "$SRC/app/dist/index.html" | awk '{print $1}')
