@@ -7,23 +7,6 @@ FROM docker.1ms.run/library/ubuntu:24.04
 ARG BUILD_COUNTRY="CN"
 
 # 合并所有 RUN 指令，减少镜像层数
-#
-# 【体积：剥掉文档 / 手册 / 系统翻译（build.29）】
-# 为什么必须写在下面这个 RUN 里：Docker 的层是只读叠加，另起一条
-# `RUN rm -rf /usr/share/doc` 只会多出一个"白障"层 —— 文件仍留在下面的
-# 层里，镜像体积一点不变，甚至还多几 MB。删必须和装在同一层。
-#
-# 删什么 / 为什么安全：
-#   /usr/share/doc、/usr/share/info、/usr/share/man  纯文本说明，运行时无人读
-#   /usr/share/locale/*                               系统程序的 gettext 翻译，
-#       容器里 nginx/supervisor/apt 的提示语没人看；本项目的多语言在前端 JS
-#       里（app/locales/*.json），不依赖这一坨
-#   /usr/lib/node_modules/npm/{docs,man}              npm 自带的手册（`npm help` 才用）
-#
-# 保留什么（别顺手删）：
-#   /usr/share/locale/locale.alias   部分程序启动时读它，整个目录删空会打告警
-#   /usr/lib/locale                  glibc 的 locale 归档，中文排序/格式化靠它
-#   /usr/share/zoneinfo              下面 ln -sf 了 /etc/localtime
 RUN set -ex; \
     if [ "x${BUILD_COUNTRY}" = "xCN" ]; then \
         sed 's@archive.ubuntu.com/ubuntu@mirrors.huaweicloud.com/repository/ubuntu@g' -i /etc/apt/sources.list.d/ubuntu.sources; \
@@ -45,9 +28,6 @@ RUN set -ex; \
     groupmod -g 990 mybooks && usermod -aG users mybooks; \
     sed -i "s/user  nginx;/user mybooks;/g" /etc/nginx/nginx.conf; \
     apt-get purge -y --auto-remove gnupg2; \
-    rm -rf /usr/share/doc/* /usr/share/info/* /usr/share/man/*; \
-    rm -rf /usr/share/lintian /var/cache/man /usr/lib/node_modules/npm/docs /usr/lib/node_modules/npm/man; \
-    find /usr/share/locale -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + || true; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.cache
 

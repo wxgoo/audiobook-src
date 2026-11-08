@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """版本锁（防反弹）回归测试。
 
-背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.29`（上游已发布 tag 4.6.0
-+ 第 29 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
+背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.28`（上游已发布 tag 4.6.0
++ 第 28 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
 回退（写回 4.8.x、写回裸 4.6.0）、被构建参数顶成空串、Dockerfile/Makefile
 守卫被删除，都必须失败。
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKER = ROOT / "scripts" / "check-version-lock.py"
-LOCK = "4.6.0-build.29"
+LOCK = "4.6.0-build.28"
 FILES = [
     "webserver/version.py",
     "docker-compose.yml",

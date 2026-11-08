@@ -51,7 +51,7 @@
 
 ### 第 2 步：获取项目
 
-把交付的 `audiobook-deploy-4.6.0-build.29.tar.gz` 解压到一个**路径里不含中文和空格**的目录，例如：
+把交付的 `audiobook-deploy-4.6.0-build.28.tar.gz` 解压到一个**路径里不含中文和空格**的目录，例如：
 
 ```
 D:\audiobook\
@@ -147,7 +147,7 @@ SSH 登录 NAS 后，**三行命令**完成部署：
 
 ```bash
 cd /volume1/docker
-tar -xzf audiobook-deploy-4.6.0-build.29.tar.gz
+tar -xzf audiobook-deploy-4.6.0-build.28.tar.gz
 cd audiobook && sh scripts/deploy.sh
 ```
 
@@ -871,7 +871,7 @@ docker exec audiobook-mybooks-1 python3 -c \
 
 ```bash
 cd /volume1/docker
-sh audiobook/scripts/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-build.29.tar.gz
+sh audiobook/scripts/upgrade.sh /volume1/docker/audiobook-deploy-4.6.0-build.28.tar.gz
 ```
 
 它做的事（详见 [`docs/部署包说明.md`](docs/部署包说明.md) 的步骤表）核心只有一句：

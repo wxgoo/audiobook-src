@@ -166,7 +166,7 @@ CMD ["pytest", "/var/www/mybooks/tests"]
 # 生产环境（必须是最后一个 FROM：Docker 默认构建最后阶段）
 FROM docker.1ms.run/poxenstudio/mybooks_base:latest AS production
 ARG BUILD_COUNTRY="CN"
-ARG GIT_VERSION="4.6.0-build.29"
+ARG GIT_VERSION="4.6.0-build.28"
 # 是否安装 faster-whisper（音频转写）。默认装：不带 torch，只多约 250MB，
 # x86 上比 openai-whisper 快 4 倍以上，ARM/低端 CPU 也能跑 tiny/base。
 # 不需要时构建加 --build-arg WITH_WHISPER=0 即可跳过，镜像体积回落。
