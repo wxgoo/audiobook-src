@@ -43,22 +43,32 @@ DOCS_EXACT = {"CHANGELOG.md", "README.md", "INSTALL_GUIDE.md", "SECURITY.md"}
 
 
 def git(*args):
-    return subprocess.check_output(["git", "-C", ROOT] + list(args)).decode("utf-8", "replace")
+    # core.quotepath=false：否则 git diff 会把中文路径写成 "docs/\345\234..."
+    # 这样的八进制转义串，发布清单里就会出现一堆不可读的路径。
+    return subprocess.check_output(
+        ["git", "-C", ROOT, "-c", "core.quotepath=false"] + list(args)
+    ).decode("utf-8", "replace")
+
+
+def clean_path(p):
+    return p.strip().strip('"')
 
 
 def changed_files(base_commit):
     """工作区相对 base_commit 的全部变更（含尚未提交的改动）。"""
     out = {}
     # 已提交的变更
-    for line in git("diff", "--name-status", base_commit, "HEAD").splitlines():
+    for line in git("diff", "--no-renames", "--name-status", base_commit, "HEAD").splitlines():
         parts = line.split("\t")
         if len(parts) >= 2:
-            out[parts[-1]] = parts[0][0]
-    # 未提交 / 未跟踪的改动（生成清单时通常正是这一批）
-    for line in git("status", "--porcelain", "-z").replace("\x00", "\n").splitlines():
+            out[clean_path(parts[-1])] = parts[0][0]
+    # 未提交 / 未跟踪的改动（生成清单时通常正是这一批）。
+    # -z + --no-renames：既不触发 core.quotepath 的八进制转义，也不会多出一行
+    # 「旧路径」把已删除的文件误当成新增。
+    for line in git("status", "--porcelain", "-z", "--no-renames").replace("\x00", "\n").splitlines():
         if len(line) < 4:
             continue
-        code, path = line[:2], line[3:]
+        code, path = line[:2], clean_path(line[3:])
         out[path] = "D" if "D" in code else "A"
     return out
 

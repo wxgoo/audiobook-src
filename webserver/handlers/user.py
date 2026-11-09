@@ -523,6 +523,18 @@ class UserMessages(BaseHandler):
         rows, total = Message.unread_page(self.sqlite_session, user.id, after_id=after_id)
         rsp["messages"] = [m.to_brief() for m in rows]
         rsp["total_unread"] = total
+        # 旧版本 book_barn 发的「请重新构建容器以获取更新」是上游 mybooks 的
+        # release 口径，库里可能还留着未读消息。展示层统一改写成 Gitee 提示，
+        # 不动数据库（用户点掉即消失），避免右上角消息弹窗里继续出现旧文案。
+        legacy_hint = "请重新构建容器以获取更新"
+        for item in rsp["messages"]:
+            data = item.get("data")
+            if isinstance(data, dict) and legacy_hint in str(data.get("message", "")):
+                item["data"] = dict(data)
+                item["data"]["message"] = (
+                    "检测到新版本（本提示已改为依据 Gitee 发布清单）。"
+                    "请到左侧管理树「版本与更新」查看新版本、在线更新或重新部署指引。"
+                )
         return rsp
 
     @js

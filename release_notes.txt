@@ -1,11 +1,9 @@
-<b>Rev: v4.6.0</b><br/>
-<b>日期: 2026-10-25</b><br/>
+<b>版本与更新</b><br/>
+<b>运行期版本: 4.6.0-build.27</b><br/>
 <br/>
-<b>1.创建直接访问的共享链接</b><br/>
-<b>2.书单支持设置共享阅读</b><br/>
-<b>3.导入性能优化</b><br/>
-<b>4.系统设置重构，首页自定义及UI美化</b><br/>
-<b>5.接入MyNexus并在MyReader支持AI伴读</b><br/>
-<b>6.支持Koreader插件同步数据</b><br/>
-<b>7.限制必须登录才能使用</b><br/>
-<b>8.部分工具优化</b><br/>
+本项目的更新来源是 Gitee 仓库 wxgoo/audiobook-src 的发布清单
+<code>update/manifest.json</code>，与上游 mybooks 的 release 无关。<br/>
+请在左侧管理树打开「版本与更新」查看新版本、在线更新或重新部署指引。<br/>
+<br/>
+本文件仅为兼容旧构建保留；界面弹窗内容由 /api/admin/release/notes
+依据 Gitee 发布清单动态生成，不再读取本文件。<br/>

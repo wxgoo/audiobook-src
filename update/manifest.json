@@ -9,7 +9,8 @@
     "系统设置里的「更新与工具箱」拆成「版本与更新」独立页与纯工具箱分组",
     "自动检测改走 Gitee update/manifest.json，停用上游 mybooks.top release 接口",
     "仅后端 Python 修订支持下载校验→备份→替换→重启；提供 Web 回滚与宿主机回滚命令",
-    "deploy.sh / upgrade.sh 加固化钩子，防止重建容器时热更新被冲掉"
+    "deploy.sh / upgrade.sh 加固化钩子，防止重建容器时热更新被冲掉",
+    "右上角新版本角标、首页/页脚版本弹窗、消息弹窗旧文案统一改为 Gitee 口径"
   ],
   "requires_dist": true,
   "hotfixable": false,
@@ -19,6 +20,16 @@
       "path": "webserver/handlers/__init__.py",
       "sha256": "032f311d7ebcea20a747b6686e30494c4173bcb84f1570c5e47d8e9934f4e0ce",
       "bytes": 910
+    },
+    {
+      "path": "webserver/handlers/admin.py",
+      "sha256": "482021d11cb84c3f955af529c825a93af7f4a293dd7500500fc2f9e670078f9c",
+      "bytes": 84501
+    },
+    {
+      "path": "webserver/handlers/user.py",
+      "sha256": "bc24282860ff8072ea0654b538221cdb1c038067d444fc894070657d2c96e392",
+      "bytes": 61228
     },
     {
       "path": "webserver/handlers/version.py",
@@ -32,8 +43,8 @@
     },
     {
       "path": "webserver/services/book_barn.py",
-      "sha256": "fdd49393028407408ca95058bd0f558cae7bbdf7b4220c3972c3724928c4821f",
-      "bytes": 27628
+      "sha256": "e881be0c9f0ce8361cc3f79e6d2a61592e5c38076bfc18c15553b6b533ed46eb",
+      "bytes": 27886
     },
     {
       "path": "webserver/services/version_check.py",
@@ -49,6 +60,8 @@
   "changed": {
     "hotfix": [
       "webserver/handlers/__init__.py",
+      "webserver/handlers/admin.py",
+      "webserver/handlers/user.py",
       "webserver/handlers/version.py",
       "webserver/main.py",
       "webserver/services/book_barn.py",
@@ -65,7 +78,33 @@
       "app/src/components/AppHeader.vue",
       "app/src/pages/admin/settings.vue",
       "app/src/pages/admin/version.vue",
+      "delivery/overlay/MANIFEST.tsv",
+      "delivery/overlay/SHA256SUMS",
+      "delivery/overlay/files/Dockerfile",
+      "delivery/overlay/files/app/locales/en.json",
+      "delivery/overlay/files/app/locales/zh-TW.json",
+      "delivery/overlay/files/app/locales/zh.json",
+      "delivery/overlay/files/app/src/components/AppHeader.vue",
+      "delivery/overlay/files/app/src/pages/admin/settings.vue",
+      "delivery/overlay/files/app/src/pages/admin/version.vue",
+      "delivery/overlay/files/docker/start.sh",
+      "delivery/overlay/files/release_notes.txt",
+      "delivery/overlay/files/scripts/deploy.sh",
+      "delivery/overlay/files/scripts/gen-update-manifest.py",
+      "delivery/overlay/files/scripts/pack.sh",
+      "delivery/overlay/files/scripts/sync-hotfix.sh",
+      "delivery/overlay/files/scripts/upgrade.sh",
+      "delivery/overlay/files/update/manifest.json",
+      "delivery/overlay/files/webserver/handlers/__init__.py",
+      "delivery/overlay/files/webserver/handlers/admin.py",
+      "delivery/overlay/files/webserver/handlers/user.py",
+      "delivery/overlay/files/webserver/handlers/version.py",
+      "delivery/overlay/files/webserver/main.py",
+      "delivery/overlay/files/webserver/services/book_barn.py",
+      "delivery/overlay/files/webserver/services/version_check.py",
+      "delivery/overlay/files/webserver/settings.py",
       "docker/start.sh",
+      "release_notes.txt",
       "scripts/deploy.sh",
       "scripts/gen-update-manifest.py",
       "scripts/pack.sh",
@@ -74,6 +113,10 @@
     ],
     "docs": [
       "CHANGELOG.md",
+      "delivery/overlay/files/CHANGELOG.md",
+      "delivery/overlay/files/docs/在线更新说明.md",
+      "delivery/overlay/files/docs/部署包说明.md",
+      "delivery/overlay/files/update/README.md",
       "docs/在线更新说明.md",
       "docs/部署包说明.md",
       "update/README.md"

@@ -45,6 +45,13 @@
 7. **打包门禁**：`pack.sh` 校验 `update/manifest.json` 与 `scripts/sync-hotfix.sh`
    必须在包内；新增 `scripts/gen-update-manifest.py` 按 git diff 自动分类变更、
    生成带 sha256 的发布清单。
+8. **弹窗与右上角提示全部换成 Gitee 口径**：右上角（与外观设置 / 退出平行）
+   新增「新版本」角标按钮，由 `sys.upgrable` 驱动、仅管理员可见、直达 `/admin/version`；
+   首页自动弹出的「版本变更」对话框与页脚版本号弹窗，内容由
+   `AdminReleaseNotes` 改为依据 Gitee 发布清单动态生成（按 revision 去重、含直达链接），
+   **不再读取上游 `release_notes.txt`**（那份写的是 mybooks v4.6.0 变更，与本地修订无关）；
+   右上角消息弹窗里残留的旧「请重新构建容器以获取更新」站内消息，在展示层统一改写为
+   Gitee 提示；`release_notes.txt` 只作兼容旧构建保留。
 
 > 本次 r7 自身含前端改动，**首次上线必须完整部署**；此后纯后端修订（r8 起）
 > 才可用页内「立即更新」。详见 `docs/在线更新说明.md`。

@@ -376,7 +376,7 @@ class BookBarnService(AsyncService):
                 self.checked_release_time = time.time() + 8 * 60 * 60
                 CONF[UPGRABLE_REVISION] = ""
                 # 新版本检测改以 Gitee 发布清单为准（公开仓库、无需 token），不再请求
-                # 上游 mybooks.top 的 release 接口 —— 那边返回的是无关的 4.8.x 号段。
+                # 上游 mybooks.top 的 release 接口 —— 那边返回的号段与本项目无关。
                 # 关闭「自动检测」后这里完全不打网络；页面里的「立即检测」仍可手动执行。
                 if CONF.get("AUTO_CHECKING_NEW_VERSION", True):
                     try:
@@ -387,7 +387,9 @@ class BookBarnService(AsyncService):
                         else:
                             cur = vc.read_local_manifest().get("revision") or (VERSION + "-r0")
                             rev = remote.get("revision", "")
-                            if rev and rev != cur:
+                            # 与 version_check.status() 同口径：远端清单若比本地旧（例如
+                            # 发布时漏更新 manifest，或临时回滚），不能倒过来提示升级。
+                            if rev and rev != cur and vc._rev_num(rev) >= vc._rev_num(cur):
                                 logging.info("[BARN] 发现新修订 %s（本地 %s）", rev, cur)
                                 CONF[UPGRABLE_REVISION] = rev
                                 if not self.admin_uids:

@@ -294,6 +294,17 @@
             <appearance-menu />
 
             <template v-if="err == 'ok' && user.is_login">
+                <!-- 新版本提示：后台按 Gitee 发布清单检测后写入 sys.upgrable（修订号），
+                     与「外观设置 / 退出」平行，只给管理员看，点了直达 /admin/version。
+                     不再沿用上游 mybooks.top 的 release 提示。 -->
+                <v-btn v-if="user.is_admin && sys.upgrable" icon small class="mr-1"
+                       :title="$t('appHeader.newVersionTip', { rev: sys.upgrable })"
+                       @click="$router.push('/admin/version')">
+                    <v-badge color="red" dot overlap>
+                        <v-icon>mdi-update</v-icon>
+                    </v-badge>
+                </v-btn>
+
                 <v-menu offset-y right :close-on-content-click="false" v-if="runningTasks.length > 0">
                     <template v-slot:activator="{ on }">
                         <v-btn v-on="on" icon class="mr-2" width="48px" height="48px">

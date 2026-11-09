@@ -1327,28 +1327,80 @@ class AudioTestConnection(BaseHandler):
 
 
 class ReleaseNotes(BaseHandler):
+    """「版本变更」弹窗：内容来自本项目 Gitee 发布清单，不再读上游 release_notes.txt。
+
+    上游那份 release_notes.txt 写的是 mybooks v4.6.0 的变更，与本地 build.27
+    修订完全无关，登录后自动弹出来只会误导。这里改成：
+      * 无新版本且非 force → 空串，首页不弹窗；
+      * 有新版本时按 revision 去重（LAST_UPDATE_REVISION），同一修订只自动弹一次；
+      * force=true（页脚主动点版本号）时总是返回当前版本卡片 + 直达 /admin/version 的链接。
+    所有远端文案都经 html.escape，因为前端用 v-html 渲染。
+    """
+
     @js
     def get(self):
-        last_revsion = CONF.get("LAST_REVISION", "")
-        force = self.get_argument("force", "false") == "true"
-        logging.info("Current version: %s, Last revision: %s", VERSION, last_revsion)
-        if last_revsion != VERSION:
-            args = loader.SettingsLoader()
-            args["LAST_REVISION"] = VERSION
-            SettingsSaver().save_extra_settings(args)
+        from html import escape
+        from webserver.services import version_check as vc
 
-        if last_revsion != VERSION or force:
-            # Load the release notes from the public folder
-            release_note_path = CONF["static_path"] + "/static/release_notes.txt"
-            notes = ""
-            if os.path.exists(release_note_path):
-                with open(release_note_path, "r", encoding="utf-8") as f:
-                    notes = f.read()
-            else:
-                logging.error("Release note file not found")
-            return {"err": "ok", "msg": notes}
-        else:
+        force = self.get_argument("force", "false") == "true"
+        # 关掉「自动检测」后首页不再弹窗；页脚主动点版本号（force）仍可查看
+        if not force and not CONF.get("AUTO_CHECKING_NEW_VERSION", True):
             return {"err": "ok", "msg": ""}
+        local = vc.read_local_manifest()
+        cur = local.get("revision") or (VERSION + "-r0")
+        latest, err = vc.fetch_manifest(force=False)
+        has_new = bool(latest and latest.get("revision")
+                       and latest["revision"] != cur
+                       and vc._rev_num(latest["revision"]) >= vc._rev_num(cur))
+        last_shown = CONF.get("LAST_UPDATE_REVISION", "")
+
+        if not force:
+            if not has_new or last_shown == latest["revision"]:
+                return {"err": "ok", "msg": ""}
+
+        def esc(x):
+            return escape(str(x if x is not None else ""), quote=True)
+
+        src = ('<div style="margin-top:10px;color:#999;font-size:12px">'
+               '来源：Gitee wxgoo/audiobook-src · update/manifest.json</div>')
+        link = '<a href="/admin/version" style="text-decoration:underline">%s →</a>' % _("打开「版本与更新」")
+
+        if has_new:
+            rev = esc(latest["revision"])
+            body = [
+                '<div style="line-height:1.8">',
+                '<b>%s %s</b><br/>' % (_("检测到新版本"), rev),
+                '<span style="color:#888">%s %s · %s → %s</span>' % (
+                    _("发布日期"), esc(latest.get("date", "")),
+                    esc(latest.get("base_revision", "")), rev),
+                '<p style="margin:8px 0">%s</p>' % esc(latest.get("summary", "")),
+            ]
+            for n in (latest.get("notes") or [])[:6]:
+                body.append('<div>· %s</div>' % esc(n))
+            action = (_("本次含前端产物或镜像级文件，请到「管理 → 版本与更新」重新部署")
+                      if latest.get("requires_dist")
+                      else _("仅后端修订，可在「版本与更新」页面点「立即更新」在线生效"))
+            body += ['<p style="margin:8px 0;color:#c62828">%s</p>' % action,
+                     link, src, '</div>']
+            args = loader.SettingsLoader()
+            args["LAST_UPDATE_REVISION"] = latest["revision"]
+            SettingsSaver().save_extra_settings(args)
+            CONF["LAST_UPDATE_REVISION"] = latest["revision"]
+            return {"err": "ok", "msg": "".join(body)}
+
+        # force=true 且已是最新：给一张「当前版本」卡片，仍标明检测源
+        body = [
+            '<div style="line-height:1.8">',
+            '<b>%s</b><br/>' % esc(VERSION),
+            '<span style="color:#888">%s：%s</span>' % (_("当前修订"), esc(cur)),
+            '<p style="margin:8px 0">%s</p>' % esc(local.get("summary", "")),
+        ]
+        if err:
+            body.append('<p style="color:#c62828">%s：%s</p>' % (_("暂时无法连接 Gitee"), esc(err)))
+        else:
+            body.append('<p>%s</p>' % _("已是最新修订，无需更新。"))
+        body += [link, src, '</div>']
+        return {"err": "ok", "msg": "".join(body)}
 
 
 class ThanksTo(BaseHandler):
