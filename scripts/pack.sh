@@ -50,7 +50,8 @@ if [ "${1:-}" = "--check" ]; then
                  conf/supervisor/mybooks.conf conf/nginx/mybooks.conf \
                  scripts/upgrade.sh scripts/deploy.sh scripts/check-reader.sh \
                  scripts/check-myreader-links.sh scripts/myreader-links.manifest \
-                 scripts/pack.sh scripts/hotfix.sh tools/category_backfill.py; do
+                 scripts/pack.sh scripts/hotfix.sh scripts/sync-hotfix.sh \
+                 tools/category_backfill.py update/manifest.json; do
             [ -e "$D/$f" ] || { echo "  !! 缺 $f"; fail=1; }
         done
 
@@ -261,6 +262,15 @@ else
     echo "  !! 缺 scripts/check-myreader-links.sh 或 myreader-links.manifest，禁止出包"
     exit 1
 fi
+
+# 发布清单必须随包发布：/admin/version 拿它当本地修订基线，缺了会一直误报「有新版本」。
+# 生成命令见 scripts/gen-update-manifest.py 顶部说明。
+if [ ! -f update/manifest.json ] || ! grep -q '"revision"' update/manifest.json; then
+    echo "  !! 缺 update/manifest.json 或清单里没有 revision，禁止出包"
+    echo "     生成： python3 scripts/gen-update-manifest.py --revision <新> --base-revision <旧> --base-commit <sha>"
+    exit 1
+fi
+echo "  发布清单 OK: $(grep -m1 '"revision"' update/manifest.json | tr -d ' ,')"
 
 # ---------- 打包 ----------
 echo "==> [3/4] 打包（cd 到父目录对目录名打包，不用 --transform）"

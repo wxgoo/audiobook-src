@@ -124,44 +124,14 @@ class BookBarnClient:
             raise Exception(f"[BARN]Failed to apply token: {response.status_code} - {response.text}")
 
     def check_latest_release(self, token):
-        if not CONF.get("AUTO_CHECKING_NEW_VERSION", True):
-            logging.debug("Auto checking new version is disabled, skip checking latest release.")
-            return None
-        if VERSION == "v0.0.1":
-            logging.info("Current version is v0.0.1, skip checking latest release for development version.")
-            return None
-        params = {
-            "version": VERSION,
-            "token": token,
-            "platform": get_os() + "-" + get_arch()
-        }
-        result = None
-        try:
-            response = requests.get(self.HOST_BASE + self.CHECK_LATEST_RELEASE_API,
-                                    headers=self.headers,
-                                    params=params,
-                                    timeout=30,
-                                    verify=True)
-            if response.status_code == 200:
-                data = response.json().get("data")
-                if data is not None:
-                    latest_version = data.get("rev")
-                    if latest_version is not None and latest_version != VERSION:
-                        logging.info("New release found: %s", latest_version)
-                        result = {
-                            "rev": latest_version,
-                            "notes": data.get("notes", ""),
-                            "date": data.get("releaseDate", "")
-                        }
-                    else:
-                        logging.info("Current version is up-to-date.")
-                else:
-                    logging.info(f"Current version is up-to-date, no release found for the platform {get_os()}-{get_arch()}")
-            else:
-                logging.error(f"Failed to get latest release, status code {response.status_code}")
-        except Exception:
-            logging.error("Exception occurred while checking latest release.")
-        return result
+        """已废弃：新版本检测统一走 webserver.services.version_check（Gitee 发布清单）。
+
+        这里原本请求上游 mybooks.top 的 release 接口，返回的是与本项目无关的
+        4.8.x 号段，而且只发一条「请重新构建容器」的消息、没有任何可执行的
+        更新动作。保留方法签名仅为兼容旧调用，不再发起网络请求。
+        """
+        logging.debug("[BARN] check_latest_release 已废弃，请使用 version_check")
+        return None
 
     def _update_action(self, token, action):
         data = {
@@ -404,18 +374,35 @@ class BookBarnService(AsyncService):
         while True:
             if self.checked_release_time is None or self.checked_release_time < time.time():
                 self.checked_release_time = time.time() + 8 * 60 * 60
-                latest_release = self.client.check_latest_release(self.token)
                 CONF[UPGRABLE_REVISION] = ""
-                if latest_release is not None:
-                    logging.info(f"[BARN]New version available: {latest_release['rev']}, released on {latest_release['date']}")
-                    if self.admin_uids is None or len(self.admin_uids) == 0:
-                        self.get_admin_uids()
-                    CONF[UPGRABLE_REVISION] = latest_release.get("rev", "")
-                    if len(self.admin_uids) > 0:
-                        message = f"有新版本发布: {latest_release['rev']}，发布日期: {latest_release['date']}，\
-                                    更新内容: {latest_release['notes']}，请重新构建容器以获取更新。"
-                        for uid in self.admin_uids:
-                            self.add_msg(uid, "info", message)
+                # 新版本检测改以 Gitee 发布清单为准（公开仓库、无需 token），不再请求
+                # 上游 mybooks.top 的 release 接口 —— 那边返回的是无关的 4.8.x 号段。
+                # 关闭「自动检测」后这里完全不打网络；页面里的「立即检测」仍可手动执行。
+                if CONF.get("AUTO_CHECKING_NEW_VERSION", True):
+                    try:
+                        from webserver.services import version_check as vc
+                        remote, err = vc.fetch_manifest(force=True)
+                        if err or not remote:
+                            logging.info("[BARN] 新版本检测跳过：%s", err or "清单为空")
+                        else:
+                            cur = vc.read_local_manifest().get("revision") or (VERSION + "-r0")
+                            rev = remote.get("revision", "")
+                            if rev and rev != cur:
+                                logging.info("[BARN] 发现新修订 %s（本地 %s）", rev, cur)
+                                CONF[UPGRABLE_REVISION] = rev
+                                if not self.admin_uids:
+                                    self.get_admin_uids()
+                                action = ("本次含前端产物，请到「管理 → 版本与更新」重新部署"
+                                          if remote.get("requires_dist")
+                                          else "请到「管理 → 版本与更新」点击「立即更新」，可在线生效")
+                                message = (f"检测到新版本 {rev}（{remote.get('date', '')}）："
+                                           f"{remote.get('summary', '')}。{action}")
+                                for uid in self.admin_uids:
+                                    self.add_msg(uid, "info", message)
+                            else:
+                                logging.info("[BARN] 当前已是最新修订 %s", cur)
+                    except Exception:
+                        logging.exception("[BARN] 新版本检测异常（不影响书栈服务）")
 
             if not CONF.get("ENABLE_BOOKBARN", False) or not CONF.get("ENABLE_RECEIVING_BOOKS", False):
                 time.sleep(30 * 60)

@@ -127,6 +127,13 @@ seed_logo_defaults() {
 }
 seed_logo_defaults
 
+# 「版本与更新」页做过一键在线热更新时，变更文件会留在数据卷 update-sync/current。
+# 必须在构建镜像之前把它们合并进源码目录，否则新镜像仍是旧代码、热更新被冲掉。
+SRC="$DIR" DATA="$DATA" sh "$DIR/scripts/sync-hotfix.sh" || {
+    echo "    !! 固化在线热更新失败，停止部署"
+    exit 1
+}
+
 echo "==> [3/5] Docker 构建镜像（BuildKit + --no-cache）"
 # 2026-11-09 修订：弃用 legacy builder（DOCKER_BUILDKIT=0）。legacy 在 btrfs 上每层一个
 # 子卷，多次构建把缓存池攒到千级后层索引失手（layer does not exist 事故根源），且已发

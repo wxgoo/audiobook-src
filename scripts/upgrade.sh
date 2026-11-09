@@ -239,6 +239,13 @@ seed_logo_defaults() {
 }
 seed_logo_defaults
 
+# 固化此前 /admin/version 的一键在线热更新（详见 scripts/sync-hotfix.sh），
+# 必须在构建前做，否则用新包重建会把容器里的热更新冲掉、版本倒退。
+SRC="$SRC" DATA="$DATA" sh "$SRC/scripts/sync-hotfix.sh" || {
+    echo "    !! 固化在线热更新失败，停止升级"
+    exit 1
+}
+
 # ---------- 7. 构建 ----------
 if [ "$SKIP_BUILD" = "1" ]; then
     echo "==> [7/8] 跳过构建（SKIP_BUILD=1）"

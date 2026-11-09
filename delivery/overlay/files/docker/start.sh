@@ -1,0 +1,167 @@
+#!/bin/sh
+
+PUID=${PUID:-0}
+PGID=${PGID:-0}
+
+# 显式补全基础路径，避免有些环境下 gosu/supervisord 下找不到命令
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH}"
+
+groupmod -o -g "${PGID}" mybooks
+usermod -o -u "${PUID}" mybooks
+
+echo "[MyBooks]Starting...."
+
+# 使用预设的书库和配置
+if [ ! -d "/data/books" ]; then
+  cp -rf /prebuilt/books /data/
+fi
+
+if [ ! -d "/data/sync" ]; then
+  mkdir -p /data/sync
+  chown -R mybooks:mybooks /data/sync
+fi
+
+if [ ! -d "/data/reader" ]; then
+  mkdir -p /data/reader
+  chown -R mybooks:mybooks /data/reader
+fi
+
+if [ ! -d "/data/books/imports/audiobooks" ]; then
+  mkdir -p /data/books/imports/audiobooks
+  chown -R mybooks:mybooks /data/books/imports/audiobooks
+fi
+
+if [ ! -s "/data/books/calibre-webserver.db" ]; then
+  cp /prebuilt/books/calibre-webserver.db-* /data/books/
+fi
+
+if [ ! -d "/data/log" ]; then
+  cp -rf /prebuilt/log /data/
+fi
+
+if [ ! -d "/data/cache" ]; then
+  mkdir -p /data/cache
+  chown -R mybooks:mybooks /data/cache
+fi
+
+if [ ! -d "/data/log/nginx" ]; then
+  mkdir -p /data/log/nginx
+  chown -R mybooks:mybooks /data/log/nginx
+fi
+
+echo "[MyBooks] Checked and parepared the default folders."
+
+# 检查目录，拷贝并创建目录
+cd /prebuilt/books/;
+for f in *; do
+  # §旧布局 audios 不得回流§ 4.6.0-17 起：镜像 /prebuilt/books/audios 是上游 Dockerfile
+  # mkdir 出来的空目录，这里的拷贝循环会把它反复带进宿主 audiobook-data/books/，
+  # 用户删一次、容器重启一次就回来一次。音频早已改为书目录内 .audio/，
+  # audios/<id>/ 旧布局 4.6.0-15 起不再读取，这里必须跳过。
+  [ "$f" = "audios" ] && continue
+  if [ -d "$f" -a ! -d "/data/books/$f" ]; then
+    cp -rvf "/prebuilt/books/$f" /data/books/
+  fi
+done
+
+# 检查文件，并拷贝过去
+find . \( -path ./library -o -name '*.pyc' -o -name '*.db*' \) -prune -o -type f -print | while read f; do
+    target="/data/books/$f"
+    if [ ! -e "$target" ]; then
+        cp "$f" "$target"
+    fi
+done
+echo "[MyBooks] Checked the library"
+
+mkdir -p /root/.npm
+
+echo "[MyBooks] Checking the permission..."
+# 设置PUID/GUID权限
+permission_file=/data/.permission
+touch $permission_file
+permission=`cat $permission_file`
+if [ "x$permission" != "x$PUID:$PGID" ]; then
+    echo "updating '/data/' permission to $PUID:$PGID"
+    chown -R mybooks:mybooks /data
+    echo "$PUID:$PGID" > $permission_file
+    echo "[MyBooks] permission updated!"
+fi
+
+# 设置系统文件的权限
+chown -R mybooks:mybooks \
+  /data/log/ \
+  /root/.config/calibre \
+  /root/.npm \
+  /var/www/mybooks/app/.env \
+  /var/www/mybooks/app/dist \
+  /var/www/mybooks/webserver \
+  /var/www/mybooks/update \
+  /var/www/mybooks/server.py
+
+echo "[MyBooks] Checked the permission"
+
+# 检测权限
+TEST_WRITE_FILE=/data/books/library/test_writeable.txt
+date > $TEST_WRITE_FILE
+if [ $? -ne 0 ]; then
+    echo "目录权限异常，无法写入";
+    exit 1
+else
+    rm $TEST_WRITE_FILE
+fi
+
+# 启动
+echo "[MyBooks] Prepared the running environments."
+
+export PYTHONDONTWRITEBYTECODE=1
+
+PYTHON_BIN="$(command -v python3 2>/dev/null || true)"
+if [ -z "$PYTHON_BIN" ]; then
+  for candidate in /usr/bin/python3 /usr/local/bin/python3; do
+    if [ -x "$candidate" ]; then
+      PYTHON_BIN="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$PYTHON_BIN" ]; then
+  echo "python3 not found. PATH=$PATH"
+  exit 1
+fi
+
+USE_GOSU=0
+if command -v gosu >/dev/null 2>&1; then
+  if gosu mybooks:mybooks /bin/true >/dev/null 2>&1; then
+    USE_GOSU=1
+  else
+    echo "warning: gosu probe failed, fallback to current user"
+  fi
+else
+  echo "warning: gosu not found, fallback to current user"
+fi
+
+run_as_mybooks() {
+  if [ "$USE_GOSU" = "1" ]; then
+    gosu mybooks:mybooks "$@"
+  else
+    "$@"
+  fi
+}
+
+echo
+echo "[MyBooks] Checking the nginx config..."
+nginx -t || exit 1
+
+echo
+echo "[MyBooks] Syncing db as needed..."
+run_as_mybooks "$PYTHON_BIN" /var/www/mybooks/server.py --syncdb
+
+echo
+echo "[MyBooks] Updating mybooks config..."
+run_as_mybooks "$PYTHON_BIN" /var/www/mybooks/server.py --update-config
+
+echo
+echo "[MyBooks] All done, launch the service..."
+exec /usr/bin/supervisord --nodaemon -u root -c /etc/supervisor/supervisord.conf
+

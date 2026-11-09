@@ -218,6 +218,9 @@ RUN mkdir -p /data/log/nginx/ && \
 COPY server.py /var/www/mybooks/
 COPY docker/ /var/www/mybooks/docker/
 COPY webserver/ /var/www/mybooks/webserver/
+# 发布清单：包内这份是本地修订基线，/admin/version 会拿它和 Gitee 上的同名文件比对。
+# 在线热更新成功后会直接改写容器内这份文件，所以目录必须可写（见 start.sh 的 chown）。
+COPY update/ /var/www/mybooks/update/
 # 运维工具（如 tools/category_backfill.py 读者组 #category 回填），容器内 docker exec 直接可用
 COPY tools/ /var/www/mybooks/tools/
 # 注：音频转写文稿的识别内核 srt_core.py 已随 webserver/ 一起进入镜像

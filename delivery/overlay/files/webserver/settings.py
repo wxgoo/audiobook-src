@@ -84,6 +84,8 @@ settings = {
     # Chunked upload size threshold (0 means disabled, >0 means files larger than this will be uploaded in chunks)
     "CHUNK_UPLOAD_SIZE": "0MB",
 
+    # 「版本与更新」(/admin/version)：后台每 8 小时比对 Gitee 发布清单并给管理员发站内提示。
+    # 关闭只停后台自动检测，页面里的「立即检测」仍可手动执行。开关在该页面内直接修改。
     "AUTO_CHECKING_NEW_VERSION": True,
 
     "ENABLE_BOOKBARN": False,
@@ -349,6 +351,10 @@ settings = {
     'FOOTER': '',
     'FOOTER_WATERMARK': 'PoxenStudio/MyBooks',
     'HIDE_PROJECT_LINKS': False,
+    # 「反馈」弹窗内容管理员可改（build.22）：默认仍指上游，管理员可换成自己的二维码/文案/仓库链接
+    'FEEDBACK_QR_URL': '/logo/link_gongzhonghao.jpg',
+    'FEEDBACK_NOTICE': '',
+    'FEEDBACK_GITHUB_URL': 'https://github.com/PoxenStudio/mybooks/issues',
     'SIDEBAR_ITEMS': [],                # 侧边栏显示的项目，空表示全部显示；仅含 "none" 表示全部隐藏
     'SIDEBAR_ITEMS_MIGRATED': False,    # 服务端内部标记（无 UI 控件）：管理员保存过设置页即置 True，之后 SIDEBAR_ITEMS 由管理员权威决定，读取期不再补齐旧默认列表缺的三个新项
 

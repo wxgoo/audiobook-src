@@ -95,6 +95,7 @@ chown -R mybooks:mybooks \
   /var/www/mybooks/app/.env \
   /var/www/mybooks/app/dist \
   /var/www/mybooks/webserver \
+  /var/www/mybooks/update \
   /var/www/mybooks/server.py
 
 echo "[MyBooks] Checked the permission"

@@ -17,6 +17,7 @@ def routes():
     from . import toolbox
     from . import tts
     from . import koreader
+    from . import version
 
     routes = []
     routes += assistant.routes()
@@ -32,5 +33,6 @@ def routes():
     routes += toolbox.routes()
     routes += tts.routes()
     routes += koreader.routes()
+    routes += version.routes()
     routes += static_files.routes()
     return routes

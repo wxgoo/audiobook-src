@@ -158,6 +158,10 @@
   content: "\F0068";
 }
 
+.mdi-backup-restore::before {
+  content: "\F006F";
+}
+
 .mdi-barcode::before {
   content: "\F0071";
 }
@@ -558,6 +562,10 @@
   content: "\F01DA";
 }
 
+.mdi-download-circle-outline::before {
+  content: "\F1465";
+}
+
 .mdi-download-lock-outline::before {
   content: "\F1321";
 }
@@ -920,6 +928,10 @@
 
 .mdi-open-in-new::before {
   content: "\F03CC";
+}
+
+.mdi-package-up::before {
+  content: "\F03D5";
 }
 
 .mdi-page-first::before {

@@ -494,12 +494,14 @@ def make_app():
     # WebDAV must come before files.routes() because files has a catch-all (r"/(.*)")
     # We need to get routes from handlers module without files, add webdav, then add files
     import importlib
-    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "reader_group", "transcribe", "book_dedup", "author_norm", "search_index"]
+    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "reader_group", "book_dedup", "author_norm", "search_index", "version"]
     mods = {}
     for name in names:
         with substep("import_handler:" + name):
             mods[name] = importlib.import_module("webserver.handlers." + name)
-    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, reader_group, transcribe, book_dedup, author_norm, search_index = (mods[n] for n in names)
+    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, reader_group, book_dedup, author_norm, search_index = (mods[n] for n in names[:-1])
+    # 单独取名，避免与 main() 里若干名为 version 的局部变量撞名
+    version_handler = mods["version"]
 
     app_routes = []
     app_routes += social_routes.SOCIAL_AUTH_ROUTES
@@ -524,13 +526,14 @@ def make_app():
     app_routes += folder.routes()
     app_routes += reader_dict.routes()
     app_routes += reader_group.routes()
-    app_routes += transcribe.routes()
     app_routes += book_dedup.routes()
     # 4.6.0-9 作者归一化管理接口（体检/别名表/预览/锁定）
     app_routes += author_norm.routes()
     # 中文检索索引：状态查询 + 手动重建（搜索接口本身保持不变）
     app_routes += search_index.routes()
     app_routes += koreader.routes()
+    # 「版本与更新」：Gitee 发布清单检测 + 在线热更新（仅管理员）
+    app_routes += version_handler.routes()
 
     # Podcast routes are always registered; each handler calls check_podcast_enabled()
     # at request time, so toggling ENABLE_PODCAST_SERVICE takes effect without restart.

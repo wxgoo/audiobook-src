@@ -84,6 +84,8 @@ settings = {
     # Chunked upload size threshold (0 means disabled, >0 means files larger than this will be uploaded in chunks)
     "CHUNK_UPLOAD_SIZE": "0MB",
 
+    # 「版本与更新」(/admin/version)：后台每 8 小时比对 Gitee 发布清单并给管理员发站内提示。
+    # 关闭只停后台自动检测，页面里的「立即检测」仍可手动执行。开关在该页面内直接修改。
     "AUTO_CHECKING_NEW_VERSION": True,
 
     "ENABLE_BOOKBARN": False,

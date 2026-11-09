@@ -692,6 +692,8 @@ export default {
                     color: "deep-orange",
                     groups: [
                         { icon: "mdi-cog", href: "/admin/settings", text: "appHeader.systemSettings", color: "blue darken-1"},
+                        // 新版本检测独立成页：不再混在「系统性能 → 更新与工具箱」里
+                        { icon: "mdi-update", href: "/admin/version", text: "appHeader.versionUpdate", color: "indigo"},
                         // r9：入口改叫「账号管理」。这一页对管理员只剩「改用户名/改密码」，
                         // 对普通用户仍是各设置项；叫「用户管理」会让管理员觉得自己
                         // 也能被这里限制，实际并不会。

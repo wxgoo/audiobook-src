@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "revision": "4.6.0-build.27-r7",
+  "base_revision": "4.6.0-build.27-r6",
+  "version": "4.6.0-build.27",
+  "date": "2026-11-09",
+  "summary": "新版本检测独立成页：Gitee 发布清单驱动，后端修订可一键在线更新，含前端产物则引导重新部署",
+  "notes": [
+    "系统设置里的「更新与工具箱」拆成「版本与更新」独立页与纯工具箱分组",
+    "自动检测改走 Gitee update/manifest.json，停用上游 mybooks.top release 接口",
+    "仅后端 Python 修订支持下载校验→备份→替换→重启；提供 Web 回滚与宿主机回滚命令",
+    "deploy.sh / upgrade.sh 加固化钩子，防止重建容器时热更新被冲掉"
+  ],
+  "requires_dist": true,
+  "hotfixable": false,
+  "reason": "本次改动包含前端产物或镜像级文件，在线替换无法生效，请重新执行 deploy.sh / upgrade.sh",
+  "files": [
+    {
+      "path": "webserver/handlers/__init__.py",
+      "sha256": "032f311d7ebcea20a747b6686e30494c4173bcb84f1570c5e47d8e9934f4e0ce",
+      "bytes": 910
+    },
+    {
+      "path": "webserver/handlers/version.py",
+      "sha256": "a58e6568c0c865cb30f8e09cb0b2d994c67b99f218cb7c19065a7664252f27b3",
+      "bytes": 3401
+    },
+    {
+      "path": "webserver/main.py",
+      "sha256": "e34a68a9aa33db4c8a0144ba46e3ead43bc17041fc5fd9ae4eccd48f66195ac3",
+      "bytes": 32542
+    },
+    {
+      "path": "webserver/services/book_barn.py",
+      "sha256": "fdd49393028407408ca95058bd0f558cae7bbdf7b4220c3972c3724928c4821f",
+      "bytes": 27628
+    },
+    {
+      "path": "webserver/services/version_check.py",
+      "sha256": "e4c63175789cec9953ca8c18dac53bc0135a9b46935fbb248a38e0edd9a134c0",
+      "bytes": 16895
+    },
+    {
+      "path": "webserver/settings.py",
+      "sha256": "f289fe77da55d16abec5d88514bf054f157a7527ea4324f4a927342dbfa340d5",
+      "bytes": 23984
+    }
+  ],
+  "changed": {
+    "hotfix": [
+      "webserver/handlers/__init__.py",
+      "webserver/handlers/version.py",
+      "webserver/main.py",
+      "webserver/services/book_barn.py",
+      "webserver/services/version_check.py",
+      "webserver/settings.py"
+    ],
+    "blocking": [
+      "Dockerfile",
+      "app/locales/en.json",
+      "app/locales/zh-TW.json",
+      "app/locales/zh.json",
+      "app/src/assets/css/mdi-subset.css",
+      "app/src/assets/fonts/materialdesignicons-subset.woff2",
+      "app/src/components/AppHeader.vue",
+      "app/src/pages/admin/settings.vue",
+      "app/src/pages/admin/version.vue",
+      "docker/start.sh",
+      "scripts/deploy.sh",
+      "scripts/gen-update-manifest.py",
+      "scripts/pack.sh",
+      "scripts/sync-hotfix.sh",
+      "scripts/upgrade.sh"
+    ],
+    "docs": [
+      "CHANGELOG.md",
+      "docs/在线更新说明.md",
+      "docs/部署包说明.md",
+      "update/README.md"
+    ]
+  },
+  "deploy_commands": [
+    "cd /volume1/docker",
+    "sha256sum -c audiobook-deploy-4.6.0-build.27-r7.tar.gz.sha256",
+    "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
+    "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
+    "tar -xzf audiobook-deploy-4.6.0-build.27-r7.tar.gz",
+    "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
+  ]
+}

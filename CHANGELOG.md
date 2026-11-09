@@ -9,7 +9,49 @@
 
 ---
 
-## 4.6.0-build.27-r6（当前包修订）
+## 4.6.0-build.27-r7（当前包修订）
+
+> 主题：**「版本与更新」独立成页 + 分级在线更新**。检测源由上游 mybooks.top 的
+> release 接口改为本项目的 Gitee 发布清单；只改后端 Python 的修订支持点一下就更新，
+> 含前端产物 / 镜像级文件的修订改为引导重新部署。
+> 本次新增了 `/admin/version` 页面并拆了设置页分组，**`app/dist` 必须重建**。
+
+### 变更
+
+1. **入口拆分**：系统设置「系统与性能 → 更新与工具箱」拆成两块——
+   「版本与更新」（独立页 `/admin/version`，左侧管理树直接进）和「工具箱」
+   （只留开发者模式 / 商店两个开关）。`AUTO_CHECKING_NEW_VERSION` 开关搬到新页，
+   语义改为「后台每 8 小时比对 Gitee 发布清单」，关闭不影响页内「立即检测」。
+   设置页留一张指路卡片，搜索别名不再指向已移走的旧开关。
+2. **检测**：新增 `webserver/services/version_check.py`，以 Gitee 公开仓库
+   `wxgoo/audiobook-src` 的 `update/manifest.json` 为唯一发布源（raw 直链，
+   无需 token / 无需容器内 git）。比对的是**修订号 `-rN`** 而不是 `VERSION`
+   ——运行期版本固定 `4.6.0-build.27`，否则改了代码检测不到。
+   包内同一份清单是本地基线，随 Dockerfile `COPY update/` 进镜像。
+3. **一键在线更新**：`POST /api/admin/version/apply` 按清单逐个下载
+   `server.py` / `webserver/**/*.py`，校验 sha256 + 字节数 + `compile()` 语法，
+   先备份旧文件到持久化 `/data/update-backup/`，再原子替换、清 `__pycache__`、
+   覆写本地清单，最后复用 `AdminRestartServer` 的 `sys.exit(0)` 让 supervisor 拉起新代码。
+   白名单之外的路径、跨版本补丁、`requires_dist=true` 一律拒绝在线更新。
+4. **需要 dist 的更新**：页面展示原因、涉及的产物文件与可直接复制的
+   `sha256sum -c` → `down` → `tar -xzf` → `deploy.sh` 命令，不偷偷替换半个产物。
+5. **回滚与防倒退**：Web 端一键回滚 + 宿主机 `docker cp` 命令；热更新同时把文件
+   写到 `/data/update-sync/current/`，`deploy.sh` / `upgrade.sh` 在构建前调用
+   `scripts/sync-hotfix.sh`，把数据卷里比包内更新的修订固化进源码目录，
+   避免下次重建容器把热更新冲掉。
+6. **旧链路下线**：`BookBarnClient.check_latest_release()` 不再请求上游 release
+   （那条链路返回无关的 4.8.x 号段、且只发「请重新构建容器」没有可执行动作），
+   后台每日检测改走新服务，站内消息直接指向新页面。
+7. **打包门禁**：`pack.sh` 校验 `update/manifest.json` 与 `scripts/sync-hotfix.sh`
+   必须在包内；新增 `scripts/gen-update-manifest.py` 按 git diff 自动分类变更、
+   生成带 sha256 的发布清单。
+
+> 本次 r7 自身含前端改动，**首次上线必须完整部署**；此后纯后端修订（r8 起）
+> 才可用页内「立即更新」。详见 `docs/在线更新说明.md`。
+
+---
+
+## 4.6.0-build.27-r6（上一修订）
 
 > 主题：**读者组分组权限的统计口径统一**——分组成员登录后，左侧树与分类页
 > 里的数字按「他真正读得到的书」重算，不再显示全库规模。

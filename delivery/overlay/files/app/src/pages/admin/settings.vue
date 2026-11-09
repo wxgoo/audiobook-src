@@ -1011,6 +1011,18 @@
               </div>
             </template>
 
+            <template v-if="s.special === 'version_update'">
+              <div class="pl-6">
+                <v-alert type="info" text dense class="mb-2">
+                  <div class="text-body-2">{{ $t("settings.version_update_title") }}</div>
+                  <div class="text-caption mt-1">{{ $t("settings.version_update_desc") }}</div>
+                </v-alert>
+                <v-btn small color="primary" @click="$router.push('/admin/version')">
+                  <v-icon small left>mdi-open-in-new</v-icon>{{ $t("settings.version_update_goto") }}
+                </v-btn>
+              </div>
+            </template>
+
             <template v-if="s.special === 'perf'">
               <div class="pl-6">
                 <div id="f-PERFORMANCE_MODE">
@@ -1484,7 +1496,8 @@ const SEARCH_ALIASES = {
     字幕: ["ENABLE_AUDIO_SUBTITLE"], srt: ["ENABLE_AUDIO_SUBTITLE"],
     重启: ["autoreload"], 生效: ["autoreload"], 超时: ["convert_timeout"], 时间: ["convert_timeout"], 转换超时: ["convert_timeout"],
     // 系统与性能 · 更新与工具箱
-    更新: ["AUTO_CHECKING_NEW_VERSION", "ENABLE_TOOLBOX_STORE"], 版本: ["AUTO_CHECKING_NEW_VERSION"], 升级: ["AUTO_CHECKING_NEW_VERSION"], 检查: ["AUTO_CHECKING_NEW_VERSION"], 检查更新: ["AUTO_CHECKING_NEW_VERSION"],
+    // 新版本检测已独立到 /admin/version，设置搜索里不再指向那个旧开关
+    商店更新: ["ENABLE_TOOLBOX_STORE"],
     工具箱: ["ENABLE_TOOLBOX_DEV_MODE", "ENABLE_TOOLBOX_STORE"], 开发者: ["ENABLE_TOOLBOX_DEV_MODE"], 商店: ["ENABLE_TOOLBOX_STORE"], 插件: ["ENABLE_TOOLBOX_STORE", "ENABLE_TXT_TO_TXTZ_PLUGIN"],
     插件市场: ["ENABLE_TOOLBOX_STORE"], 上传zip: ["ENABLE_TOOLBOX_DEV_MODE"],
     // 系统与性能 · 维护与清理
@@ -1633,7 +1646,7 @@ const SEARCH_ALIASES = {
     字幕: ["ENABLE_AUDIO_SUBTITLE"], srt: ["ENABLE_AUDIO_SUBTITLE"],
     重新啟動: ["autoreload"], 重啟: ["autoreload"], 生效: ["autoreload"], 逾時: ["convert_timeout"], 超時: ["convert_timeout"], 時間: ["convert_timeout"],
     // 系統與效能 · 更新與工具箱
-    更新: ["AUTO_CHECKING_NEW_VERSION", "ENABLE_TOOLBOX_STORE"], 版本: ["AUTO_CHECKING_NEW_VERSION"], 升級: ["AUTO_CHECKING_NEW_VERSION"], 檢查: ["AUTO_CHECKING_NEW_VERSION"], 檢查更新: ["AUTO_CHECKING_NEW_VERSION"],
+    商店更新: ["ENABLE_TOOLBOX_STORE"],
     工具箱: ["ENABLE_TOOLBOX_DEV_MODE", "ENABLE_TOOLBOX_STORE"], 開發者: ["ENABLE_TOOLBOX_DEV_MODE"], 商店: ["ENABLE_TOOLBOX_STORE"], 外掛: ["ENABLE_TOOLBOX_STORE", "ENABLE_TXT_TO_TXTZ_PLUGIN"],
     外掛商店: ["ENABLE_TOOLBOX_STORE"], 上傳zip: ["ENABLE_TOOLBOX_DEV_MODE"],
     // 系統與效能 · 檔案清理
@@ -1761,7 +1774,7 @@ const SEARCH_ALIASES = {
     subtitle: ["ENABLE_AUDIO_SUBTITLE"], subtitles: ["ENABLE_AUDIO_SUBTITLE"], srt: ["ENABLE_AUDIO_SUBTITLE"],
     restart: ["autoreload"], reboot: ["autoreload"], reload: ["autoreload"], "take effect": ["autoreload"], timeout: ["convert_timeout"], "conversion timeout": ["convert_timeout"],
     // System & Performance · updates & toolbox
-    update: ["AUTO_CHECKING_NEW_VERSION", "ENABLE_TOOLBOX_STORE"], updates: ["AUTO_CHECKING_NEW_VERSION", "ENABLE_TOOLBOX_STORE", "MAIN_PAGE_RECENT_COUNT"], version: ["AUTO_CHECKING_NEW_VERSION"], upgrade: ["AUTO_CHECKING_NEW_VERSION"], "check update": ["AUTO_CHECKING_NEW_VERSION"],
+    "store update": ["ENABLE_TOOLBOX_STORE"], updates: ["ENABLE_TOOLBOX_STORE", "MAIN_PAGE_RECENT_COUNT"],
     toolbox: ["ENABLE_TOOLBOX_DEV_MODE", "ENABLE_TOOLBOX_STORE"], tools: ["ENABLE_TOOLBOX_DEV_MODE", "ENABLE_TOOLBOX_STORE"], developer: ["ENABLE_TOOLBOX_DEV_MODE"], "dev mode": ["ENABLE_TOOLBOX_DEV_MODE"], store: ["ENABLE_TOOLBOX_STORE"], marketplace: ["ENABLE_TOOLBOX_STORE"], plugin: ["ENABLE_TOOLBOX_STORE", "ENABLE_TXT_TO_TXTZ_PLUGIN"], plugins: ["ENABLE_TOOLBOX_STORE", "ENABLE_TXT_TO_TXTZ_PLUGIN"], extension: ["ENABLE_TOOLBOX_STORE"], zip: ["ENABLE_TOOLBOX_DEV_MODE"],
     // System & Performance · cleanup
     "recycle bin": ["TRASH"], trash: ["TRASH"], "trash bin": ["TRASH"], cleanup: ["TRASH", "REMOVE_IMPORTED_FILE"], "clean up": ["TRASH", "REMOVE_IMPORTED_FILE"], disk: ["TRASH"], space: ["TRASH", "CACHE_MAX_MB"], delete: ["TRASH", "REMOVE_IMPORTED_FILE"],
@@ -2751,16 +2764,18 @@ export default {
             ],
           },
           {
-            id: "ops-update",
+            // 「新版本检测」已独立成 /admin/version 页面，这里只留一个指路卡片。
+            // 自动检测开关也搬到那一页，避免和工具箱开关混在一个分组里。
+            id: "ops-version",
             icon: "mdi-update",
-            title: "settings.sec_ops_update",
+            title: "settings.sec_ops_version",
+            special: "version_update",
+          },
+          {
+            id: "ops-toolbox",
+            icon: "mdi-toolbox-outline",
+            title: "settings.sec_ops_toolbox",
             fields: [
-              {
-                icon: "mdi-update",
-                key: "AUTO_CHECKING_NEW_VERSION",
-                label: "settings.auto_checking_new_version",
-                type: "checkbox",
-              },
               {
                 icon: "mdi-toolbox-outline",
                 key: "ENABLE_TOOLBOX_DEV_MODE",
