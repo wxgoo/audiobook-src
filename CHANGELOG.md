@@ -9,7 +9,34 @@
 
 ---
 
-## 4.6.0-build.27（当前）
+## 4.6.0-build.27-r3（当前包修订）
+
+> 主题：**构建口径全面切 BuildKit**——脚本与文档统一，代码与 dist 与 build.27 完全相同。
+
+### 变更
+
+1. **脚本弃用 legacy builder**：`deploy.sh` / `upgrade.sh` / `recover.sh` /
+   `fix-build-layer.sh` / `check-deployed-version.sh` 的构建命令统一为
+   `DOCKER_BUILDKIT=1 docker build --no-cache`（btrfs 上 legacy 每层一子卷，攒千级后
+   触发 `layer does not exist` 事故，且已发 deprecation 警告）；`recover.sh` 三轮顺序
+   改为「BuildKit 复用缓存 → 清碎片全量重建 → legacy 兜底」，其第二轮的
+   `builder prune -af` 改为不带 `-a`。
+2. **所有重建路径补内容指纹闸门**：`recover.sh` / `fix-build-layer.sh` /
+   `check-deployed-version.sh` 构建后新增镜像内 `index.html` sha256 与包内比对
+   （deploy/upgrade 原本就有）。恢复场景常是同一版本反复重建，只有版本门禁抓不到
+   「dist 半新半旧」，内容指纹才能拦下上下文快照复用产出的坏镜像。
+3. **文档口径统一**：`docs/部署包说明.md` 正文 7 处 legacy 写法全部改 BuildKit，
+   「为什么不能用 docker compose build」改写为「为什么是 DOCKER_BUILDKIT=1 docker build」；
+   历史 build.23 条目的部署口径标注已被本修订取代。
+
+### 不变
+
+- 代码零改动：`app/dist` 指纹与 build.27 相同（`56565065…`），运行期版本仍是
+  `4.6.0-build.27`；-r2（纯文档定版）与 -r3（文档 + 脚本口径）都是包修订号。
+
+---
+
+## 4.6.0-build.27
 
 > 主题：**有声书一集播完自动进下一集**，收起成迷你条之后同样生效；迷你条补上「上一首 / 下一首」。
 > 起因是现场反馈：点最小化收起后听完一集就停住，得重新点开播放页才会继续；

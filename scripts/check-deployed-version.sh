@@ -152,7 +152,7 @@ else
     echo
     echo "或手工三步："
     echo "  sed -i 's/^\\([[:space:]]*GIT_VERSION:\\).*/\\1 \"$SRC_VER\"/' docker-compose.yml"
-    echo "  DOCKER_BUILDKIT=0 docker build --no-cache --build-arg GIT_VERSION=$SRC_VER -t mybooks-local:latest ."
+    echo "  DOCKER_BUILDKIT=1 docker build --no-cache --build-arg GIT_VERSION=$SRC_VER -t mybooks-local:latest ."
     echo "  docker compose up -d --force-recreate --no-build"
     echo
     echo "构建完先验一行再启动："
@@ -169,11 +169,19 @@ if [ "$FIX" = "1" ]; then
         sed -i "s/^\([[:space:]]*GIT_VERSION:[[:space:]]*\).*/\1\"$SRC_VER\"/" docker-compose.yml
         echo "  raw: $(grep -n '^[[:space:]]*GIT_VERSION:' docker-compose.yml | head -1)"
     fi
-    echo "==> 重建镜像（--no-cache，显式 build-arg）"
-    DOCKER_BUILDKIT=0 docker build --no-cache --build-arg "GIT_VERSION=$SRC_VER" -t mybooks-local:latest . || {
+    echo "==> 重建镜像（BuildKit --no-cache，显式 build-arg）"
+    DOCKER_BUILDKIT=1 docker build --no-cache --build-arg "GIT_VERSION=$SRC_VER" -t mybooks-local:latest . || {
         echo "!! 构建失败，旧容器仍在跑，站点不受影响"
         exit 1
     }
+    # index.html 指纹比对：上下文快照复用（mtime/size 判重）会在这里现形
+    HOST_SHA=$(sha256sum app/dist/index.html 2>/dev/null | awk '{print $1}')
+    IMG_SHA=$(docker run --rm mybooks-local:latest sha256sum /var/www/mybooks/app/dist/index.html 2>/dev/null | awk '{print $1}')
+    if [ -n "$HOST_SHA" ] && [ "$HOST_SHA" != "$IMG_SHA" ]; then
+        echo "!! 镜像内 index.html 与包内不一致：$IMG_SHA != $HOST_SHA"
+        echo "   处理：docker builder prune -f 后重跑 --fix"
+        exit 1
+    fi
     echo "==> 校验镜像内版本"
     NEW_VER=$(docker run --rm mybooks-local:latest sh -c 'cd /var/www/mybooks && python3 -c "import webserver.version as v;print(v.VERSION)"' 2>/dev/null | tail -1)
     echo "  raw: image VERSION = ${NEW_VER:-(读取失败)}"

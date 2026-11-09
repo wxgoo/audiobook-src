@@ -122,17 +122,21 @@ seed_logo_defaults() {
 }
 seed_logo_defaults
 
-echo "==> [3/5] Docker 构建镜像（legacy builder + --no-cache）"
-# 本机没有 buildx 插件，docker compose build 会走 compose 内嵌的 BuildKit；
-# 其上下文快照按 (mtime,size) 判重，包内 index.html 体积与上一代相同、mtime 又是固定常量时，
-# 会复用旧快照，产出「新 _nuxt + 旧 index.html」的坏镜像。这里固定用 legacy builder + --no-cache。
+echo "==> [3/5] Docker 构建镜像（BuildKit + --no-cache）"
+# 2026-11-09 修订：弃用 legacy builder（DOCKER_BUILDKIT=0）。legacy 在 btrfs 上每层一个
+# 子卷，多次构建把缓存池攒到千级后层索引失手（layer does not exist 事故根源），且已发
+# deprecation 警告。BuildKit 的上下文快照按 (mtime,size) 判重，包内 index.html mtime 固定、
+# 体积可能与上一代相同，理论上可能复用旧快照产出坏镜像——所以下方构建后必须做镜像内
+# index.html 的 sha256 比对，坏镜像在这里被当场拦下，不会走到起容器那一步。
 build_image() {
-    DOCKER_BUILDKIT=0 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" \
+    DOCKER_BUILDKIT=1 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" \
         -t mybooks-local:latest . || return 1
     host_sha=$(sha256sum app/dist/index.html | awk '{print $1}')
     img_sha=$(docker run --rm mybooks-local:latest sha256sum /var/www/mybooks/app/dist/index.html | awk '{print $1}')
     if [ "$host_sha" != "$img_sha" ]; then
         echo "!! 镜像内 index.html 与包内不一致：$img_sha != $host_sha"
+        echo "   （上下文快照复用的典型症状）处理：docker builder prune -f 后重跑本脚本；"
+        echo "    仍不行则 DOCKER_BUILDKIT=0 legacy 兜底一轮"
         return 1
     fi
     echo "==> 镜像内 index.html: $img_sha"

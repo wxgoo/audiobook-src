@@ -81,8 +81,8 @@ if [ "$ORPHAN" -gt 20 ] 2>/dev/null; then
 fi
 hr
 
-# ---------- 5. 悬空镜像（legacy builder 的缓存层） ----------
-say "[5/7] 悬空镜像（旧 builder 的构建缓存就挂在这些层上）"
+# ---------- 5. 悬空镜像（构建缓存的挂载点） ----------
+say "[5/7] 悬空镜像（历代构建的缓存层就挂在这些层上）"
 DANG=$(docker images -f dangling=true -q 2>/dev/null | wc -l | tr -d ' ')
 say "dangling 镜像数: $DANG"
 docker images -f dangling=true --format '{{.ID}} {{.Size}}' 2>/dev/null | head -5
@@ -134,13 +134,24 @@ if [ -z "$VER" ]; then
     bad "拿不到包内版本，中止"
     exit 1
 fi
-( cd "$PROJ" && DOCKER_BUILDKIT=0 docker build --no-cache \
+( cd "$PROJ" && DOCKER_BUILDKIT=1 docker build --no-cache \
     --build-arg GIT_VERSION="$VER" -t "$IMAGE" . ) || {
     bad "构建仍然失败。看是否停在同一步："
     say "  若仍是 layer does not exist：多为 Btrfs 配额/元数据问题，见交付说明第十节"
     say "  若变成 no space left：先清 /volume1 空间（镜像整体约 6-8GB，构建峰值需再多 6GB）"
     exit 1
 }
+say ""
+say "==> 镜像内 index.html 指纹校验（上下文快照复用会在这里现形）"
+HOST_SHA=$(sha256sum "$PROJ/app/dist/index.html" 2>/dev/null | awk '{print $1}')
+IMG_SHA=$(docker run --rm "$IMAGE" sha256sum /var/www/mybooks/app/dist/index.html 2>/dev/null | awk '{print $1}')
+say "  包内  index.html = ${HOST_SHA:-读取失败}"
+say "  镜像内 index.html = ${IMG_SHA:-读取失败}"
+if [ -n "$HOST_SHA" ] && [ "$HOST_SHA" != "$IMG_SHA" ]; then
+    bad "镜像内 index.html 与包内不一致（上下文快照复用的典型症状）"
+    say "  处理：docker builder prune -f 后重跑本脚本；仍不行则 DOCKER_BUILDKIT=0 legacy 兜底一轮"
+    exit 1
+fi
 say ""
 say "==> 镜像内版本校验"
 if [ -f "$PROJ/scripts/check-version.sh" ]; then

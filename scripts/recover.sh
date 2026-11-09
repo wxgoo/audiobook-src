@@ -19,7 +19,7 @@
 #   ——先 prune 会把可用的缓存层一起删掉，等于逼自己全量重建。
 #
 # 安全边界：只用 docker image prune -f（只删无标签悬空层）与
-# docker builder prune -af（只删构建缓存），绝不用 -a / --volumes，
+# docker builder prune -f（只删构建缓存，不带 -a），绝不用 system prune / -a / --volumes，
 # 不碰带标签镜像、不碰数据卷。
 # ---------------------------------------------------------------------------
 set -u
@@ -116,30 +116,30 @@ else
     restart_docker || exit 1
     hr
 
-    say "[3] 第一轮构建：不带 --no-cache，复用仍在的缓存层"
-    say "    目的：绕开上次写坏的那一层（失败点就在 COPY app/ 那一层）"
+    say "[3] 第一轮构建：BuildKit（复用仍有效的缓存层）"
+    say "    目的：绕开上次写坏的那一层，最省时间"
     BUILD_OK=0
-    DOCKER_BUILDKIT=0 docker build --build-arg GIT_VERSION="$VER" -t "$IMAGE" . && BUILD_OK=1
+    DOCKER_BUILDKIT=1 docker build --build-arg GIT_VERSION="$VER" -t "$IMAGE" . && BUILD_OK=1
     [ "$BUILD_OK" = "1" ] && say "  第一轮成功" || say "  第一轮失败"
     hr
 
     if [ "$BUILD_OK" != "1" ]; then
         say "[4] 第二轮：清掉碎片再全量重建"
-        say "    docker image prune -f   （88 个悬空层，约 50GB 可回收）"
+        say "    docker image prune -f   （悬空层，可回收空间见输出）"
         docker image prune -f 2>&1 | tail -2
-        say "    docker builder prune -af（BuildKit 缓存 1595 条 3.9GB）"
-        docker builder prune -af 2>&1 | tail -2
+        say "    docker builder prune -f（构建缓存；不要带 -a，-a 会连基础镜像的缓存记录一起清）"
+        docker builder prune -f 2>&1 | tail -2
         say ""
         restart_docker || exit 1
         say ""
-        say "    开始全量构建（--no-cache，耗时较久）"
-        DOCKER_BUILDKIT=0 docker build --no-cache --build-arg GIT_VERSION="$VER" -t "$IMAGE" . && BUILD_OK=1
+        say "    开始全量构建（BuildKit --no-cache，耗时较久）"
+        DOCKER_BUILDKIT=1 docker build --no-cache --build-arg GIT_VERSION="$VER" -t "$IMAGE" . && BUILD_OK=1
         hr
     fi
 
     if [ "$BUILD_OK" != "1" ]; then
-        say "[5] 第三轮：改用 BuildKit（本机有 1595 条 BuildKit 缓存，说明这条路能走）"
-        DOCKER_BUILDKIT=1 docker build --build-arg GIT_VERSION="$VER" -t "$IMAGE" . && BUILD_OK=1
+        say "[5] 第三轮：改回 legacy builder 兜底（怀疑 BuildKit 复用旧上下文快照时有用）"
+        DOCKER_BUILDKIT=0 docker build --no-cache --build-arg GIT_VERSION="$VER" -t "$IMAGE" . && BUILD_OK=1
         hr
     fi
 
@@ -157,12 +157,24 @@ else
 fi
 
 # ---------- 版本校验 ----------
-say "[6] 校验镜像内版本（页脚显示的就是这个）"
+say "[6] 校验镜像内容（index.html 指纹 + 版本号）"
+# index.html 指纹比对：BuildKit/compose 的上下文快照按 (mtime,size) 判重，包内 mtime 固定、
+# 体积可能相同，理论上可能复用旧 dist。恢复场景常是同一版本反复重建，版本门禁抓不到，
+# 必须比内容指纹。
+HOST_SHA=$(sha256sum "$PROJ/app/dist/index.html" 2>/dev/null | awk '{print $1}')
+IMG_SHA=$(docker run --rm "$IMAGE" sha256sum /var/www/mybooks/app/dist/index.html 2>/dev/null | awk '{print $1}')
+say "  包内  index.html = ${HOST_SHA:-读取失败}"
+say "  镜像内 index.html = ${IMG_SHA:-读取失败}"
+if [ -n "$HOST_SHA" ] && [ "$HOST_SHA" != "$IMG_SHA" ]; then
+    say "  !! 不一致（上下文快照复用的典型症状），先别起容器。处理："
+    say "     docker builder prune -f 后重跑本脚本；仍不行则 DOCKER_BUILDKIT=0 legacy 兜底一轮"
+    exit 1
+fi
 GOT=$(docker run --rm "$IMAGE" sh -c 'cd /var/www/mybooks && python3 -c "import webserver.version as v;print(v.VERSION)"' 2>/dev/null | tr -d '\r')
 say "  包内=$VER / 镜像内=$GOT"
 if [ "$GOT" != "$VER" ]; then
     say "  !! 不一致，先别起容器。用 --build-arg 显式传版本重来："
-    say "     DOCKER_BUILDKIT=0 docker build --no-cache --build-arg GIT_VERSION=$VER -t $IMAGE ."
+    say "     DOCKER_BUILDKIT=1 docker build --no-cache --build-arg GIT_VERSION=$VER -t $IMAGE ."
     exit 1
 fi
 say "  OK"

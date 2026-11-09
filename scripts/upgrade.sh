@@ -223,12 +223,16 @@ seed_logo_defaults
 if [ "$SKIP_BUILD" = "1" ]; then
     echo "==> [7/8] 跳过构建（SKIP_BUILD=1）"
 else
-    echo "==> [7/8] 构建镜像（耗时较久，请耐心）"
-    ( cd "$SRC" && DOCKER_BUILDKIT=0 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" -t mybooks-local:latest . ) || exit 1
+    echo "==> [7/8] 构建镜像（BuildKit，耗时较久，请耐心）"
+    # 2026-11-09 修订：弃用 legacy builder（btrfs 每层一子卷，攒千级后 layer does not exist）。
+    # 构建后有 index.html sha256 比对 + 版本门禁兜底，BuildKit 复用旧快照的风险在这里被拦下。
+    ( cd "$SRC" && DOCKER_BUILDKIT=1 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" -t mybooks-local:latest . ) || exit 1
     host_sha=$(sha256sum "$SRC/app/dist/index.html" | awk '{print $1}')
     img_sha=$(docker run --rm mybooks-local:latest sha256sum /var/www/mybooks/app/dist/index.html | awk '{print $1}')
     if [ "$host_sha" != "$img_sha" ]; then
         echo "!! 镜像内 index.html 与包内不一致：$img_sha != $host_sha"
+        echo "   （上下文快照复用的典型症状）处理：docker builder prune -f 后重跑本脚本；"
+        echo "    仍不行则 DOCKER_BUILDKIT=0 legacy 兜底一轮"
         exit 1
     fi
     echo "==> 镜像内 index.html: $img_sha"
