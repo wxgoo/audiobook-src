@@ -222,6 +222,13 @@
                 <div class="d-flex align-center">
                   <v-icon small class="mr-2" :color="f.color">{{ f.icon }}</v-icon>
                   <span class="text-body-1">{{ $t(f.label) }}</span>
+                  <!-- 可选直达链接：f.to 指向站内路由时，标题变成可点击 -->
+                  <a
+                    v-if="f.to"
+                    class="ml-2 text-body-2"
+                    style="cursor: pointer"
+                    @click="$router.push(f.to)"
+                  >{{ $t(f.link_text || f.label) }} ›</a>
                 </div>
                 <div v-if="f.tips" class="text-caption grey--text ml-8">{{ $t(f.tips) }}</div>
               </div>
@@ -347,6 +354,51 @@
                   <v-icon :color="f.color">{{ f.icon }}</v-icon>
                 </template>
               </v-text-field>
+              <!-- 图片地址 + 本地上传：地址仍可手填（外链也可用），上传成功后回填为站内地址 -->
+              <template v-else-if="f.type === 'upload_image'">
+                <v-text-field
+                  outlined
+                  v-model="settings[f.key]"
+                  :key="f.key + '-upload_url'"
+                  :label="$t(f.label)"
+                  type="text"
+                >
+                  <template v-if="f.icon" v-slot:prepend>
+                    <v-icon :color="f.color">{{ f.icon }}</v-icon>
+                  </template>
+                </v-text-field>
+                <div class="d-flex align-center flex-wrap">
+                  <v-file-input
+                    dense
+                    outlined
+                    hide-details
+                    show-size
+                    accept="image/png,image/jpeg,image/webp"
+                    :label="$t('settings.feedback_qr_upload')"
+                    prepend-icon="mdi-image-plus"
+                    v-model="feedbackQrFile"
+                    :error-messages="feedbackQrError"
+                    class="mr-2"
+                    style="max-width: 420px"
+                  ></v-file-input>
+                  <v-btn
+                    small
+                    color="primary"
+                    :loading="feedbackQrUploading"
+                    :disabled="!feedbackQrFile"
+                    @click="uploadFeedbackQr"
+                  >{{ $t("settings.feedback_qr_upload_btn") }}</v-btn>
+                </div>
+                <div v-if="f.tips" class="text-caption grey--text mt-1">{{ $t(f.tips) }}</div>
+                <v-img
+                  v-if="settings[f.key]"
+                  :src="settings[f.key]"
+                  max-width="160"
+                  max-height="160"
+                  contain
+                  class="mt-2"
+                ></v-img>
+              </template>
               <v-text-field
                 v-else
                 v-model="settings[f.key]"
@@ -444,10 +496,20 @@
 
             <template v-if="s.special === 'friends'">
               <div id="f-FRIENDS" class="pl-6">
+              <div class="text-caption grey--text mb-2">{{ $t("settings.friend_type_hint") }}</div>
               <v-row
                 v-for="(friend, idx) in settings.FRIENDS"
-                :key="'friend-' + friend.href"
+                :key="'friend-' + idx"
+                align="center"
               >
+                <v-col class="py-0" cols="1">
+                  <div class="d-flex flex-column align-center">
+                    <v-btn x-small icon :disabled="idx <= 0"
+                           @click="moveFriend(idx, -1)"><v-icon>mdi-arrow-up</v-icon></v-btn>
+                    <v-btn x-small icon :disabled="idx >= settings.FRIENDS.length - 1"
+                           @click="moveFriend(idx, 1)"><v-icon>mdi-arrow-down</v-icon></v-btn>
+                  </div>
+                </v-col>
                 <v-col class="py-0" cols="3">
                   <v-text-field
                     flat
@@ -459,7 +521,21 @@
                     type="text"
                   ></v-text-field>
                 </v-col>
-                <v-col class="py-0" cols="9">
+                <v-col class="py-0" cols="2">
+                  <v-select
+                    flat
+                    small
+                    dense
+                    hide-details
+                    single-line
+                    v-model="friend.type"
+                    :items="friendTypeItems"
+                    item-value="value"
+                    item-text="text"
+                    :label="$t('settings.friend_type')"
+                  ></v-select>
+                </v-col>
+                <v-col class="py-0" cols="6">
                   <v-text-field
                     flat
                     small
@@ -477,7 +553,7 @@
                 <v-col align="center">
                   <v-btn
                     color="primary"
-                    @click="settings.FRIENDS.push({ text: '', href: '' })"
+                    @click="settings.FRIENDS.push({ text: '', href: '', type: 'website' })"
                     ><v-icon>mdi-plus</v-icon>{{ $t("settings.add") }}</v-btn
                   >
                 </v-col>
@@ -498,12 +574,6 @@
             <template v-if="s.special === 'reader_groups'">
               <div id="f-READER_GROUPS">
                 <reader-group-editor></reader-group-editor>
-              </div>
-            </template>
-
-            <template v-if="s.special === 'transcribe'">
-              <div id="f-TRANSCRIBE">
-                <transcribe-panel></transcribe-panel>
               </div>
             </template>
 
@@ -1187,9 +1257,9 @@ import ReadingRangeDialog from "~/components/ReadingRangeDialog.vue";
 import BookNavEditor, { createCategory } from "~/components/BookNavEditor.vue";
 import ReaderDictEditor from "~/components/ReaderDictEditor.vue";
 import ReaderGroupEditor from "~/components/ReaderGroupEditor.vue";
-import TranscribePanel from "~/components/TranscribePanel.vue";
 import HomepageCardsEditor from "~/components/HomepageCardsEditor.vue";
 import { normalizeHomepageConfig } from "~/utils/homepage";
+import { normalizeFriendType } from "~/utils/friendMeta";
 import { languageOptions } from "~/utils/languageCodes";
 import { isHexColor, DEFAULT_ACCENT } from "~/utils/appearance";
 
@@ -1210,7 +1280,6 @@ const SPECIAL_BLOCKS = [
   { key: "READER_MYDICTS", label: "settings.sec_reader_dict", icon: "mdi-book-alphabet", gid: "reading", sid: "reader-dict", al: ["翻译"] },
   { key: "ENABLE_STAMP_FEATURE", label: "settings.enable_stamp_feature", icon: "mdi-picture-in-picture-bottom-right-outline", gid: "reading", sid: "reader-extended" },
   { key: "AUDIO_LINK_TO_EXISTING_BOOK", label: "settings.audio_link_to_existing_book", icon: "mdi-headphones", gid: "import", sid: "imp-upload", al: ["有声书", "有聲書", "音频", "音訊", "audiobook", "重复", "重複", "合并", "合併", "挂靠", "掛靠", "同名", "duplicate", "merge", "link"] },
-  { key: "TRANSCRIBE_KEEP_TXT", label: "settings.transcribe_keep_txt", icon: "mdi-text-recognition", gid: "reading", sid: "transcribe", al: ["转写", "轉寫", "txt", "字幕", "srt", "whisper", "transcribe"] },
   { key: "SOCIALS", label: "settings.select_socials", icon: "mdi-at", gid: "users", sid: "users-social", al: ["qq", "微信", "微博", "github", "oauth"] },
   { key: "DEVICES", label: "settings.device_mgt", icon: "mdi-tablet-cellphone", gid: "push", sid: "push-devices", al: ["kindle", "文石", "掌阅", "汉王", "当当", "koreader", "duokan", "ireader", "boox", "ftp"] },
   { key: "ENABLE_BOOKBARN", label: "settings.bookbarn_enable", icon: "mdi-key", gid: "services", sid: "svc-bookbarn" },
@@ -1237,7 +1306,7 @@ const SPECIAL_BLOCKS = [
 ];
 
 // 值型字段（可安全用空串补默认值的那些；数组/特殊块类型不在此列，缺 key 时保持原样）
-const SETTING_TEXT_TYPES = ["text", "textarea", "select", "number"];
+const SETTING_TEXT_TYPES = ["text", "textarea", "select", "number", "upload_image"];
 
 // READER_MYDICTS 元素上的 showToken 只是显隐 token 的视图状态，
 // 点眼睛图标不应算作未保存修改，比较前先剥掉
@@ -1758,7 +1827,6 @@ export default {
     "book-nav-editor": BookNavEditor,
     "reader-dict-editor": ReaderDictEditor,
     "reader-group-editor": ReaderGroupEditor,
-    "transcribe-panel": TranscribePanel,
     "homepage-cards-editor": HomepageCardsEditor,
   },
   created() {
@@ -1803,17 +1871,43 @@ export default {
                 key: "site_icon",
                 label: "settings.site_icon",
                 type: "select_image",
-                items: Array.from({ length: 9 }, (_, i) => ({
-                  image_file: "favicon_" + i.toString(),
-                  value: "favicon_" + i.toString(),
-                  // favicon_0 表示「沿用当前图标」：预览读取站点当前的 favicon.ico，
-                  // 而不是自带的默认 favicon_0.ico（后者不会随选择更新）
-                  is_current: i === 0,
-                })),
+                // rebuilt8 起 logo 目录只保留一张 favicon.ico（旧 favicon_0..8 已删除），
+                // 因此这里只保留「沿用当前图标」一项，避免下拉预览指向不存在的文件。
+                items: [
+                  {
+                    image_file: "favicon_0",
+                    value: "favicon_0",
+                    // favicon_0 表示「沿用当前图标」：预览读取站点当前的 favicon.ico
+                    is_current: true,
+                  },
+                ],
               },
-              { icon: "mdi-copyright", key: "HEADER", label: "settings.site_header", type: "textarea" },
-              { icon: "mdi-copyright", key: "FOOTER", label: "settings.site_footer", type: "textarea" },
-              { icon: "mdi-closed-caption-outline", key: "FOOTER_WATERMARK", label: "settings.footer_watermark" },
+                { icon: "mdi-copyright", key: "HEADER", label: "settings.site_header", type: "textarea" },
+                { icon: "mdi-copyright", key: "FOOTER", label: "settings.site_footer", type: "textarea" },
+                { icon: "mdi-closed-caption-outline", key: "FOOTER_WATERMARK", label: "settings.footer_watermark" },
+                {
+                    // 反馈弹窗内容（build.22 起管理员可改）：二维码图 / 自定义文案 / 仓库链接；
+                    // GITHUB_URL 填 - 可隐藏该按钮，避免指向他人仓库
+                    icon: "mdi-comment-question-outline",
+                    key: "FEEDBACK_QR_URL",
+                    label: "settings.feedback_qr_url",
+                    type: "upload_image",
+                    tips: "settings.feedback_qr_url_tips",
+                },
+                {
+                    icon: "mdi-text-box-outline",
+                    key: "FEEDBACK_NOTICE",
+                    label: "settings.feedback_notice",
+                    type: "textarea",
+                    tips: "settings.feedback_notice_tips",
+                },
+                {
+                    icon: "mdi-github",
+                    key: "FEEDBACK_GITHUB_URL",
+                    label: "settings.feedback_github_url",
+                    type: "text",
+                    tips: "settings.feedback_github_url_tips",
+                },
               {
                 icon: "mdi-web",
                 key: "site_language",
@@ -1959,6 +2053,7 @@ export default {
                   { value: "rating", text: "appHeader.rating" },
                   { value: "booklists", text: "appHeader.booklists" },
                   { value: "friends", text: "appHeader.friendLinks" },
+                  { value: "printbooks", text: "appHeader.physicalBooks", requires: "ENABLE_PHYSICAL_BOOKS" },
                 ],
               },
             ],
@@ -2044,12 +2139,6 @@ export default {
             title: "settings.sec_reader_dict",
             special: "reader_dicts",
           },
-          {
-            id: "transcribe",
-            icon: "mdi-text-recognition",
-            title: "settings.sec_transcribe",
-            special: "transcribe",
-          },
         ],
       },
       {
@@ -2098,6 +2187,18 @@ export default {
                 tips: "settings.reader_groups_enabled_tips",
                 al: ["读者组", "总开关", "分组权限", "关闭读者组"],
                 type: "checkbox",
+              },
+              {
+                // 作者整理指路（build.27）：归一化与清理已合并为工具箱里的一个工具，
+                // 这里保留一条说明并直达合并后的页面；左侧树不再单列归一化入口。
+                key: "author_norm_entry",
+                type: "subtitle",
+                icon: "mdi-account-convert-outline",
+                color: "info",
+                label: "settings.author_norm_entry",
+                to: "/toolbox/author_tools",
+                link_text: "settings.author_norm_open",
+                tips: "settings.author_norm_entry_tips",
               },
               {
                 icon: "mdi-book-lock-outline",
@@ -2692,6 +2793,13 @@ export default {
       this.siteIconStamp = Date.now();
 
       if (this.settings) {
+        // 友链：老数据可能没有 type，甚至结构异常（非数组/非对象）。统一归一化成
+        // 可编辑项——类型下拉有可用值，text/href/icon 不丢，能正常增删改与排序。
+        this.$set(
+          this.settings,
+          "FRIENDS",
+          this.normalizeFriendList(this.settings["FRIENDS"])
+        );
         this.$set(
           this.settings,
           "HOMEPAGE_CONFIG",
@@ -2783,6 +2891,10 @@ export default {
     site_url: "",
     // 读取设置时的时间戳，用于给「当前图标」预览做缓存失效（favicon.ico 会被覆盖）
     siteIconStamp: 0,
+    // 反馈二维码本地上传（选图 → /api/feedback_qr → 回填 FEEDBACK_QR_URL）
+    feedbackQrFile: null,
+    feedbackQrUploading: false,
+    feedbackQrError: "",
     groups: [],
     activeGroup: "site",
     searchQ: "",
@@ -2833,6 +2945,17 @@ export default {
     ],
   }),
   computed: {
+    friendTypeItems() {
+      return [
+        { value: "radio", text: this.$t("settings.friend_type_radio") },
+        { value: "website", text: this.$t("settings.friend_type_website") },
+        { value: "bbs", text: this.$t("settings.friend_type_bbs") },
+        { value: "video", text: this.$t("settings.friend_type_video") },
+        { value: "news", text: this.$t("settings.friend_type_news") },
+        { value: "book", text: this.$t("settings.friend_type_book") },
+        { value: "link", text: this.$t("settings.friend_type_link") },
+      ];
+    },
     currentGroups() {
       return this.groups.filter((g) => g.id === this.activeGroup);
     },
@@ -3193,6 +3316,47 @@ export default {
     }
   },
   methods: {
+    normalizeFriendList(list) {
+      if (!Array.isArray(list)) return [];
+      const result = [];
+      list.forEach((raw) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          // 结构异常的老条目：转成一条可编辑空记录，让管理员能看见、补填或删除，
+          // 而不是整页报错
+          result.push({ text: "", href: "", icon: "", type: "link" });
+          return;
+        }
+        const text =
+          typeof raw.text === "string"
+            ? raw.text
+            : raw.text == null
+            ? ""
+            : String(raw.text);
+        const href =
+          typeof raw.href === "string"
+            ? raw.href
+            : raw.href == null
+            ? ""
+            : String(raw.href);
+        const icon = typeof raw.icon === "string" ? raw.icon : "";
+        // 只覆盖四个受控字段，其余字段原样保留，保存时不破坏老数据
+        result.push(
+          Object.assign({}, raw, {
+            text,
+            href,
+            icon,
+            type: normalizeFriendType(raw.type),
+          })
+        );
+      });
+      return result;
+    },
+    moveFriend(idx, dir) {
+      const arr = this.settings.FRIENDS;
+      const t = idx + dir;
+      if (t < 0 || t >= arr.length) return;
+      [arr[idx], arr[t]] = [arr[t], arr[idx]];
+    },
     // 网站图标下拉的预览地址。favicon_0 表示「沿用当前图标」，要展示站点此刻真正
     // 生效的 /logo/favicon.ico（保存其它图标时它会被覆盖），因此带时间戳绕过缓存；
     // 其余选项展示随附的 favicon_N.ico。
@@ -3574,6 +3738,47 @@ export default {
       }).finally(() => {
         this.saving = false;
       });
+    },
+    // 反馈二维码上传：复用作者头像那套 multipart 接口形态（字段名 qr_data），
+    // 落盘在容器 /data/books/logo/feedback_qr.<ext>，返回站内地址回填到输入框。
+    // 只改表单值、不自动提交整份设置：上传成功但用户没点保存时，前台仍用旧值，
+    // 避免顺手把其它未保存项一起提交。
+    uploadFeedbackQr() {
+      this.feedbackQrError = "";
+      const file = this.feedbackQrFile;
+      if (!file) {
+        this.feedbackQrError = this.$t("settings.feedback_qr_no_file");
+        return;
+      }
+      const allowed = ["image/jpeg", "image/png", "image/webp"];
+      if (allowed.indexOf(file.type) < 0) {
+        this.feedbackQrError = this.$t("settings.feedback_qr_type_error");
+        return;
+      }
+      if (file.size > 3 * 1024 * 1024) {
+        this.feedbackQrError = this.$t("settings.feedback_qr_size_error");
+        return;
+      }
+      const form = new FormData();
+      form.append("qr_data", file);
+      this.feedbackQrUploading = true;
+      this.$backend("/feedback_qr", { method: "POST", body: form })
+        .then((resp) => {
+          if (resp.err !== "ok") {
+            this.feedbackQrError =
+              resp.msg || this.$t("settings.feedback_qr_upload_failed");
+            return;
+          }
+          this.settings.FEEDBACK_QR_URL = resp.url;
+          this.feedbackQrFile = null;
+          this.$alert("success", this.$t("settings.feedback_qr_uploaded"));
+        })
+        .catch(() => {
+          this.feedbackQrError = this.$t("settings.feedback_qr_upload_failed");
+        })
+        .finally(() => {
+          this.feedbackQrUploading = false;
+        });
     },
     restartServer: function () {
       this.restartConfirmDialog = false;

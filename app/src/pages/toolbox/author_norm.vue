@@ -1,7 +1,7 @@
 <template>
-  <v-container fluid class="pa-4">
-    <!-- 页头 -->
-    <v-row class="mb-3" align="center">
+  <v-container fluid :class="embedded ? 'pa-0' : 'pa-4'">
+    <!-- build.27：作为「作者归一 / 清理」合并页的组件嵌入时，页头交给父页面 -->
+    <v-row v-if="!embedded" class="mb-3" align="center">
       <v-col class="text-center">
         <span class="text-h5 font-weight-bold">{{ $t('authorNorm.title') }}</span>
       </v-col>
@@ -12,15 +12,23 @@
       </v-col>
     </v-row>
 
+    <!-- 旧链接直达时给出合并后的入口 -->
+    <v-alert v-if="!embedded" type="warning" text dense class="mb-3">
+      {{ $t('authorTools.legacyHint') }}
+      <v-btn small text color="primary" class="px-1" @click="$router.push('/toolbox/author_tools')">
+        {{ $t('authorTools.openMerged') }}
+      </v-btn>
+    </v-alert>
+
     <v-row justify="center">
       <v-col cols="12" md="10" lg="9">
         <v-alert type="info" text dense class="mb-4">
           <div class="text-body-2">{{ $t('authorNorm.intro') }}</div>
           <div class="text-caption mt-1">{{ $t('authorNorm.intro2') }}</div>
           <div class="mt-2">
-            <v-btn small text color="primary" class="px-0"
-                   @click="$router.push('/toolbox/author_clean')">
-              <v-icon small left>mdi-broom</v-icon>{{ $t('authorNorm.openClean') }}
+            <v-btn small text color="primary" class="px-0" @click="goClean()">
+              <v-icon small left>mdi-broom</v-icon>
+              {{ $t(embedded ? 'authorTools.tabClean' : 'authorNorm.openClean') }}
             </v-btn>
           </div>
         </v-alert>
@@ -117,6 +125,7 @@
                   <th class="text-caption">{{ $t('authorNorm.colDirtyName') }}</th>
                   <th class="text-caption">{{ $t('authorNorm.colCleanName') }}</th>
                   <th class="text-caption">{{ $t('authorNorm.colBooks') }}</th>
+                  <th class="text-caption">{{ $t('authorNorm.colAction') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -124,13 +133,18 @@
                   <td class="text-caption">{{ d.name }}</td>
                   <td class="text-caption success--text">{{ d.clean }}</td>
                   <td class="text-caption">{{ d.count }}</td>
+                  <td class="text-caption">
+                    <!-- 合并后不再跳页面：直接切到清理 Tab 并把脏名带过去 -->
+                    <a style="text-decoration: underline; cursor: pointer"
+                       @click="goClean(d.name)">{{ $t('authorNorm.sendToClean') }}</a>
+                  </td>
                 </tr>
               </tbody>
             </v-simple-table>
             <div class="text-caption text--secondary mt-2">{{ $t('authorNorm.dirtyFooter') }}</div>
             <div class="mt-1">
               <a style="text-decoration: underline; cursor: pointer"
-                 @click="$router.push('/toolbox/author_clean')">{{ $t('authorNorm.openClean') }}</a>
+                 @click="goClean()">{{ $t('authorNorm.openClean') }}</a>
             </div>
           </v-card>
 
@@ -244,6 +258,10 @@
 
 <script>
 export default {
+  // build.27：合并页以组件方式复用本页；embedded 时「去清理」改为切 Tab 事件
+  props: {
+    embedded: { type: Boolean, default: false },
+  },
   data() {
     return {
       tab: 0,
@@ -271,6 +289,14 @@ export default {
     this.loadAlias();
   },
   methods: {
+    // 合并页里切到「清理」Tab 并预填作者名；旧页面独立访问时保持原跳转行为
+    goClean(name) {
+      if (this.embedded) {
+        this.$emit('open-clean', name || '');
+        return;
+      }
+      this.$router.push('/toolbox/author_clean');
+    },
     doScan() {
       this.scanning = true;
       this.$backend("/admin/author_norm/scan")

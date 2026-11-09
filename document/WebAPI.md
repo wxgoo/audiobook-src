@@ -4647,6 +4647,12 @@ EPUB 转有声书（WAV），支持 MiMo TTS / OpenAI TTS 兼容接口。公共 
 - `GET /api/toolbox/minify_pdf/progress?filename=<name>`：`data`: `status`（`running`/`completed`）、`progress`、`download_url`（完成时）；`err` 可能为 `task.failed` / `task.interrupted`
 - `GET /api/toolbox/minify_pdf/download?filename=<name>`：下载处理后的 PDF（二进制）
 
+> **4.6.0-build.27-r5 入口合并说明**：工具箱里「格式合并」与「格式精简」已合为一张卡
+> 「格式合并 / 精简」（页面 `/toolbox/format_tools`，两个 Tab）；「作者归一化」与「作者清理」
+> 已合为「作者归一 / 清理」（`/toolbox/author_tools`），左侧管理树不再单列归一化入口。
+> **本节的 API 路径、参数与返回全部不变**，前端只是把四个页面收进两个合并页。
+> 归一化相关接口见 `webserver/handlers/author_norm.py`（`/api/admin/author_norm/*`）。
+
 ### 16.11 格式精简（formats_pruning）
 
 - `POST /api/toolbox/formats_pruning/start`：JSON `delete` (array, 必填): 要删除的格式组，取值 `pdf` / `epub` / `azw3_mobi` / `txt` / `docx`，不能全选

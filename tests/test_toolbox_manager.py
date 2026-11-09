@@ -32,7 +32,7 @@ from tests.session_isolation import restore_models_session
 
 CONF = get_settings()
 
-# ToolSet.collect_tools() 会真的 import 全部 14 个内置工具模块，其中几个（text_replace /
+# ToolSet.collect_tools() 会真的 import 全部内置工具模块，其中几个（text_replace /
 # book_utils 等）顶层 import calibre.ebooks.*，需要 webserver.main.init_calibre() 先把真实
 # Calibre 安装路径塞进 sys.path 才能用（见 webserver/main.py）。这不是 toolbox_manager 自身
 # 的逻辑，本测试文件只关心 toolbox_manager 对"已注册工具"的处理是否正确，所以把
@@ -428,7 +428,7 @@ class TestToolboxManager(unittest.TestCase):
     def test_builtin_records_synced_on_first_load(self):
         toolbox_manager.load_all()
         installed = {r.tool_id: r for r in InstalledTool.all()}
-        # 至少覆盖几个已知的内置工具，全部 14 个逐一断言太啰嗦
+        # 至少覆盖几个已知的内置工具，全部内置工具逐一断言太啰嗦
         for tool_id in ("merge_formats_tool", "rare_book_downloader"):
             self.assertIn(tool_id, installed)
             self.assertEqual(installed[tool_id].type, InstalledTool.TYPE_BUILTIN)

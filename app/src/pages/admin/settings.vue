@@ -2189,14 +2189,14 @@ export default {
                 type: "checkbox",
               },
               {
-                // 作者归一化指路（fix1）：入口本体在「工具箱 → 作者归一化」，这里给出
-                // 可点击直达；改存量书走「作者清理」，归一化页内有直达链接。
+                // 作者整理指路（build.27）：归一化与清理已合并为工具箱里的一个工具，
+                // 这里保留一条说明并直达合并后的页面；左侧树不再单列归一化入口。
                 key: "author_norm_entry",
                 type: "subtitle",
                 icon: "mdi-account-convert-outline",
                 color: "info",
                 label: "settings.author_norm_entry",
-                to: "/toolbox/author_norm",
+                to: "/toolbox/author_tools",
                 link_text: "settings.author_norm_open",
                 tips: "settings.author_norm_entry_tips",
               },

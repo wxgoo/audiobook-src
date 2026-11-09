@@ -698,7 +698,8 @@ export default {
                         { icon: "mdi-account", href: "/admin/users", text: "appHeader.accountManagement", color: "deep-orange"},
                         { icon: "mdi-import", href: "/admin/imports", text: "appHeader.importBooks", color: "green"},
                         { icon: "mdi-library-shelves", href: "/admin/books", text: "appHeader.bookManagement", color: "blue darken-2"},
-                        { icon: "mdi-account-convert-outline", href: "/toolbox/author_norm", text: "appHeader.authorNorm", color: "blue darken-1"},
+                        // build.27：作者归一化不再单列左侧树入口，已并入「工具箱 → 作者归一 / 清理」
+
                         ...(this.sys.allow.share_link ? [{ icon: "mdi-cloud-outline", href: "/admin/shares", text: "appHeader.shareManagement", color: "teal" }] : []),
                         { icon: "mdi-notebook", href: "/admin/all-expected", text: "expected.allPageTitle", color: "green"},
                         ...(this.sys.allow.user_memos ? [{ icon: "mdi-message-text-outline", href: "/admin/user-memos", text: "memos.pageTitle", color: "blue" }] : []),

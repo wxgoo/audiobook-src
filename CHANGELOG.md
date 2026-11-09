@@ -9,7 +9,36 @@
 
 ---
 
-## 4.6.0-build.27-r4（当前包修订）
+## 4.6.0-build.27-r5（当前包修订）
+
+> 主题：**工具箱入口合并**——「作者归一化 + 作者清理」与「格式合并 + 格式精简」
+> 各自合并为一个工具，入口全部留在工具箱；左侧管理树不再单列「作者归一化」。
+> 运行期版本仍是 `4.6.0-build.27`；本修订**重建了 `app/dist`**。
+
+### 变更
+
+1. **工具箱**：`author_clean_tool.info()` 改名「作者归一 / 清理」、
+   `merge_formats_tool.info()` 改名「格式合并 / 精简」，各自加 `page` 指向新增合并页；
+   `formats_pruning` 不再单独注册工具卡——工具箱里这四块功能由 4 张卡收成 2 张卡。
+   两个后端工具类与 `/api/toolbox/*` 接口全部保留，未做破坏性改动。
+2. **合并页**：新增 `app/src/pages/toolbox/author_tools.vue` 与 `format_tools.vue`，
+   各用两个 Tab 复用原页面；四个原页面新增 `embedded` prop，嵌入时隐藏独立页头。
+   归一化页的「去清理」由跨页跳转改成切 Tab 事件，脏名候选每行新增「带入清理」，
+   一键把作者名预填进清理表单，形成「体检 → 别名规则 → 落地改名」闭环。
+3. **左侧树**：`AppHeader.vue` 管理员菜单删掉 `/toolbox/author_norm` 独立入口；
+   设置页指路项改指 `/toolbox/author_tools`；`zh` / `en` / `zh-TW` 三份 locale
+   同步更新旧文案、移除不再使用的 `appHeader.authorNorm`、新增 `authorTools`
+   与 `formatTools` 两个命名空间。
+4. **兼容与边界**：四个旧页面文件保留，旧链接直达时显示「已并入工具箱」提示与跳转按钮，
+   不留死链；`webserver/base/author_norm.py` 归一化引擎保留——它服务于**新书入库清洗**
+   与重复判定，与 UI 入口无关，不随本次合并删除。
+5. **dist 重建**：本机构建环境补齐缺失的 `hls.js` 后重新执行 `nuxt generate --spa`，
+   `app/dist/index.html` 指纹更新为部署包说明中的表格值。各脚本的指纹闸门是
+   「包内 vs 镜像内」动态比对，脚本无需改动。
+
+---
+
+## 4.6.0-build.27-r4
 
 > 主题：**MyReader 119 根符号链接清单化自愈**——解决「myreader 显示 Ready、打开书却 500」。
 > 代码与 dist 与 build.27 完全相同，运行期版本仍是 `4.6.0-build.27`。

@@ -1,7 +1,7 @@
 <template>
-  <v-container fluid class="pa-4">
-    <!-- Page header -->
-    <v-row class="mb-3" align="center">
+  <v-container fluid :class="embedded ? 'pa-0' : 'pa-4'">
+    <!-- build.27：作为「格式合并 / 精简」合并页的组件嵌入时，页头交给父页面 -->
+    <v-row v-if="!embedded" class="mb-3" align="center">
       <v-col class="text-center">
         <span class="text-h5 font-weight-bold">{{ $t('mergeFormats.title') }}</span>
       </v-col>
@@ -11,6 +11,14 @@
         </v-btn>
       </v-col>
     </v-row>
+
+    <!-- 旧链接直达时给出合并后的入口 -->
+    <v-alert v-if="!embedded" type="warning" text dense class="mb-3">
+      {{ $t('formatTools.legacyHint') }}
+      <v-btn small text color="primary" class="px-1" @click="$router.push('/toolbox/format_tools')">
+        {{ $t('formatTools.openMerged') }}
+      </v-btn>
+    </v-alert>
 
     <!-- Book selection area -->
     <v-row>
@@ -199,6 +207,10 @@
 
 <script>
 export default {
+  // build.27：合并页以组件方式复用本页；embedded 时隐藏页头与旧链接提示
+  props: {
+    embedded: { type: Boolean, default: false },
+  },
   data: () => ({
     leftQuery: '',
     leftBooks: [],

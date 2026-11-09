@@ -26,13 +26,18 @@ class AuthorCleanTool(BaseTool):
 
     @staticmethod
     def info() -> dict:
+        # 4.6.0-build.27：工具箱入口合并。「作者归一化」（体检 / 别名表 / 预览）与
+        # 「作者清理」（存量改名）原本是两个入口，现在统一由 author_tools 页承载：
+        # 先用归一化只读体检、把可疑写法加进别名表，再在本页落地清理/替换。
+        # 归一化引擎（webserver/base/author_norm.py）仍服务于新书入库清洗，不随入口改动。
         return {
             "tool_id": "author_clean",
-            "name": "作者清理",
-            "description": "输入一个现有作者名，清理（从多作者书籍中移除）或替换为新的作者名",
-            "revision": "0.1.0",
+            "name": "作者归一 / 清理",
+            "description": "作者整理：只读体检与别名规则（原作者归一化）＋存量书籍的清理/替换（原作者清理）",
+            "revision": "0.2.0",
             "author": "MyBooks",
             "publish_date": "2026-07-19",
+            "page": "author_tools",
         }
 
     @staticmethod

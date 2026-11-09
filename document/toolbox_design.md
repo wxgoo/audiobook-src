@@ -222,6 +222,10 @@ Handler 在调用 `RareBookDownloader().download()` 前会校验：
 
 ## 五、MergeFormatsTool — 格式合并工具
 
+> 4.6.0-build.27-r5 起，本工具与「格式精简」在工具箱里合并为一张卡
+> 「格式合并 / 精简」（`page=format_tools`）。本节描述的是后端实现，
+> 仍然有效；入口与前端页面的变化见第六节。
+
 ### 5.1 设计背景
 
 同一本书可能在不同时间以不同格式（如 EPUB 与 MOBI）导入，形成两条独立书籍记录。
@@ -271,3 +275,33 @@ Handler 在调用 `RareBookDownloader().download()` 前会校验：
 **后台**（`webserver/i18n/`）：新增 `格式合并`、错误消息等字符串的 `en.json` 和 `zh-TW.json` 翻译。
 
 **前端**（`app/locales/`）：在 zh / en / zh-TW 三个文件中新增 `mergeFormats` 命名空间，覆盖页面所有文字。
+
+---
+
+## 六、4.6.0-build.27-r5：工具箱入口合并
+
+原来四个功能分散在四个入口，其中「作者归一化」还额外占了左侧管理树一个菜单项。
+本次把它们按**操作对象**合并为两个工具，入口统一留在工具箱：
+
+| 合并后的工具卡（tool_id） | 页面 | Tab 1 | Tab 2 |
+|---|---|---|---|
+| 作者归一 / 清理（`author_clean`） | `/toolbox/author_tools` | 归一体检 / 别名规则（原 `author_norm.vue`） | 清理 / 替换（原 `author_clean.vue`） |
+| 格式合并 / 精简（`merge_formats_tool`） | `/toolbox/format_tools` | 格式合并（原 `merge_formats_tool.vue`） | 格式精简（原 `formats_pruning.vue`） |
+
+### 实现要点
+
+- **后端零破坏**：`AuthorCleanTool` / `MergeFormatsTool` / `FormatsPruningTool` 三个类、
+  `webserver/handlers/author_norm.py` 四个管理接口、以及 `/api/toolbox/*` 全部路由保持不变；
+  只改了 `ToolSet.collect_tools()` 的注册（不再注册 `FormatsPruningTool.info()`）
+  与两个 `info()` 的 `name` / `description` / `page`。
+- **归一化引擎保留**：`webserver/base/author_norm.py` 仍被 `services/audios_import.py`
+  等入库路径调用，负责新书作者清洗与重复判定，与 UI 入口无关。
+- **页面复用而非重写**：四个旧页面新增 `embedded` prop，作为子组件挂进合并页的
+  `v-tab-item`（`eager`，两个组件都挂载）。嵌入时隐藏页头与关闭按钮，
+  独立访问时显示「已并入工具箱」提示，避免收藏夹旧链接变成孤岛。
+- **流程打通**：归一化页的 `goClean(name)` 在嵌入模式下 `$emit('open-clean', name)`，
+  合并页收到后切到清理 Tab 并调用 `AuthorClean.prefill(name)`；
+  脏名候选表格新增「带入清理」列，不再需要手动跨页复制作者名。
+- **i18n**：三份 locale 新增 `authorTools` / `formatTools` 命名空间，
+  `authorNorm` 补 `colAction` / `sendToClean`，移除不再使用的 `appHeader.authorNorm`；
+  设置页 `settings.author_norm_*` 文案与 `to` 路径同步改为合并页。

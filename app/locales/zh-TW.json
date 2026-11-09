@@ -1263,9 +1263,9 @@
         "default_read_range_hint": "只影響之後新註冊的使用者；既有使用者不受影響，因為他們已按建立時的預設值落庫。",
         "sec_users_access": "存取控制與讀者組",
         "sec_users_access_desc": "誰能進（登入門檻 / 訪客權限）與誰能看哪些書（讀者組分組權限），一條權限鏈一次配完",
-        "author_norm_entry": "作者重名 / 別名歸一",
-        "author_norm_open": "開啟「工具箱 → 作者歸一化」",
-        "author_norm_entry_tips": "作者重名、筆誤、譯名不一致：先用「作者歸一化」（工具箱）唯讀掃描、加別名規則；存量髒名字再用「作者清理」（工具箱）落地改名，不會誤傷同名不同人。",
+        "author_norm_entry": "作者歸一 / 清理（工具箱）",
+        "author_norm_open": "開啟「工具箱 → 作者歸一 / 清理」",
+        "author_norm_entry_tips": "作者重名、筆誤、譯名不一致：現在統一在「工具箱 → 作者歸一 / 清理」完成——先唯讀體檢、加別名規則，再切到清理頁落地改名；新書入庫自動套用規則，不會誤傷同名不同人。",
         "feedback_qr_url": "回饋二維碼圖片位址",
         "feedback_qr_url_tips": "「回饋」彈窗展示的二維碼。可直接在下方選圖上傳（JPG/PNG/WEBP，≤3MB，儲存後寫入主機 /volume1/docker/audiobook-data/books/logo/，容器內為 /data/books/logo/）；也可手填站內路徑（如 /logo/my_qr.jpg）或外部連結；留空用內建預設圖。",
         "feedback_qr_upload": "選擇本機圖片（上傳後替換 /logo/feedback_qr.*）",
@@ -1548,8 +1548,7 @@
         "booklists": "閱讀書單",
         "publicBooklists": "公共書單",
         "likedBooklists": "收藏書單",
-        "bookDedup": "重複書清理",
-        "authorNorm": "作者歸一化"
+        "bookDedup": "重複書清理"
     },
     "language": {
         "zh": "简体中文",
@@ -2642,7 +2641,7 @@
         "title": "作者歸一化",
         "close": "關閉",
         "intro": "把同一作者的不同寫法（簡繁、國籍前綴、標點差異）統一到標準名，避免同一人被拆進多個目錄。",
-        "intro2": "這裡只維護規則與查看報告，不改書。改存量書請用「作者清理」（工具箱 → 作者清理）；新入庫的書會自動套用規則。",
+        "intro2": "這裡只維護規則與查看報告，不改書。改存量書請切到本工具的「清理 / 替換」頁；新入庫的書會自動套用規則。",
         "tabScan": "作者體檢",
         "tabAlias": "別名表",
         "scanBtn": "體檢掃描",
@@ -2663,6 +2662,8 @@
         "colDirtyName": "當前寫法",
         "colCleanName": "清洗後",
         "colBooks": "書本數",
+        "colAction": "操作",
+        "sendToClean": "帶入清理",
         "colStandard": "標準名",
         "colNote": "備註",
         "allClean": "沒有發現問題",
@@ -2695,5 +2696,25 @@
         "live": "直播",
         "prev": "上一首",
         "next": "下一首"
+    },
+    "authorTools": {
+        "title": "作者歸一 / 清理",
+        "close": "關閉",
+        "hint": "作者整理：左邊「歸一體檢 / 別名規則」只做唯讀掃描與規則維護，右邊「清理 / 替換」才改存量書籍。",
+        "hint2": "建議流程：先體檢 → 把確認是同一人的寫法加進別名表 → 從體檢結果一鍵帶入清理頁落地改名；新書入庫時會自動套用別名表。",
+        "tabNorm": "歸一體檢 / 別名規則",
+        "tabClean": "清理 / 替換",
+        "legacyHint": "本頁已併入工具箱的「作者歸一 / 清理」，請改用合併後的入口。",
+        "openMerged": "開啟合併後的工具"
+    },
+    "formatTools": {
+        "title": "格式合併 / 精簡",
+        "close": "關閉",
+        "hint": "格式整理：左邊把兩本書的格式合併去重並刪掉來源書，右邊按格式批量精簡全庫檔案。",
+        "hint2": "兩項操作都會刪除書籍或格式檔案，執行前請先備份書庫；精簡時每本書至少保留一個可讀格式。",
+        "tabMerge": "格式合併",
+        "tabPrune": "格式精簡",
+        "legacyHint": "本頁已併入工具箱的「格式合併 / 精簡」，請改用合併後的入口。",
+        "openMerged": "開啟合併後的工具"
     }
 }

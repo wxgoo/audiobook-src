@@ -286,6 +286,10 @@
   content: "\F0A34";
 }
 
+.mdi-call-merge::before {
+  content: "\F00F8";
+}
+
 .mdi-camera::before {
   content: "\F0100";
 }

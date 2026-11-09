@@ -987,9 +987,9 @@
         "default_read_range_hint": "Only affects users created afterwards. Existing users keep whatever was applied when their account was created.",
         "sec_users_access": "Access Control & Reader Groups",
         "sec_users_access_desc": "Who gets in (login gate / guest permissions) and who sees what (reader-group rules) — one permission chain, configured in one place",
-        "author_norm_entry": "Author duplicates / alias normalization",
-        "author_norm_open": "Open \"Toolbox → Author Normalization\"",
-        "author_norm_entry_tips": "For duplicate authors, typos or variant translations: run the read-only scan in Toolbox → Author Normalization and add alias rules; then apply renames to existing books with Toolbox → Author Cleanup. Same-name different-person pairs are never merged blindly.",
+        "author_norm_entry": "Author normalization / cleanup (Toolbox)",
+        "author_norm_open": "Open \"Toolbox → Author Normalization / Cleanup\"",
+        "author_norm_entry_tips": "For duplicate authors, typos or variant translations, everything now lives in Toolbox → Author Normalization / Cleanup: run the read-only scan and add alias rules, then switch to the Cleanup tab to rename existing books. Newly imported books pick up the rules automatically; same-name different-person pairs are never merged blindly.",
         "feedback_qr_url": "Feedback QR image URL",
         "feedback_qr_url_tips": "QR image shown in the Feedback dialog. You can upload a local image below (JPG/PNG/WEBP, ≤3MB; saved to /volume1/docker/audiobook-data/books/logo/ on the host, i.e. /data/books/logo/ in the container), or enter a site path (e.g. /logo/my_qr.jpg) or an external URL; empty = built-in default.",
         "feedback_qr_upload": "Choose a local image (replaces /logo/feedback_qr.*)",
@@ -1555,8 +1555,7 @@
         "booklists": "Booklists",
         "publicBooklists": "Public Booklists",
         "likedBooklists": "Liked Booklists",
-        "bookDedup": "Duplicate Cleanup",
-        "authorNorm": "Author Normalization"
+        "bookDedup": "Duplicate Cleanup"
     },
     "language": {
         "zh": "简体中文",
@@ -2696,7 +2695,7 @@
         "title": "Author Normalization",
         "close": "Close",
         "intro": "Unify different spellings of the same author (simplified/traditional, nationality prefix, punctuation) into one standard name, so one author is not split into multiple folders.",
-        "intro2": "This page maintains rules and reports only — it never edits books. To rewrite existing books use \"Author Clean\" (Toolbox → Author Clean); newly imported books pick up the rules automatically.",
+        "intro2": "This page maintains rules and reports only — it never edits books. To rewrite existing books switch to the Cleanup / Replace tab of this tool; newly imported books pick up the rules automatically.",
         "tabScan": "Author Scan",
         "tabAlias": "Alias Table",
         "scanBtn": "Run Scan",
@@ -2717,6 +2716,8 @@
         "colDirtyName": "Current",
         "colCleanName": "Cleaned",
         "colBooks": "Books",
+        "colAction": "Action",
+        "sendToClean": "Send to cleanup",
         "colStandard": "Canonical name",
         "colNote": "Note",
         "allClean": "No issues found",
@@ -2749,5 +2750,25 @@
         "live": "Live",
         "prev": "Previous",
         "next": "Next"
+    },
+    "authorTools": {
+        "title": "Author Normalization / Cleanup",
+        "close": "Close",
+        "hint": "Author tools: the Scan / Alias Rules tab is read-only, while the Cleanup / Replace tab actually rewrites existing books.",
+        "hint2": "Recommended flow: scan → add confirmed variants to the alias table → send a dirty name to the Cleanup tab in one click. New imports apply the alias table automatically.",
+        "tabNorm": "Scan / Alias Rules",
+        "tabClean": "Cleanup / Replace",
+        "legacyHint": "This page has been merged into Toolbox → Author Normalization / Cleanup. Please use the combined entry.",
+        "openMerged": "Open the combined tool"
+    },
+    "formatTools": {
+        "title": "Format Merge / Pruning",
+        "close": "Close",
+        "hint": "Format tools: the Merge tab folds two duplicate books into one and deletes the source, while the Pruning tab removes selected formats across the whole library.",
+        "hint2": "Both operations delete books or format files — back up your library first. Pruning always keeps at least one readable format per book.",
+        "tabMerge": "Format Merge",
+        "tabPrune": "Format Pruning",
+        "legacyHint": "This page has been merged into Toolbox → Format Merge / Pruning. Please use the combined entry.",
+        "openMerged": "Open the combined tool"
     }
 }

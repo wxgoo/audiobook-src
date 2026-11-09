@@ -106,7 +106,9 @@ class ToolSet:
         from .review_book_language_tool import ReviewBookLanguageTool
         from .minify_pdf import MinifyPdfTool
         from .text_processor import TextProcessor
-        from .formats_pruning import FormatsPruningTool
+        # 4.6.0-build.27：格式精简不再单独注册工具卡，与「格式合并」合并为
+        # merge_formats_tool.info() 指向的 /toolbox/format_tools 页（第二个 Tab）。
+        # FormatsPruningTool 类与 /api/toolbox/formats_pruning/* 接口保持不变。
         from .epub_fixer import EpubFixerTool
         from .epub_split import EpubSplitTool
         from .author_clean_tool import AuthorCleanTool
@@ -135,7 +137,7 @@ class ToolSet:
         ToolSet.register(TxtEncodingFixerTool.info())
         ToolSet.register(ChineseConverterTool.info())
         ToolSet.register(TextProcessor.info())
-        ToolSet.register(FormatsPruningTool.info())
+        # ToolSet.register(FormatsPruningTool.info())  # 已并入 format_tools 页，见上方注释
         ToolSet.register(EpubSplitTool.info())
         ToolSet.register(AuthorCleanTool.info())
         ToolSet.register(RareBookDownloader.info())

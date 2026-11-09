@@ -17,13 +17,17 @@ class MergeFormatsTool(BaseTool):
 
     @staticmethod
     def info():
+        # 4.6.0-build.27：工具箱入口合并。「格式合并」（两本书格式归一）与
+        # 「格式精简」（全库批量删格式）统一由 format_tools 页的两个 Tab 承载。
+        # 两个后端工具类和各自的 API 都保留，只合并入口与工具卡。
         return {
             "tool_id": "merge_formats_tool",
-            "name": "格式合并",
-            "description": "将两本书名相同但格式不同的书籍合并，把来源书的格式复制到目标书后删除来源书",
-            "revision": "0.1.0",
+            "name": "格式合并 / 精简",
+            "description": "格式整理：两本书的格式合并去重（原格式合并）＋全库批量删除指定格式（原格式精简）",
+            "revision": "0.2.0",
             "author": "PoxenStudio",
             "publish_date": "2025-05-19",
+            "page": "format_tools",
         }
 
     @AsyncService.register_function
