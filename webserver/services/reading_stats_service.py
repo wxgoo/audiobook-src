@@ -28,7 +28,11 @@ CONF = loader.get_settings()
 HEARTBEAT_MAX_GAP = datetime.timedelta(seconds=60)
 
 MANUAL_READING_MAX_SECONDS = 18 * 3600
-FORMAT_PREFERENCE_ORDER = ("epub", "azw3", "mobi", "azw", "docx", "pdf", "txt")
+FORMAT_PREFERENCE_ORDER = (
+    "epub", "azw3", "mobi", "azw", "docx", "pdf", "txt",
+    "lit", "pdb", "prc", "rb", "snb", "tcr", "lrf",
+    "rtf", "odt", "html", "htm", "azw1", "tpz",
+)
 
 # 阅读进度达到该百分比即视为"读完"，自动把 BookReadingStats.state 置为 FINISHED
 # （epub 分页误差下很多书读到最后一页也算不满 100%）

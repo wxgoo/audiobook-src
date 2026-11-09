@@ -4209,54 +4209,49 @@ class BookRead(BaseHandler):
             if fmt_arg == "djvu":
                 return self._redirect_djvu_reader(book)
 
-            if fmt_arg in ("epub", "mobi", "azw", "azw3"):
-                if fmt_arg != 'epub':
+            # epub 与「可转 EPUB 阅读的格式」（mobi/azw/azw3/docx/lit/pdb/rtf/...）
+            # 统一走 EPUB 阅读器。docx 旧逻辑是转 PDF，现已改为转 EPUB，
+            # 这样文档类书籍也能像 mobi 一样流式重排、全文搜索，而非只读扫描版 PDF。
+            if fmt_arg in ("epub",) + tuple(constants.EPUB_CONVERTIBLE_FORMATS):
+                if fmt_arg != "epub":
                     service = ConverterService()
                     if not service.is_book_converting(book):
+                        logging.info(f"[READ]Convert book {bid} to epub format, {fpath_arg}")
                         service.convert_and_save(self.user_id(), book, fpath_arg, "epub")
 
                 epub_dir = "/get/extract/%s" % book["id"]
                 return self.html_page("book/" + book_reader, {
                     "book": book,
                     "epub_dir": epub_dir,
-                    "is_ready": (fmt_arg == 'epub')
+                    "is_ready": (fmt_arg == "epub")
                 })
 
-        # 优先阅读epub/azw3/mobi/txt格式
-        for fmt in ["epub", "mobi", "azw", "azw3", "txt"]:
+        # 未指定 format 时，按优先级自动挑选可读格式：
+        # epub 直接读；txt 走专用阅读器；其余可转换格式自动转 EPUB 后读。
+        auto_order = ["epub", "txt"] + list(constants.EPUB_CONVERTIBLE_FORMATS)
+        for fmt in auto_order:
             fpath = book.get("fmt_%s" % fmt, None)
             if not fpath:
                 continue
 
             if fmt == "txt":
-                # TXT 有专用阅读器，不能走下面的 EPUB 转换；否则这个循环会先
-                # 返回 EPUB 阅读器，令后面的 fmt_txt 兜底永远不可达。
+                # TXT 有专用阅读器，必须在此单独处理，不能落进下面的 EPUB 转换分支。
                 return self.redirect(f"/book/{book_id}/readtxt")
 
-            if fmt != 'epub':
-                service = ConverterService()
-                if not service.is_book_converting(book):
-                    logging.info(f"[READ]Convert book {bid} to epub format, {fpath}")
-                    service.convert_and_save(self.user_id(), book, fpath, "epub")
+            if fmt == "epub":
+                epub_dir = "/get/extract/%s" % book["id"]
+                return self.html_page("book/" + book_reader, {
+                    "book": book, "epub_dir": epub_dir, "is_ready": True})
 
-            # epub_dir is for javascript
+            service = ConverterService()
+            if not service.is_book_converting(book):
+                logging.info(f"[READ]Convert book {bid} to epub format, {fpath}")
+                service.convert_and_save(self.user_id(), book, fpath, "epub")
             epub_dir = "/get/extract/%s" % book["id"]
             return self.html_page("book/" + book_reader, {
-                "book": book,
-                "epub_dir": epub_dir,
-                "is_ready": (fmt == 'epub')
-            })
+                "book": book, "epub_dir": epub_dir, "is_ready": False})
 
-        has_converted_pdf = False
-        if 'fmt_docx' in book and 'fmt_pdf' not in book:
-            fpath = book.get("fmt_docx", None)
-            if fpath:
-                service = ConverterService()
-                if not service.is_book_converting(book):
-                    service.convert_and_save(self.user_id(), book, fpath, "pdf")
-                has_converted_pdf = True
-
-        if "fmt_pdf" in book or has_converted_pdf:
+        if "fmt_pdf" in book:
             if self.current_user and not self.current_user.can_save():
                 raise web.HTTPError(403, reason=_("无权在线阅读PDF类书籍"))
 
@@ -4285,14 +4280,14 @@ class BookRead(BaseHandler):
 
     def _epub_conversion_source(self, book, fmt_arg=""):
         """返回需要转换为epub的源文件路径；如果无需转换（已就绪或该格式不需要转换）则返回None"""
-        if fmt_arg and fmt_arg not in ("epub"):
+        if fmt_arg and fmt_arg not in ("epub",) + tuple(constants.EPUB_CONVERTIBLE_FORMATS):
             return None
 
-        for fmt in ["epub", "txt", "mobi", "azw", "azw3"]:
+        for fmt in ["epub"] + list(constants.EPUB_CONVERTIBLE_FORMATS):
             fpath = book.get("fmt_%s" % fmt, None)
             if not fpath:
                 continue
-            if fmt in ("epub"):
+            if fmt == "epub":
                 return None
             return None if book.get("fmt_epub") else fpath
         return None

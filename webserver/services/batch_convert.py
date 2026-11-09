@@ -54,7 +54,11 @@ class BatchConvertService(AsyncService):
                 return (False, None, None)
 
             source_format = None
-            supported_formats = ['azw3', 'mobi', 'txt', 'docx', 'azw', 'pdf']
+            supported_formats = [
+                'azw3', 'mobi', 'txt', 'docx', 'azw', 'pdf',
+                'lit', 'pdb', 'prc', 'rb', 'snb', 'tcr', 'lrf',
+                'rtf', 'odt', 'html', 'htm', 'azw1', 'tpz',
+            ]
             for f in supported_formats:
                 if f in formats_lower:
                     source_format = f

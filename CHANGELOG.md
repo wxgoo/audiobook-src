@@ -9,6 +9,38 @@
 
 ---
 
+## 4.6.0-build.27-r10（当前包修订）
+
+> 主题：**扩展在线阅读支持的图书格式 + docx 改走 EPUB**。入库白名单从 11 种扩到
+> 24 种；`docx` 不再转 PDF，改为转 EPUB 流式阅读（可重排、可全文搜索）；新增
+> `lit / pdb / prc / rb / snb / tcr / lrf / rtf / odt / html / htm / azw1 / tpz`
+> 等 Calibre 原生可转换格式，打开时自动转 EPUB 后读。仅改后端 Python，**`app/dist`
+> 未动**，无需重建前端。运行期版本仍是 `4.6.0-build.27`。详见
+> [`docs/支持的图书格式.md`](docs/支持的图书格式.md)。
+
+### 变更
+
+1. **`docx` 改转 EPUB**（`webserver/handlers/book.py` 的 `BookRead`）：旧逻辑是打开只有
+   `docx` 的书时自动转 PDF 后用 PDF 阅读器打开（分页扫描式、不可重排/搜索）；现与
+   `mobi`/`azw3` 一致，统一转 **EPUB** 后交由流式阅读器打开。若书本身已带 `epub` 直接读
+   epub；若同时有 `docx` 和 `pdf`，现在优先转 `docx → epub`（而非读 PDF）。
+2. **格式白名单扩展**（`webserver/constants.py`）：`SUPPORTED_EBOOK_FORMATS` 新增
+   `lit / pdb / prc / rb / snb / tcr / lrf / rtf / odt / html / htm / azw1 / tpz`，
+   新增 `EPUB_CONVERTIBLE_FORMATS` 明确哪些源格式需自动转 EPUB 才能读（排除已有原生
+   阅读器的 `epub/pdf/fb2/cbz/djvu` 与专用阅读器的 `txt`）。`ACCEPTED_BOOK_FORMATS` 由
+   11 种变为 24 种。
+3. **阅读选择逻辑统一**：`BookRead.get` 的「指定格式」分支与「自动选择」循环都改用
+   `EPUB_CONVERTIBLE_FORMATS` 决定转 EPUB 阅读；`_epub_conversion_source` 同步覆盖新格式，
+   使 `/book/<id>/read` 的 POST 检测能正确触发/判定转换。
+4. **配套列表同步**：`reading_stats_service.FORMAT_PREFERENCE_ORDER`、
+   `batch_convert.supported_formats` 加入新格式；`converter.py` 注释由 `docx→pdf` 更正为
+   `docx→epub`。
+5. **边界**：所有自动转换依赖系统已安装 Calibre（`ebook-convert`），未安装或转换失败仍提示
+   「暂不支持，请转 EPUB 或 PDF 后阅读」；`uvz` 仅入库不可读、`fb2`/`cbz` 仅 MyReader 阅读器
+   原生支持，行为与此前一致，未改动。
+
+---
+
 ## 4.6.0-build.27-r9（当前包修订）
 
 > 主题：**读者组目录树计数口径统一**。分组成员登录后，点开「目录」看到的各级

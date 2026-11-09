@@ -119,7 +119,7 @@ class ConverterService(AsyncService):
             # root 下启用自身沙箱，直接报错退出：
             #   Running as root without --no-sandbox is not supported
             # 单设 QTWEBENGINE_DISABLE_SANDBOX=1 不够，必须显式 --no-sandbox。
-            # 容器内无外泄面，root 下关沙箱可接受（docx→pdf、epub 封面渲染都靠它）。
+            # 容器内无外泄面，root 下关沙箱可接受（docx→epub、epub 封面渲染都靠它）。
             env["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox --disable-dev-shm-usage"
             env["XDG_RUNTIME_DIR"] = "/tmp/runtime-ubuntu"
             p = subprocess.Popen(args, stdout=log, stderr=subprocess.PIPE, env=env)

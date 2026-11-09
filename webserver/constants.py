@@ -18,11 +18,26 @@ DEFAULT_ISBN = "0000000000001"
 
 CALIBRE_ERROR_FLAG = "<*ERROR*>"
 # fb2（FictionBook2）为 calibre 内置元数据读写的 XML 电子书，MyReader 阅读器原生渲染
-SUPPORTED_EBOOK_FORMATS = ["azw3", "epub", "mobi", "pdf", "txt", "azw", "docx", "fb2"]
+# 第二行起为 Calibre 原生可转换的额外输入格式：打开时自动转为 EPUB 后由网页流式阅读器阅读，
+# 入库/下载照常可用。Calibre 对这些格式的输入支持是内置于 ebook-convert 的，无需额外依赖。
+SUPPORTED_EBOOK_FORMATS = [
+    "azw3", "epub", "mobi", "pdf", "txt", "azw", "docx", "fb2",
+    # 其他可被 Calibre 转成 EPUB 的阅读源格式
+    "lit", "pdb", "prc", "rb", "snb", "tcr", "lrf",
+    "rtf", "odt", "html", "htm", "azw1", "tpz",
+]
 # 扫描版/漫画包（DJVU/UVZ/CBZ）：入库前校验容器、以文件名编目为底、同名多候选按新书入库；不可转换。见 base/book_files.py
 SCANNED_DOCUMENT_FORMATS = ["djvu", "uvz", "cbz"]
 # 允许上传/扫描入库的全部格式
 ACCEPTED_BOOK_FORMATS = SUPPORTED_EBOOK_FORMATS + SCANNED_DOCUMENT_FORMATS
+# 网页端无原生阅读器、需要自动转 EPUB 后才能流式阅读的源格式。
+# 已排除：epub（阅读格式本身）、txt（专用阅读器）、pdf（PDF.js）、
+# fb2/cbz（MyReader 内嵌）、djvu（DjVu.js）。docx 旧逻辑是转 PDF，现统一改为转 EPUB。
+EPUB_CONVERTIBLE_FORMATS = [
+    "mobi", "azw", "azw3", "docx",
+    "lit", "pdb", "prc", "rb", "snb", "tcr", "lrf",
+    "rtf", "odt", "html", "htm", "azw1", "tpz",
+]
 META_WRITABLE_FORMATS = ["epub", "azw3", "pdf", "djvu", "cbz", "fb2"]
 SUPPORTED_AUDIO_FORMATS = ['.mp3', ".m4a", ".m4b", ".wav", ".wma", ".opus"]
 # 有声书字幕文件格式（与音频文件同目录同名，如 0001_第一章.wav -> 0001_第一章.srt）
