@@ -26,7 +26,7 @@
 # 3. app/node_modules 要带上。Dockerfile 里 `COPY app/ /build/` 依赖它，
 #    且 NAS 上 npm ci 极易因网络抖动失败。
 # ============================================================
-set -eu
+set -euo pipefail
 
 SELF_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$SELF_DIR/.." && pwd)
@@ -37,7 +37,7 @@ if [ "${1:-}" = "--check" ]; then
     PKG="${2:-}"
     [ -n "$PKG" ] && [ -f "$PKG" ] || { echo "用法: sh scripts/pack.sh --check <包路径>"; exit 2; }
     verify() {
-        T=$(mktemp -d)
+        T=$(mktemp -d -p "$(pwd)" 2>/dev/null || mktemp -d)
         trap 'rm -rf "$T"' EXIT
         tar -xzf "$PKG" -C "$T" || { echo "!! 解压失败"; exit 1; }
         D="$T/audiobook"
@@ -281,10 +281,15 @@ echo "==> [3/4] 打包（cd 到父目录对目录名打包，不用 --transform�
 #   2. tar 按文件名排序时，同一批命令产生的 mtime 精度不同 → --mtime + --sort=name
 # gzip -n 而不是 export GZIP：新版 gzip 会对该变量告警，且它不是给 tar 用的接口
 TAR_OPTS="--sort=name --mtime=@$REPRO_MTIME --owner=0 --group=0 --numeric-owner"
-STAGE=$(mktemp -d)
-trap 'rm -rf "$STAGE"' EXIT
-# 用硬链接镜像出一份叫 audiobook 的树，避免复制 92M 产物
+# 暂存区放在仓库同文件系统（ROOT 下），原因：
+#   1) 避免 mktemp 默认落在 /tmp（tmpfs / 其他卷）导致跨设备，进而 cp 退化、92M 产物撑爆 tmpfs；
+#   2) 让拷贝与原仓库同盘，空间/权限都最稳。
+# 用 tar 管道拷贝（而非 cp -al/cp -a）：不碰硬链接/软链边界，目录、符号链接、权限一律原样保留，
+# 最不容易漏文件。用完由 trap 清理。
+STAGE="$ROOT/.pack-stage.$$"
+rm -rf "$STAGE"
 mkdir -p "$STAGE/audiobook"
+trap 'rm -rf "$STAGE"' EXIT
 for item in $(ls -A); do
     case "$item" in
         # 版本库与开发侧杂物
@@ -296,9 +301,17 @@ for item in $(ls -A); do
         .pytest_cache) continue ;;
         # 误提交的嵌套仓库条目（历史上 clone 自己的残留），空目录，无内容
         audiobook-src) continue ;;
+        # 本脚本自己建的暂存目录，不能递归进包
+        .pack-stage*) continue ;;
     esac
-    cp -al "$item" "$STAGE/audiobook/$item" 2>/dev/null || cp -a "$item" "$STAGE/audiobook/$item"
+    tar -cf - "$item" 2>/dev/null | ( cd "$STAGE/audiobook" && tar -xf - ) \
+        || { echo "  !! 暂存失败: $item"; exit 1; }
 done
+# 暂存自检：关键目录/文件必须进暂存区，否则打出来的包必缺文件（不再静默验到旧包）
+for must in Dockerfile docker-compose.yml app conf scripts update tools myreader-dist; do
+    [ -e "$STAGE/audiobook/$must" ] || { echo "  !! 暂存区缺 $must（staging 失败，未进包）"; exit 1; }
+done
+echo "  暂存 OK: $(ls "$STAGE/audiobook" | tr '\n' ' ')"
 
 # 归档目录不进部署包：它们是历史记录（v9 那趟的一次性脚本、旧版操作手册、
 # 设计稿截图），NAS 上用不到，只会让包变大、让人分不清哪个脚本该跑。
@@ -350,6 +363,8 @@ echo "  已清掉 __pycache__ / .pytest_cache / *.pyc（开发残留）"
 
 mkdir -p "$OUTDIR"
 ( cd "$STAGE" && tar $TAR_OPTS -cf - audiobook | gzip -n > "$OUT" )
+# pipefail 已保证 tar 失败即退出；再确认产物非空，避免验到上一次遗留的坏包
+[ -s "$OUT" ] || { echo "  !! 打包产物为空，tar 可能失败"; exit 1; }
 echo "  产物: $OUT"
 
 # ---------- 验包 ----------
