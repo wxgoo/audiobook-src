@@ -1962,7 +1962,16 @@ class BaseHandler(web.RequestHandler):
             href = friend.get("href", "")
             parsed = urlparse(href)
             domain = parsed.netloc
-            item = {"text": friend.get("text", ""), "href": href, "icon": ""}
+            # type 必须透传：前端 getFriendMeta 靠它决定图标与点击行为（电台=播放，其余=外链）
+            # favicon 存网站真实图标 URL（前端 <img> 优先用它；取不到时回退 mdi 图标）
+            # icon 字段保留兼容旧前端（同样为 favicon URL）
+            item = {
+                "text": friend.get("text", ""),
+                "href": href,
+                "type": friend.get("type", "website"),
+                "icon": "",
+                "favicon": "",
+            }
 
             if domain:
                 icon = ResourceService.check_favicon(domain)
@@ -1971,6 +1980,7 @@ class BaseHandler(web.RequestHandler):
                     need_loading_urls.append(href)
                 elif icon:
                     item["icon"] = icon
+                    item["favicon"] = icon
 
             result.append(item)
 

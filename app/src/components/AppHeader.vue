@@ -788,7 +788,11 @@ export default {
                     groups: this.sys.friends.map((friend) => {
                         const meta = getFriendMeta(friend);
                         return Object.assign(
-                            { icon: meta.icon, text: friend.text },
+                            {
+                                icon: meta.icon,                          // mdi 兜底图标（无 favicon 时显示）
+                                text: friend.text,
+                                favicon: friend.favicon || friend.icon,   // 网站真实图标，优先于 mdi
+                            },
                             meta.isStream
                                 ? { action: "playStream", streamUrl: friend.href, color: "green" }
                                 : { href: friend.href }
