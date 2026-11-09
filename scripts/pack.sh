@@ -68,7 +68,7 @@ if [ "${1:-}" = "--check" ]; then
         CR=$(printf '\r')
         crhit=$(grep -rlI "$CR" "$D/docker" "$D/conf" "$D/scripts" \
                       "$D/Dockerfile" "$D/Dockerfile.base" "$D/docker-compose.yml" \
-                      "$D/run_webserver.sh" 2>/dev/null | head -5)
+                      "$D/run_webserver.sh" 2>/dev/null | head -5) || true
         if [ -n "$crhit" ]; then
             echo "  !! 以下文件含 CR（CRLF 换行），容器/宿主脚本会无法执行："
             echo "$crhit" | sed 's/^/     /'
