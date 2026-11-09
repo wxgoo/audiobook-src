@@ -145,6 +145,36 @@ def groups_enabled() -> bool:
     return bool(CONF.get("READER_GROUPS_ENABLED", True))
 
 
+def book_matches_limits(book, eff) -> bool:
+    """判定一本书在当前「生效限制」下是否可读——唯一的口径来源。
+
+    书列表（BaseHandler.is_book_in_reading_range）与各类统计
+    （左侧树 / 分类页 / 标签云 / 元数据列表的 count）必须调用同一份逻辑，
+    否则会出现「树里写着 328 本，点进去只有 12 本」这种口径分裂。
+    以前统计侧各写各的 SQL（全库 count(distinct book)），数字天然对不上。
+
+    eff 为 effective_limits() 的返回值，或含同样三个键的 dict。
+    """
+    read_limit = int(eff.get("read_limit") or 0)
+    if read_limit == 0:
+        return True
+    limit_categories = set(filter(None, (eff.get("limit_categories") or "").split(",")))
+    limit_tags = set(filter(None, (eff.get("limit_tags") or "").split(",")))
+    # 白名单一个条件都没填：严格模式下谁都不给看（哨兵条件也走这里）。
+    if not limit_categories and not limit_tags:
+        return False
+
+    from webserver.constants import CALIBRE_COLUMN_CATEGORY
+
+    book_category = book.get(CALIBRE_COLUMN_CATEGORY) or ""
+    book_tags = set(book.get("tags") or [])
+    # 分类与标签是「或」的关系：只填了一边时，绝不要求另一边也匹配。
+    matched = (limit_categories and book_category in limit_categories) or bool(
+        limit_tags and book_tags & limit_tags
+    )
+    return matched if read_limit == 1 else not matched
+
+
 class ReaderGroupService:
     """读者组的增删查与成员分配。所有方法都是静态的，与 mybooks 其他 service 一致。"""
 

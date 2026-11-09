@@ -9,7 +9,41 @@
 
 ---
 
-## 4.6.0-build.27-r5（当前包修订）
+## 4.6.0-build.27-r6（当前包修订）
+
+> 主题：**读者组分组权限的统计口径统一**——分组成员登录后，左侧树与分类页
+> 里的数字按「他真正读得到的书」重算，不再显示全库规模。
+> 运行期版本仍是 `4.6.0-build.27`；**`app/dist` 未改动，指纹与 r5 完全相同**。
+
+### 变更
+
+1. **根因**：`/api/user/info` 的 `sys.*` 统计来自 `_library_stats()` 的全库
+   `count(distinct book)`，且按书库版本在类级缓存里被所有用户共享；分类页
+   `/categories`、标签/作者/系列列表 `/api/meta/*` 的 `count` 同样出自全库 SQL。
+   而书列表走 `is_book_visible()` 按读者组过滤——两条链路口径不同，
+   于是出现「标签显示 328 本，点进去只有 12 本」。
+2. **同源判定**：新增 `services/reader_group.book_matches_limits()`，
+   `BaseHandler.is_book_in_reading_range()` 与所有统计共用这一份逻辑，
+   杜绝口径再次漂移。40 组白名单/黑名单/空条件用例与旧判定逐项等价。
+3. **可见口径聚合**：`BaseHandler.scoped_counts()` 一次性遍历书库，按当前
+   生效限制筛出可见书籍，再聚合 `books/tags/authors/publishers/series/
+   categories/folders/audiobooks/physicals` 及各维度逐项计数；按
+   `(用户, 生效规则, 书库版本)` 缓存（TTL 120s）。管理员、游客、未受限用户
+   一律走原来的全库快路，零额外开销。
+4. **接入点**：`get_sys_info()` / `get_sys_info_async()`（左侧树 badge）、
+   `/categories`、标签云 `all_tags_with_count*`、元数据列表
+   `get_category_with_count*` 全部改用可见口径；计数为 0 的条目不再列出，
+   个人口径不写类级 fallback 缓存，避免串给别的用户。
+5. **顺手修**：`base._filter_tags()` 以前只读 `user.limit_tags`，绕过了
+   读者组（`meta.py` 的 `MetaList` 早已改过，这里漏了），现统一走
+   `effective_limits()`。
+6. **边界**：首页「藏书规模」统计面板对受限用户仍保持关闭（既有设计），
+   本次只把左侧树与列表页的数字改成真实可访问数；聚合异常时降级回全库
+   口径，不会让 `/api/user/info` 返回 500。
+
+---
+
+## 4.6.0-build.27-r5（上一修订）
 
 > 主题：**工具箱入口合并**——「作者归一化 + 作者清理」与「格式合并 + 格式精简」
 > 各自合并为一个工具，入口全部留在工具箱；左侧管理树不再单列「作者归一化」。

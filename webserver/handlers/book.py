@@ -838,7 +838,20 @@ class BookCategories(BaseHandler):
                 BaseHandler._catalog_cache.put(("categories", sql), version, rows)
             categories = [{"name": row[0], "count": row[1]} for row in rows]
 
-            if CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+            # 分类页每个 tab 后面的 (N) 以前是全库 SQL 的 count(l.book)，
+            # 只按名字过滤了条目、没重算数字；读者组成员点进去看到的书
+            # 远少于括号里的数。这里统一换成「可见口径」的计数。
+            key = self._scope_key()
+            scoped = (await self.run_calibre_read_async(self.scoped_counts, key)
+                      if key is not None else None)
+            if scoped:
+                counts = scoped.get("categories") or {}
+                categories = [
+                    {"name": name, "count": counts.get(str(name), 0)}
+                    for name, _ in categories if counts.get(str(name), 0) > 0
+                ]
+                categories.sort(key=lambda c: c["count"], reverse=True)
+            elif CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
                 categories = self._filter_categories_by_reading_range(categories)
 
             return {"err": "ok", "categories": categories}

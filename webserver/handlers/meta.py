@@ -188,7 +188,11 @@ class MetaList(ListHandler):
                     # 如果items中没有，count为0
                     pins.append({"name": value, "count": 0})
 
-        if CONF.get(constants.ALLOW_READ_RANGE_SETTING, False) and meta == "tag":
+        # 受限用户的 items 已经是「可见口径」逐本聚合出来的（见 base.scoped_counts），
+        # 计数为 0 的标签已被剔除；再按标签名做一次黑白名单会二次误伤：
+        # 一本书即便因另一个标签被屏蔽，它名下其余标签里可见的那几本也不该消失。
+        if (CONF.get(constants.ALLOW_READ_RANGE_SETTING, False) and meta == "tag"
+                and self._scope_key() is None):
             # 如果启用了阅读范围设置，过滤掉用户不可见的标签, 包括items & pins
             items = self._filter_tags(items)
             pins = self._filter_tags(pins)

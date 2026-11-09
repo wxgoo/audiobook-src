@@ -1475,39 +1475,12 @@ class BaseHandler(web.RequestHandler):
         v4.7 读者组：用户自己没显式设置限制时，回退到所属读者组的配置
         （见 services/reader_group.py）。
         """
-        from webserver.services.reader_group import ReaderGroupService
+        # 判定本体收敛到 services.reader_group.book_matches_limits：
+        # 统计侧（左侧树 / 分类 / 标签云）也调它，保证「看到的数字」与
+        # 「点进去能读到的书」是同一套规则。
+        from webserver.services.reader_group import ReaderGroupService, book_matches_limits
 
-        eff = ReaderGroupService.effective_limits(user)
-        read_limit = eff["read_limit"]
-        if read_limit == 0:
-            return True
-
-        limit_categories = set(filter(None, eff["limit_categories"].split(",")))
-        limit_tags = set(filter(None, eff["limit_tags"].split(",")))
-
-        # 白名单的一个条件都没填 → 谁都不给看。
-        # 这里必须显式拦：两组条件都为空时，下面的 matched 永远是 False，
-        # 白名单恰好因此"变得正确"，但黑名单会反过来变成"全部放行"。
-        # 统一在这里判掉，两种模式都不会出现意料外行为。
-        if not limit_categories and not limit_tags:
-            return False
-
-        from webserver.constants import CALIBRE_COLUMN_CATEGORY
-
-        book_category = book.get(CALIBRE_COLUMN_CATEGORY) or ""
-        book_tags = set(book.get("tags") or [])
-
-        # 命中规则：分类和标签是「或」的关系，填了哪个就按哪个放行。
-        # 只填了一边（比如只填标签）时，绝不能要求另一边也匹配——
-        # 那样会导致「明明选了绘本标签，却一本书都看不到」，实测踩过。
-        matched = (limit_categories and book_category in limit_categories) or bool(
-            limit_tags and book_tags & limit_tags
-        )
-
-        if read_limit == 1:
-            return matched  # whitelist: must match at least one
-        else:
-            return not matched  # blacklist: must not match any
+        return book_matches_limits(book, ReaderGroupService.effective_limits(user))
 
     def search_for_books(self, query):
         self.search_restriction = ""
@@ -1526,10 +1499,16 @@ class BaseHandler(web.RequestHandler):
         # 否则管理员侧边栏少一半标签，看起来像书目丢了。
         if user.is_admin():
             return tags
-        read_limit = getattr(user, "read_limit", 0) or 0
+        # 必须走 effective_limits：以前只读 user.limit_tags，绕过了读者组，
+        # 组员自身字段是 0 时标签云完全不过滤（meta.py 的 MetaList 早改过，
+        # 这里漏了）。两处判定口径必须与 is_book_in_reading_range 一致。
+        from webserver.services.reader_group import ReaderGroupService
+
+        eff = ReaderGroupService.effective_limits(user)
+        read_limit = int(eff.get("read_limit") or 0)
         if read_limit == 0:
             return tags
-        limit_tags = set(filter(None, (user.limit_tags or "").split(",")))
+        limit_tags = set(filter(None, (eff.get("limit_tags") or "").split(",")))
         if not limit_tags:
             return tags
         if read_limit == 1:
@@ -1573,6 +1552,12 @@ class BaseHandler(web.RequestHandler):
         return tags
 
     def all_tags_with_count(self):
+        # 受限用户直接取可见口径：全库 SQL 的 count(distinct book) 会把
+        # 他读不到的书也数进去，标签云显示「小说 328」点进去只有 12 本。
+        # 这里提前返回，也避免把个人口径写进类级 _query_fallback_cache。
+        scoped = self.scoped_counts()
+        if scoped:
+            return {t: c for t, c in scoped["tag"].items() if c}
         cache_key = "all_tags_with_count"
         try:
             tags = self.query_all_tags_with_count()
@@ -1589,6 +1574,12 @@ class BaseHandler(web.RequestHandler):
         return self.filter_tags_by_read_range(tags)
 
     async def all_tags_with_count_async(self):
+        # 权限签名在请求线程算，全库聚合丢线程池，避免首次命中时冻住 ioloop。
+        key = self._scope_key()
+        if key is not None:
+            scoped = await self.run_calibre_read_async(self.scoped_counts, key)
+            if scoped:
+                return {t: c for t, c in scoped["tag"].items() if c}
         cache_key = "all_tags_with_count"
         try:
             tags = await self.query_all_tags_with_count_async()
@@ -1602,7 +1593,11 @@ class BaseHandler(web.RequestHandler):
                 )
         return self.filter_tags_by_read_range(tags)
 
-    def get_category_with_count(self, field):
+    def get_category_with_count(self, field, scope_key=None):
+        orig_field = field  # language 分支会把 field 改成 lang_code，取聚合表要用原名
+        # scope_key 由 async 入口在请求线程预先算好传进来，这里就不碰
+        # current_user / cookie 了（本方法跑在 calibre 线程池里）。
+        scoped = self.scoped_counts(scope_key)
         table = field if field in ["series"] else field + "s"
         name_column = "A.name"
         if field == "rating":
@@ -1623,10 +1618,23 @@ class BaseHandler(web.RequestHandler):
         try:
             with self.db_lock:
                 rows = self.calibre_db_cache.backend.conn.get(sql)
+            if scoped:
+                # 保留数据库 id，只把 count 换成「该用户可见的书数」，并丢掉
+                # 计数为 0 的条目（黑名单下整类都读不到时不该还列在那儿）。
+                # 个人口径绝不写进类级 fallback 缓存，否则会串给别的用户。
+                counts = scoped.get(orig_field) or {}
+                items = [
+                    {"id": a, "name": b, "count": counts.get(str(b), 0)}
+                    for a, b, c in rows if counts.get(str(b), 0) > 0
+                ]
+                return items
             items = [{"id": a, "name": b, "count": c} for a, b, c in rows]
             BaseHandler._query_fallback_cache[cache_key] = items
             return items
         except Exception as e:
+            if scoped:
+                # 宁可空列表，也不把全库数字当成「我能读到的」发给受限用户
+                return []
             cached = BaseHandler._query_fallback_cache.get(cache_key, [])
             logging.error("get_category_with_count query failed for %s: %s", cache_key, str(e))
             if cached:
@@ -1639,7 +1647,8 @@ class BaseHandler(web.RequestHandler):
 
     async def get_category_with_count_async(self, field):
         """Non-blocking counterpart to get_category_with_count()."""
-        return await self.run_calibre_async(self.get_category_with_count, field)
+        key = self._scope_key()
+        return await self.run_calibre_async(self.get_category_with_count, field, key)
 
     def get_folder_count(self):
         """Return the number of distinct top-level folders in #folder."""
@@ -1966,6 +1975,140 @@ class BaseHandler(web.RequestHandler):
         return result
 
     _stats_cache = VersionedCache(ttl=60, max_items=4)
+    # 受限用户的「可见口径」聚合，按 (用户, 生效规则, 书库版本) 缓存。
+    # 组规则改了但书库没动时 library_version 不变，故额外给 120s TTL 兜底。
+    _scoped_cache = VersionedCache(ttl=120, max_items=64)
+
+    def _scope_key(self):
+        """当前用户是否受阅读范围限制：受限返回可缓存签名，否则 None（走全库快路）。
+
+        游客保持既有行为（is_library_restricted 同样不拦游客），管理员永远全库。
+        """
+        if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+            return None
+        user = self.current_user
+        if not user or self.is_admin():
+            return None
+        from webserver.services.reader_group import ReaderGroupService
+
+        eff = ReaderGroupService.effective_limits(user)
+        if eff["read_limit"] == 0:
+            return None
+        return (self.user_id(), eff["read_limit"],
+                eff["limit_categories"] or "", eff["limit_tags"] or "")
+
+    def _build_scoped_counts(self, key):
+        """按「这个用户真正读得到的书」重算所有统计口径。
+
+        以前统计走全库 SQL（count(distinct book)），列表走 is_book_visible，
+        分组成员登录后左侧树显示全库规模、点进去却只有白名单里的几本。
+        这里一次性遍历书库、用与列表同源的 book_matches_limits 判定，
+        再从可见书籍聚合出左侧树与各类元数据列表需要的数字。
+        只碰 calibre 侧对象，可被 run_calibre_read_async 丢进线程池执行。
+        """
+        from collections import Counter
+        from webserver.base.folder_helper import split_folder
+        from webserver.constants import (
+            CALIBRE_COLUMN_CATEGORY, CALIBRE_COLUMN_FOLDER,
+            CALIBRE_COLUMN_BOOK_TYPE, BOOK_TYPE_PHYSICAL,
+        )
+        from webserver.services.reader_group import book_matches_limits
+
+        _uid, read_limit, cats, tags = key
+        eff = {"read_limit": read_limit, "limit_categories": cats, "limit_tags": tags}
+
+        ids = list(self.calibre_db_cache.all_book_ids())
+        books = (self.calibre_db.get_data_as_dict(ids=ids, **calibre_fast.list_kwargs())
+                 if ids else [])
+        # get_data_as_dict 用整数 colnum 作自定义列的 key，判定函数认字段名。
+        cmap = {m["colnum"]: k for k, m in self.calibre_db.field_metadata.items()
+                if m["is_custom"]}
+
+        tag_c, author_c, series_c, publisher_c = Counter(), Counter(), Counter(), Counter()
+        category_c, language_c, rating_c, folder_c = Counter(), Counter(), Counter(), Counter()
+        visible_ids = set()
+        for b in books:
+            for colnum, name in cmap.items():
+                if colnum in b and name not in b:
+                    b[name] = b[colnum]
+            if not book_matches_limits(b, eff):
+                continue
+            bid = b["id"]
+            visible_ids.add(bid)
+            for t in (b.get("tags") or []):
+                tag_c[t] += 1
+            for a in (b.get("authors") or []):
+                author_c[a] += 1
+            if b.get("series"):
+                series_c[b["series"]] += 1
+            if b.get("publisher"):
+                publisher_c[b["publisher"]] += 1
+            cat = b.get(CALIBRE_COLUMN_CATEGORY) or ""
+            if cat:
+                category_c[str(cat)] += 1
+            for lang in (b.get("languages") or []):
+                language_c[lang] += 1
+            if b.get("rating") is not None:
+                rating_c[str(b["rating"])] += 1
+            fld = b.get(CALIBRE_COLUMN_FOLDER) or ""
+            parts = split_folder(fld) if fld else []
+            if parts:
+                folder_c[parts[0]] += 1
+
+        try:
+            physical_ids = set(self.calibre_db_cache.search(
+                f"{CALIBRE_COLUMN_BOOK_TYPE}:={BOOK_TYPE_PHYSICAL}") or [])
+        except Exception:
+            physical_ids = set()
+        try:
+            from webserver.handlers.audio import AudioBooksCache
+            audio_ids = set(AudioBooksCache.get_audio_book_ids_set() or ())
+        except Exception:
+            audio_ids = set()
+
+        stats = {
+            "books": len(visible_ids),
+            "tags": len(tag_c),
+            "authors": len(author_c),
+            "audiobooks": len(audio_ids & visible_ids),
+            "publishers": len(publisher_c),
+            "series": len(series_c),
+            "categories": len(category_c),
+            "folders": len(folder_c),
+            "physicals": len(physical_ids & visible_ids),
+            "mtime": self.calibre_db.last_modified().strftime("%Y-%m-%d"),
+        }
+        return {
+            "stats": stats,
+            "book_ids": frozenset(visible_ids),
+            "tag": dict(tag_c),
+            "author": dict(author_c),
+            "series": dict(series_c),
+            "publisher": dict(publisher_c),
+            "categories": dict(category_c),
+            "language": dict(language_c),
+            "rating": dict(rating_c),
+            "folder": dict(folder_c),
+        }
+
+    def scoped_counts(self, key=None):
+        """受限用户返回可见口径聚合，不受限返回 None。命中缓存时是纯内存操作。"""
+        if key is None:
+            key = self._scope_key()
+        if key is None:
+            return None
+        version = self.library_version()
+        cached = BaseHandler._scoped_cache.get(key, version)
+        if cached is not None:
+            return cached
+        try:
+            result = self._build_scoped_counts(key)
+        except Exception:
+            # 统计是旁支，任何异常都降级回全库口径，绝不能让 /api/user/info 500。
+            logging.exception("[scoped-counts] aggregate failed, fallback to global stats")
+            return None
+        BaseHandler._scoped_cache.put(key, version, result)
+        return result
 
     def _library_stats(self):
         db = self.calibre_db
@@ -2048,14 +2191,26 @@ class BaseHandler(web.RequestHandler):
         return info
 
     def get_sys_info(self):
+        # 受限用户不能吃全库共享缓存：左侧树那些 count 必须按他自己读得到的书算，
+        # 否则「标签 328 / 作者 156」与点进去的列表永远对不上。
+        key = self._scope_key()
+        if key is not None:
+            scoped = self.scoped_counts(key)
+            if scoped:
+                return self._sys_info_with(scoped["stats"])
         return self._sys_info_with(self._library_stats())
 
     async def get_sys_info_async(self):
         version = self.library_version()
-        stats = BaseHandler._stats_cache.get("stats", version)
-        if stats is None:
-            stats = await self.run_calibre_read_async(self._library_stats)
-            BaseHandler._stats_cache.put("stats", version, stats)
+        key = self._scope_key()
+        if key is not None:
+            scoped = await self.run_calibre_read_async(self.scoped_counts, key)
+            stats = scoped["stats"] if scoped else await self.run_calibre_read_async(self._library_stats)
+        else:
+            stats = BaseHandler._stats_cache.get("stats", version)
+            if stats is None:
+                stats = await self.run_calibre_read_async(self._library_stats)
+                BaseHandler._stats_cache.put("stats", version, stats)
         return self._sys_info_with(stats)
 
 
