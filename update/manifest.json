@@ -1,144 +1,141 @@
 {
   "schema": 1,
-  "revision": "4.6.0-build.27-r7",
-  "base_revision": "4.6.0-build.27-r6",
+  "revision": "4.6.0-build.27-r8",
+  "base_revision": "4.6.0-build.27-r7",
   "version": "4.6.0-build.27",
   "date": "2026-11-09",
-  "summary": "新版本检测独立成页：Gitee 发布清单驱动，后端修订可一键在线更新，含前端产物则引导重新部署",
+  "summary": "版权下架（书级停止阅读/下载）+ 修版本检测-r0误判",
   "notes": [
-    "系统设置里的「更新与工具箱」拆成「版本与更新」独立页与纯工具箱分组",
-    "自动检测改走 Gitee update/manifest.json，停用上游 mybooks.top release 接口",
-    "仅后端 Python 修订支持下载校验→备份→替换→重启；提供 Web 回滚与宿主机回滚命令",
-    "deploy.sh / upgrade.sh 加固化钩子，防止重建容器时热更新被冲掉",
-    "右上角新版本角标、首页/页脚版本弹窗、消息弹窗旧文案统一改为 Gitee 口径",
-    "文档统一：README/安装指南/部署包说明/在线更新说明/CHANGELOG 与 NAS 运维手册同步到 r7 口径"
+    "新增书级版权下架：被版权人要求下架的书不删除不隐藏，后端全链路硬拦阅读/下载/推送/分享/WebDAV/OPDS，前端详情页/分享页/WAP显示版权声明并引导购买正版",
+    "新增 /admin/takedowns 管理页：单本下架/恢复、批量恢复、按 book_id 新增、声明文案预览，左侧管理树直达",
+    "修版本检测-r0误判：version_check.py 的 CODE_ROOT 少算一级指向 /var/www，读不到本地基线被兜底成 -r0；修正后装 r7 即正确读到 -r7",
+    "复制命令在非 https 下降级为手动选中提示；后台检测与版本弹窗加入远端比本地旧则不算更新的同口径保护",
+    "app/dist 已重建（指纹 89f55790…），需完整重新部署"
   ],
   "requires_dist": true,
   "hotfixable": false,
   "reason": "本次改动包含前端产物或镜像级文件，在线替换无法生效，请重新执行 deploy.sh / upgrade.sh",
   "files": [
     {
+      "path": "webserver/base/formatter.py",
+      "sha256": "6ac047860bc108449be55e1f664b235953a069d045f006c64ee3522271172ee8",
+      "bytes": 11431
+    },
+    {
       "path": "webserver/handlers/__init__.py",
-      "sha256": "032f311d7ebcea20a747b6686e30494c4173bcb84f1570c5e47d8e9934f4e0ce",
-      "bytes": 910
+      "sha256": "1248366141e1ceeb73543cb99ddbdabcef867653c4a7bb598f6e87af792f36b2",
+      "bytes": 1055
     },
     {
       "path": "webserver/handlers/admin.py",
-      "sha256": "482021d11cb84c3f955af529c825a93af7f4a293dd7500500fc2f9e670078f9c",
-      "bytes": 84501
+      "sha256": "1b1b31263b6517f7425df184d1c7e2e1106203d7ef3570671d7f887e35d3b785",
+      "bytes": 84665
     },
     {
-      "path": "webserver/handlers/user.py",
-      "sha256": "bc24282860ff8072ea0654b538221cdb1c038067d444fc894070657d2c96e392",
-      "bytes": 61228
+      "path": "webserver/handlers/base.py",
+      "sha256": "d405fd6b8917b4f0223b1a2619ae4b93b447c01fb4044a9c894a16004ff75272",
+      "bytes": 106564
     },
     {
-      "path": "webserver/handlers/version.py",
-      "sha256": "a58e6568c0c865cb30f8e09cb0b2d994c67b99f218cb7c19065a7664252f27b3",
-      "bytes": 3401
+      "path": "webserver/handlers/opds.py",
+      "sha256": "5fb2e14b910fabce8267eb617a6ab8438fabce6c9efbc713d3ccfec4065438d9",
+      "bytes": 29027
+    },
+    {
+      "path": "webserver/handlers/share.py",
+      "sha256": "c53f839374b24bef975ce054c902455fb108448c87b17b0c5c822fcb0233c7fe",
+      "bytes": 8484
+    },
+    {
+      "path": "webserver/handlers/takedown.py",
+      "sha256": "5bed7a9eeb680ee37d6ac902f9e113b4c7c8208397125a34c083371b7a5a7970",
+      "bytes": 4105
     },
     {
       "path": "webserver/main.py",
-      "sha256": "e34a68a9aa33db4c8a0144ba46e3ead43bc17041fc5fd9ae4eccd48f66195ac3",
-      "bytes": 32542
+      "sha256": "9c625a4eaf60e09116191a708aba0519924a9bf210bc927f75ea37d9c606a586",
+      "bytes": 32805
+    },
+    {
+      "path": "webserver/mcp/mcp_service.py",
+      "sha256": "e877d2d26b9bb6dc737eb7a8b1b3f4d1da2e5c15029401ef74a170677ab9f92a",
+      "bytes": 70929
+    },
+    {
+      "path": "webserver/models.py",
+      "sha256": "5f91151ebaa59360e85683c8e340e1d0d5319b94a714a8bf020f4ed45b92a9e0",
+      "bytes": 68620
     },
     {
       "path": "webserver/services/book_barn.py",
-      "sha256": "8fb615fc74995f8d101e5c2993e6877ab16bda19435fc00e22561414bcfb9ba8",
-      "bytes": 27880
+      "sha256": "809ace4aee023bc3606dbf478e74d349a62d057ca5380ad85aae27502777c730",
+      "bytes": 28315
+    },
+    {
+      "path": "webserver/services/book_takedown.py",
+      "sha256": "dd1a4328a633ac3e5704247d369f408403d970f77e415d6d0e258d232d0ddda2",
+      "bytes": 10214
     },
     {
       "path": "webserver/services/version_check.py",
-      "sha256": "e4c63175789cec9953ca8c18dac53bc0135a9b46935fbb248a38e0edd9a134c0",
-      "bytes": 16895
+      "sha256": "dbae396ca8c050e3695e6d5e03b5537df48882e5018b936275493c31c3ad5c0f",
+      "bytes": 19240
     },
     {
-      "path": "webserver/settings.py",
-      "sha256": "f289fe77da55d16abec5d88514bf054f157a7527ea4324f4a927342dbfa340d5",
-      "bytes": 23984
+      "path": "webserver/wap/renderer.py",
+      "sha256": "c28f428c9b747ae3386a2dd95d8c305ca60031f6b3fc5ae9227b402927556a56",
+      "bytes": 13081
+    },
+    {
+      "path": "webserver/webdav/dav_provider.py",
+      "sha256": "68de901ecd937428c50e5ec367025221b38c75a0b710665626be543a12162b41",
+      "bytes": 41420
     }
   ],
   "changed": {
     "hotfix": [
+      "webserver/base/formatter.py",
       "webserver/handlers/__init__.py",
       "webserver/handlers/admin.py",
-      "webserver/handlers/user.py",
-      "webserver/handlers/version.py",
+      "webserver/handlers/base.py",
+      "webserver/handlers/opds.py",
+      "webserver/handlers/share.py",
+      "webserver/handlers/takedown.py",
       "webserver/main.py",
+      "webserver/mcp/mcp_service.py",
+      "webserver/models.py",
       "webserver/services/book_barn.py",
+      "webserver/services/book_takedown.py",
       "webserver/services/version_check.py",
-      "webserver/settings.py"
+      "webserver/wap/renderer.py",
+      "webserver/webdav/dav_provider.py"
     ],
     "blocking": [
-      "Dockerfile",
       "app/locales/en.json",
       "app/locales/zh-TW.json",
       "app/locales/zh.json",
       "app/src/assets/css/mdi-subset.css",
       "app/src/assets/fonts/materialdesignicons-subset.woff2",
       "app/src/components/AppHeader.vue",
-      "app/src/pages/admin/settings.vue",
+      "app/src/pages/admin/takedowns.vue",
       "app/src/pages/admin/version.vue",
-      "delivery/overlay/MANIFEST.tsv",
-      "delivery/overlay/SHA256SUMS",
-      "delivery/overlay/files/Dockerfile",
-      "delivery/overlay/files/app/locales/en.json",
-      "delivery/overlay/files/app/locales/zh-TW.json",
-      "delivery/overlay/files/app/locales/zh.json",
-      "delivery/overlay/files/app/src/components/AppHeader.vue",
-      "delivery/overlay/files/app/src/pages/admin/settings.vue",
-      "delivery/overlay/files/app/src/pages/admin/version.vue",
-      "delivery/overlay/files/docker/start.sh",
-      "delivery/overlay/files/release_notes.txt",
-      "delivery/overlay/files/scripts/deploy.sh",
-      "delivery/overlay/files/scripts/gen-update-manifest.py",
-      "delivery/overlay/files/scripts/pack.sh",
-      "delivery/overlay/files/scripts/sync-hotfix.sh",
-      "delivery/overlay/files/scripts/upgrade.sh",
-      "delivery/overlay/files/update/manifest.json",
-      "delivery/overlay/files/webserver/handlers/__init__.py",
-      "delivery/overlay/files/webserver/handlers/admin.py",
-      "delivery/overlay/files/webserver/handlers/user.py",
-      "delivery/overlay/files/webserver/handlers/version.py",
-      "delivery/overlay/files/webserver/main.py",
-      "delivery/overlay/files/webserver/services/book_barn.py",
-      "delivery/overlay/files/webserver/services/version_check.py",
-      "delivery/overlay/files/webserver/settings.py",
-      "docker/start.sh",
-      "release_notes.txt",
-      "scripts/deploy.sh",
-      "scripts/gen-update-manifest.py",
-      "scripts/pack.sh",
-      "scripts/sync-hotfix.sh",
-      "scripts/upgrade.sh"
+      "app/src/pages/book/_bookid.vue",
+      "app/src/pages/s/_token.vue"
     ],
     "docs": [
       "CHANGELOG.md",
-      "INSTALL_GUIDE.md",
       "README.md",
-      "delivery/overlay/files/CHANGELOG.md",
-      "delivery/overlay/files/INSTALL_GUIDE.md",
-      "delivery/overlay/files/README.md",
-      "delivery/overlay/files/docs/NAS-Docker缓存池重置与镜像备份恢复手册.md",
-      "delivery/overlay/files/docs/在线更新说明.md",
-      "delivery/overlay/files/docs/备份与恢复演练.md",
-      "delivery/overlay/files/docs/操作总纲.md",
-      "delivery/overlay/files/docs/部署包说明.md",
-      "delivery/overlay/files/update/README.md",
-      "docs/NAS-Docker缓存池重置与镜像备份恢复手册.md",
       "docs/在线更新说明.md",
-      "docs/备份与恢复演练.md",
-      "docs/操作总纲.md",
-      "docs/部署包说明.md",
-      "update/README.md"
+      "docs/版权下架说明.md",
+      "docs/部署包说明.md"
     ]
   },
   "deploy_commands": [
     "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.6.0-build.27-r7.tar.gz.sha256",
+    "sha256sum -c audiobook-deploy-4.6.0-build.27-r8.tar.gz.sha256",
     "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
     "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.6.0-build.27-r7.tar.gz",
+    "tar -xzf audiobook-deploy-4.6.0-build.27-r8.tar.gz",
     "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }

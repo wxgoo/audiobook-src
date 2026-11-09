@@ -5,6 +5,7 @@ from webserver.i18n import _
 from webserver.loader import get_settings
 from webserver.services.book_access_service import BookAccessService
 from webserver.services.book_share_service import BookShareService
+from webserver.services import book_takedown
 from webserver.constants import CALIBRE_COLUMN_BOOK_TYPE, CALIBRE_COLUMN_PHY_COUNT
 from webserver.constants import CALIBRE_COLUMN_EXT_LINK, CALIBRE_COLUMN_CATEGORY, CALIBRE_COLUMN_FOLDER
 from webserver.constants import CALIBRE_COLUMN_TRANSLATORS
@@ -70,6 +71,9 @@ class SimpleBookFormatter:
         catalog = self.val(CALIBRE_COLUMN_CATALOG, "") if include_comments else ""
         if strip_comments and comments:
             comments = comments[:120] + "..." if len(comments) > 120 else comments
+        # 版权下架：书目仍在列表里，但把标记与声明文案随书籍 JSON 下发，
+        # 前端据此禁用阅读/下载并显示引导文案。后端门禁是硬拦截，这里是展示层。
+        taken = book_takedown.is_takedown(b["id"])
         return {
             "id": b["id"],
             "title": b["title"],
@@ -107,6 +111,8 @@ class SimpleBookFormatter:
             'dynamic_cover': dynamic_cover,
             'location': location,
             'author_locked': bool(author_locked),
+            'is_takedown': taken,
+            'copyright_notice': book_takedown.notice() if taken else "",
         }
 
 
@@ -140,6 +146,7 @@ class MCPBookFormatter:
             "languages": self.val("languages", None),
             "isbn": self.val("isbn", None),
             'category': self.val('#category', ''),
+            'is_takedown': book_takedown.is_takedown(b["id"]),
         }
 
 
@@ -156,6 +163,10 @@ class BookFormatter:
         return bool(is_admin and is_admin() and self.book["id"] in BookShareService.shared_book_ids())
 
     def get_files(self):
+        # 版权下架：不发任何下载链接（含带签名的 href），前端按钮自然置灰；
+        # 即使有人手拼 /api/book/<id>.<fmt>，prepare() 的门禁也会挡住。
+        if book_takedown.is_takedown(self.book["id"]):
+            return []
         files = []
         book_id = self.book["id"]
         for fmt in self.book.get("available_formats", []):

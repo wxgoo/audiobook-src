@@ -1347,9 +1347,11 @@ class ReleaseNotes(BaseHandler):
         if not force and not CONF.get("AUTO_CHECKING_NEW_VERSION", True):
             return {"err": "ok", "msg": ""}
         local = vc.read_local_manifest()
-        cur = local.get("revision") or (VERSION + "-r0")
+        cur = local.get("revision", "")
         latest, err = vc.fetch_manifest(force=False)
-        has_new = bool(latest and latest.get("revision")
+        # 基线缺失时不弹「新版本」：r7 曾因包内清单路径算错被兜底成 -r0，
+        # 结果首页把自己那一版当成新版本反复弹窗。
+        has_new = bool(cur and latest and latest.get("revision")
                        and latest["revision"] != cur
                        and vc._rev_num(latest["revision"]) >= vc._rev_num(cur))
         last_shown = CONF.get("LAST_UPDATE_REVISION", "")

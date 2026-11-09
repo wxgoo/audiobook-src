@@ -2,6 +2,12 @@
   <div>
     <v-row align="start">
         <v-col cols="12">
+            <!-- 版权下架：书仍在，但不提供阅读与下载，改为引导购买正版 -->
+            <v-alert v-if="isTakedown" type="warning" outlined prominent border="left" class="mb-4">
+                <div class="text-subtitle-1 font-weight-bold">{{ $t('book.copyrightTitle') }}</div>
+                <div class="text-body-1 mt-1">{{ copyrightNotice }}</div>
+                <div class="text-caption mt-2">{{ $t('book.copyrightHint') }}</div>
+            </v-alert>
             <MyNexusChatDialog :open.sync="mynexusChatOpen" :book="book" @unavailable="onMyNexusUnavailable" />
             <v-dialog v-model="dialog_converting" persistent width="460">
                 <v-card class="dialog-border">
@@ -47,6 +53,33 @@
                 </v-list>
                 <p v-else><br/>{{ $t('book.noDownloadableFiles') }}</p>
             </AppDialog>
+
+            <!-- 管理员：版权下架 / 恢复 -->
+            <v-dialog v-model="dialog_takedown" max-width="480" persistent>
+                <v-card class="dialog-border">
+                    <v-toolbar flat dense dark color="warning">
+                        <v-icon left>mdi-copyright</v-icon>
+                        <v-toolbar-title>{{ isTakedown ? $t('book.takedownRestore') : $t('book.takedownSet') }}</v-toolbar-title>
+                        <v-spacer></v-spacer>
+                        <v-btn icon small @click="dialog_takedown = false"><v-icon>mdi-close</v-icon></v-btn>
+                    </v-toolbar>
+                    <v-card-text class="pt-5">
+                        <div class="text-body-2 mb-4">
+                            {{ isTakedown ? $t('book.takedownRestoreHint') : $t('book.takedownSetHint') }}
+                        </div>
+                        <v-textarea v-if="!isTakedown" v-model="takedown_reason"
+                                    :label="$t('book.takedownReason')" :hint="$t('book.takedownReasonHint')"
+                                    rows="3" outlined dense persistent-hint counter="2000" maxlength="2000"></v-textarea>
+                        <div class="text-caption mt-3">{{ copyrightNotice }}</div>
+                    </v-card-text>
+                    <v-card-actions class="justify-end px-4 pb-4">
+                        <v-btn text @click="dialog_takedown = false">{{ $t('common.cancel') }}</v-btn>
+                        <v-btn color="warning" :loading="takedown_submitting" @click="submitTakedown">
+                            {{ isTakedown ? $t('book.takedownRestoreConfirm') : $t('book.takedownSetConfirm') }}
+                        </v-btn>
+                    </v-card-actions>
+                </v-card>
+            </v-dialog>
 
             <v-card v-if="dialog_refer">
                 <v-toolbar flat dense dark color="primary">
@@ -128,8 +161,9 @@
                     </v-btn>
                     <!-- download -->
                     <div class="book-action-btns">
-                        <v-btn icon small fab @click="downloadBook" :disabled="!hasDownloadableFiles">
-                            <v-icon>mdi-download</v-icon>
+                        <!-- 下架书保持可点：点了弹版权声明，而不是静默置灰 -->
+                        <v-btn icon small fab @click="downloadBook" :disabled="!hasDownloadableFiles && !isTakedown">
+                            <v-icon>{{ isTakedown ? 'mdi-copyright' : 'mdi-download' }}</v-icon>
                         </v-btn>
                         <v-btn icon small fab :to="'/book/' + book.id + '/edit'">
                             <v-icon>mdi-pencil-circle-outline</v-icon>
@@ -259,7 +293,7 @@
                                     <v-icon>mdi-application-cog</v-icon>
                                     {{ $t('book.editBookInfo') }}
                                 </v-list-item>
-                                <v-list-item @click="dialog_send_to_device = true" :disabled="!hasCompatibleFormats">
+                                <v-list-item @click="dialog_send_to_device = true" :disabled="isTakedown || !hasCompatibleFormats">
                                     <v-icon>mdi-devices</v-icon>
                                     {{ $t('book.sendToDevice') }}
                                 </v-list-item>
@@ -287,13 +321,17 @@
                                     <v-icon>mdi-format-list-bulleted</v-icon>
                                     {{ $t('book.extractCatalog') }}
                                 </v-list-item>
-                                <v-list-item v-if="$store.state.user?.is_login" @click="openEmailDialog" :disabled="!hasCompatibleEmailFormats">
+                                <v-list-item v-if="$store.state.user?.is_login" @click="openEmailDialog" :disabled="isTakedown || !hasCompatibleEmailFormats">
                                     <v-icon>mdi-email-send</v-icon>
                                     {{ $t('book.shareToEmail') }}
                                 </v-list-item>
-                                <v-list-item v-if="isAdmin && shareLinkEnabled" @click="dialog_book_share = true">
+                                <v-list-item v-if="isAdmin && shareLinkEnabled" @click="dialog_book_share = true" :disabled="isTakedown">
                                     <v-icon>mdi-cloud-outline</v-icon>
                                     {{ book.shared ? $t('share.manageShare') : $t('share.createShare') }}
+                                </v-list-item>
+                                <v-list-item v-if="isAdmin" @click="openTakedownDialog">
+                                    <v-icon>{{ isTakedown ? 'mdi-lock-open-outline' : 'mdi-copyright' }}</v-icon>
+                                    {{ isTakedown ? $t('book.takedownRestore') : $t('book.takedownSet') }}
                                 </v-list-item>
                                 <v-list-item @click="generateShareCard" :disabled="!hasEBooks">
                                     <v-icon>mdi-card-bulleted-outline</v-icon>
@@ -735,7 +773,7 @@
         <v-col cols="12" sm="6" class="book-action-col">
             <v-card outlined>
                 <v-list>
-                    <v-list-item :href="readHref" target="_blank" :disabled="!hasEBooks || readBlocked" @click="onReadClick($event, defaultReadFormat)">
+                    <v-list-item :href="readHref" target="_blank" :disabled="(!hasEBooks && !isTakedown) || readBlocked" @click="onReadClick($event, defaultReadFormat)">
                         <v-list-item-avatar large :color="!hasEBooks || readBlocked ? 'grey' : 'primary'">
                             <v-icon dark>mdi-book-open-page-variant</v-icon>
                         </v-list-item-avatar>
@@ -764,7 +802,7 @@
         <v-col cols="12" sm="6" class="book-action-col">
             <v-card outlined>
                 <v-list>
-                    <v-list-item @click="downloadBook" :disabled="!hasDownloadableFiles">
+                    <v-list-item @click="downloadBook" :disabled="!hasDownloadableFiles && !isTakedown">
                         <v-list-item-avatar large :color="hasDownloadableFiles ? 'primary' : 'grey'">
                             <v-icon dark>mdi-download</v-icon>
                         </v-list-item-avatar>
@@ -808,7 +846,7 @@
         <v-col cols="12" sm="6" class="book-action-col">
             <v-card outlined>
                 <v-list>
-                    <v-list-item @click="dialog_send_to_device = true" :disabled="!hasCompatibleFormats">
+                    <v-list-item @click="dialog_send_to_device = true" :disabled="isTakedown || !hasCompatibleFormats">
                         <v-list-item-avatar large :color="!hasCompatibleFormats ? 'grey' : 'primary'">
                             <v-icon dark>mdi-devices</v-icon>
                         </v-list-item-avatar>
@@ -1340,6 +1378,7 @@ export default {
 
         // 是否存在可下载的文件
         hasDownloadableFiles: function() {
+            if (this.isTakedown) return false;
             if (!this.book || !this.book.files) return false;
             return this.book.files.length > 0;
         },
@@ -1412,6 +1451,14 @@ export default {
             return this.book.files.some(file => writableFormats.includes(file.format.toLowerCase()));
         },
 
+        // 版权下架：后端会把 files 置空并硬拦所有内容出口；这里只负责展示声明、
+        // 把按钮改成点了弹声明（不静默置灰），后端才是真正的拦截边界。
+        isTakedown() {
+            return !!(this.book && this.book.is_takedown);
+        },
+        copyrightNotice() {
+            return (this.book && this.book.copyright_notice) || this.$t('book.copyrightNotice');
+        },
         readBlocked() {
             return this.$store.state.user?.is_login !== true && !this.$store.state.sys.allow.read && !this.guest_access;
         },
@@ -1598,6 +1645,10 @@ export default {
         myReview: null,
         readingStateLoading: false,
         dialog_download: false,
+        // 版权下架：管理端对话框状态
+        dialog_takedown: false,
+        takedown_reason: '',
+        takedown_submitting: false,
         // 转换中等待对话框
         dialog_converting: false,
         converting_poll_timer: null,
@@ -1857,7 +1908,49 @@ export default {
             if (!isoString) return '';
             return new Date(isoString).toLocaleDateString();
         },
+        // 版权下架：统一的声明提示（按钮保持可点，避免静默置灰让人以为坏了）
+        showCopyrightNotice() {
+            this.$alert('warning', this.copyrightNotice);
+        },
+        openTakedownDialog() {
+            this.takedown_reason = '';
+            this.dialog_takedown = true;
+        },
+        async submitTakedown() {
+            if (this.takedown_submitting) return;
+            this.takedown_submitting = true;
+            const restore = this.isTakedown;
+            try {
+                const rsp = await this.$backend('/admin/takedown/' + (restore ? 'remove' : 'set'), {
+                    method: 'POST',
+                    body: JSON.stringify({ book_id: this.book.id, reason: this.takedown_reason || '' }),
+                });
+                if (rsp.err !== 'ok') {
+                    this.$alert('error', rsp.msg || this.$t('book.takedownFailed'));
+                    return;
+                }
+                this.dialog_takedown = false;
+                this.$set(this.book, 'is_takedown', !restore);
+                this.$set(this.book, 'copyright_notice', restore ? '' : (rsp.notice || this.copyrightNotice));
+                // 重新拉详情，让 files / 按钮状态与后端一致
+                try {
+                    const fresh = await this.$backend('/book/' + this.book.id);
+                    if (fresh && fresh.err === 'ok' && fresh.book) {
+                        this.book = Object.assign({}, this.book, fresh.book);
+                    }
+                } catch (e) { /* 本地标记已更新，刷新页面即可完全一致 */ }
+                this.$alert('success', rsp.msg || (restore ? this.$t('book.takedownRestored') : this.$t('book.takedownApplied')));
+            } catch (e) {
+                this.$alert('error', (e && e.message) || this.$t('book.takedownFailed'));
+            } finally {
+                this.takedown_submitting = false;
+            }
+        },
         downloadBook() {
+            if (this.isTakedown) {
+                this.showCopyrightNotice();
+                return;
+            }
             if (this.book.files && this.book.files.length === 1) {
                 this.openDownloadLink(this.book.files[0].href);
             } else {
@@ -2539,6 +2632,12 @@ export default {
         // 阅读按钮点击：epub/txt格式需要先检查解析/转换状态，其它格式直接打开
         async onReadClick(event, fmt) {
             event.preventDefault();
+            // 版权下架：必须在 fmt 解引用之前返回（下架时 files 为空，
+            // defaultReadFormat 可能是 null），也不触发任何转换/解析任务。
+            if (this.isTakedown) {
+                this.showCopyrightNotice();
+                return;
+            }
             if (fmt.key === 'txt') {
                 // 只做一次只读状态查询（test=1）：校验登录/权限，但不在这里入队解析。
                 // 解析交给阅读器自己——它先渲染开头正文、再启动目录扫描；若在点开的

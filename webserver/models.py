@@ -1527,6 +1527,42 @@ class BookShare(Base, SQLAlchemyMixin):
         return self.status == self.STATUS_ACTIVE and not self.is_expired(now) and not self.is_exhausted()
 
 
+class BookTakedown(Base, SQLAlchemyMixin):
+    """版权下架记录：应版权人要求停止提供某本书的阅读与下载。
+
+    书本身仍留在书库里（书目信息、封面、统计都保留），只是不再向任何读者
+    提供正文；这样做既满足下架要求，也能在详情页展示「请购买正版」的引导。
+    记录原因/操作人/书名快照是为了日后应对版权方核查时留痕。
+    """
+
+    __tablename__ = "book_takedowns"
+
+    book_id = Column(Integer, primary_key=True)
+    title = Column(String(1000), nullable=False, default="")
+    reason = Column(String(2000), nullable=False, default="")
+    operator = Column(String(200), nullable=False, default="")
+    operator_id = Column(Integer, nullable=False, default=0)
+    create_time = Column(DateTime, nullable=False)
+
+    def __init__(self, book_id, title="", reason="", operator="", operator_id=0):
+        self.book_id = int(book_id)
+        self.title = title or ""
+        self.reason = reason or ""
+        self.operator = operator or ""
+        self.operator_id = operator_id or 0
+        self.create_time = datetime.datetime.now()
+
+    def as_dict(self):
+        return {
+            "book_id": self.book_id,
+            "title": self.title,
+            "reason": self.reason,
+            "operator": self.operator,
+            "operator_id": self.operator_id,
+            "create_time": self.create_time.isoformat() if self.create_time else None,
+        }
+
+
 class MyNexusBookAnalysis(Base, SQLAlchemyMixin):
     __tablename__ = "mynexus_book_analyses"
 
@@ -1573,7 +1609,7 @@ def user_syncdb(engine):
 # 表结构随功能迭代新增的表，不希望依赖运维方手动重新执行 `--syncdb` 才能用上
 # （`docker/start.sh` 每次启动都会跑 --syncdb，但手工部署/测试环境不一定会），
 # 在正常的 make_app() 启动路径里也顺带补建一次，checkfirst=True 天然幂等。
-_NEW_TABLES_AUTO_ENSURE = (ReadingRecord, BookReview, InstalledTool, BookReadingStats, BookList, BookListBook, BookListLike, ManualReadingLog, BookVisit, BookShare, ScanDirSnapshot, MyNexusBookAnalysis, MyNexusChatSession, KoreaderPosition, AudioPlayback)
+_NEW_TABLES_AUTO_ENSURE = (ReadingRecord, BookReview, InstalledTool, BookReadingStats, BookList, BookListBook, BookListLike, ManualReadingLog, BookVisit, BookShare, BookTakedown, ScanDirSnapshot, MyNexusBookAnalysis, MyNexusChatSession, KoreaderPosition, AudioPlayback)
 
 
 def ensure_new_tables(engine):

@@ -13,6 +13,7 @@ import time
 from collections import defaultdict
 from functools import partial
 from webserver.i18n import _
+from webserver.services import book_takedown
 from itertools import repeat
 
 from calibre import guess_type
@@ -492,6 +493,9 @@ class OpdsHandler(BaseHandler):
         # remove sole ids
         sole_ids = self.all_soled_ids()
         ids = [i for i in ids if i not in sole_ids]
+        # 版权下架：目录里也不出现，避免 OPDS 阅读器列出无法获取的书。
+        # 即便客户端缓存了旧的 /api/book/<id>.<fmt> 直链，BaseHandler 门禁仍会拦下。
+        ids = [i for i in ids if not book_takedown.is_takedown(i)]
         if not ids:
             raise web.HTTPError(404, reason="No books found")
         items = [x for x in self.calibre_db.data.iterall() if x[idx] in ids]

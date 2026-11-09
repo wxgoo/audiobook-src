@@ -40,8 +40,29 @@ MANIFEST_PATH = "update/manifest.json"
 GITEE_RAW = "https://gitee.com/{o}/{r}/raw/{b}/{p}"
 GITEE_COMMITS = "https://gitee.com/api/v5/repos/{o}/{r}/commits?per_page=5"
 
-# /var/www/mybooks（webserver/services/ 往上三级）
-CODE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+def _detect_code_root():
+    """从本文件位置往上找项目根（含 server.py + webserver/），不写死层级。
+
+    r7 曾写死"往上三级"，在容器里指到 /var/www 而不是 /var/www/mybooks：
+    包内 update/manifest.json 读不到 → 本地修订被兜底成 -r0 → 把自己装的
+    那一版误报成「发现新版本」；在线热更新也会把 Python 文件写到 /var/www/
+    而不是项目目录。改为按目录特征探测，层级调整也不会再错。
+    """
+    cur = os.path.abspath(os.path.dirname(__file__))
+    for _ in range(6):
+        if (os.path.isfile(os.path.join(cur, "server.py"))
+                and os.path.isdir(os.path.join(cur, "webserver"))):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    # 兜底：webserver/services/ 往上两级即项目根
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+# /var/www/mybooks（项目根，不再是写死的三级上溯）
+CODE_ROOT = _detect_code_root()
 LOCAL_MANIFEST = os.path.join(CODE_ROOT, "update", "manifest.json")
 DATA_ROOT = "/data"
 BACKUP_ROOT = os.path.join(DATA_ROOT, "update-backup")
@@ -79,11 +100,18 @@ def _get(url, timeout=20, tries=3):
 
 
 def read_local_manifest():
+    """包内基线。读不到 / 不含 revision 时返回空 dict，调用方必须显式处理，
+    绝不能悄悄把当前修订当成 -r0 再去比对远端（r7 现场就是这样把自己误报成新版本）。
+    """
     try:
         with open(LOCAL_MANIFEST, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("revision"):
+            return data
+        logging.warning("[VERSION] 包内发布清单缺少 revision: %s", LOCAL_MANIFEST)
+    except Exception as e:  # noqa: BLE001 - 文件不存在/损坏都按"基线不可用"处理
+        logging.warning("[VERSION] 读取包内发布清单失败 %s: %s", LOCAL_MANIFEST, e)
+    return {}
 
 
 def read_state():
@@ -176,11 +204,15 @@ def status(force=False):
     """页面主接口：当前版本 / 最新版本 / 更新方式与可执行动作。"""
     local = read_local_manifest()
     state = read_state()
+    baseline_ok = bool(local.get("revision"))
     cur = local.get("revision") or (VERSION + "-r0")
     remote, err = fetch_manifest(force=force)
     latest = remote or {}
-    # 远端比本地旧（例如分支回滚 / 误发了老清单）时不该提示「有新版本」
-    has = bool(latest and latest.get("revision") and latest["revision"] != cur
+    # 基线不可信时一律不报「有新版本」：宁可页面显示"基线缺失"告警，也不能把
+    # 自己刚部署的那一版当成待更新版本，误导管理员反复重新部署。
+    # 远端比本地旧（例如分支回滚 / 误发了老清单）时同样不提示。
+    has = bool(baseline_ok and latest and latest.get("revision")
+               and latest["revision"] != cur
                and _rev_num(latest["revision"]) >= _rev_num(cur))
 
     mode = "none"
@@ -221,6 +253,14 @@ def status(force=False):
         "has_update": has,
         "mode": mode,
         "can_apply": mode == "hotfix",
+        # 基线自检：包内 update/manifest.json 是否读到了有效 revision
+        "baseline_ok": baseline_ok,
+        "baseline_path": LOCAL_MANIFEST,
+        "baseline_code_root": CODE_ROOT,
+        "baseline_error": "" if baseline_ok else (
+            "包内发布清单缺失或不含 revision，本地修订不可信；"
+            "请确认镜像里包含 update/manifest.json（%s）" % LOCAL_MANIFEST
+        ),
         "check_error": err,
         "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "commits": fetch_latest_commits() if force else [],
@@ -270,7 +310,9 @@ def _apply_locked(revision):
         raise RuntimeError("本次更新包含前端产物或镜像级文件，请重新执行 deploy.sh / upgrade.sh")
 
     local = read_local_manifest()
-    cur = local.get("revision") or (VERSION + "-r0")
+    if not local.get("revision"):
+        raise RuntimeError("包内发布清单缺失，本地修订不可信，禁止在线替换文件；请重新部署一次")
+    cur = local["revision"]
     base = remote.get("base_revision", "")
     if base and base != cur:
         raise RuntimeError("本地修订是 %s，本补丁要求 %s，跨版本请重新部署" % (cur, base))

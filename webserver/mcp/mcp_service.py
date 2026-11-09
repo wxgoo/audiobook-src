@@ -692,6 +692,17 @@ class MCPService:
                     "message": f"Book not found: {book_id}"
                 }))]
 
+            # 版权下架：MCP 的 book_id 在请求体里，BaseHandler.prepare() 的
+            # 路径门禁看不到，必须在这里显式拦住（返回的是 MCP TextContent，
+            # 不能调用 book_takedown.reject() 写 HTTP 响应）。
+            from webserver.services import book_takedown
+            if book_takedown.is_takedown(book["id"]):
+                return [TextContent(type="text", text=json.dumps({
+                    "status": "error",
+                    "code": book_takedown.ERR,
+                    "message": book_takedown.notice(),
+                }, ensure_ascii=False))]
+
             # 选格式：指定则校验存在；未指定按 epub -> azw3 -> pdf 顺序
             if req_format:
                 selected_format = req_format

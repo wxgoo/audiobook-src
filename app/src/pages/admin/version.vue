@@ -19,6 +19,13 @@
         <v-icon small left color="primary">mdi-tag-outline</v-icon>{{ $t('versionCheck.currentCard') }}
       </v-card-title>
       <v-card-text>
+        <!-- 基线自检：包内发布清单读不到时，不显示"发现新版本"，直接报警 -->
+        <v-alert v-if="st.baseline_ok === false" type="error" dense text class="mb-3">
+          <div class="text-body-2 font-weight-medium">{{ $t('versionCheck.baselineMissingTitle') }}</div>
+          <div class="text-caption mt-1">{{ $t('versionCheck.baselineMissingHint') }}</div>
+          <div class="text-caption mt-1" style="word-break:break-all">CODE_ROOT: {{ st.baseline_code_root || '—' }}</div>
+          <div class="text-caption" style="word-break:break-all">{{ st.baseline_path || '—' }}</div>
+        </v-alert>
         <v-row dense>
           <v-col cols="12" sm="4">
             <div class="text-caption grey--text">{{ $t('versionCheck.currentVersion') }}</div>
@@ -125,7 +132,8 @@
             <span style="word-break: break-all">{{ st.latest.changed.blocking.join('，') }}</span>
           </div>
           <div class="text-caption font-weight-medium mb-1">{{ $t('versionCheck.redeployCommands') }}</div>
-          <pre class="version-pre">{{ (st.latest.deploy_commands || []).join('\n') }}</pre>
+          <!-- 点击整块全选，配合 Ctrl+C；内网站点常是 HTTP，剪贴板 API 不可用 -->
+          <pre ref="cmdPre" class="version-pre" @click="selectCommands">{{ (st.latest.deploy_commands || []).join('\n') }}</pre>
           <v-btn small text color="primary" class="mt-2 px-0" @click="copyCommands">
             <v-icon small left>mdi-content-copy</v-icon>{{ $t('versionCheck.copyCommands') }}
           </v-btn>
@@ -349,14 +357,51 @@ export default {
       this.restarting = false;
       this.restartFailed = true;
     },
+    selectCommands() {
+      // 点一下整块全选：即使 execCommand 也失败，用户直接 Ctrl+C 就能复制
+      const el = this.$refs.cmdPre;
+      if (!el || !window.getSelection || !document.createRange) return;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    },
     async copyCommands() {
       const text = ((this.st.latest && this.st.latest.deploy_commands) || []).join('\n');
-      try {
-        await navigator.clipboard.writeText(text);
-        this.$alert('success', this.$t('versionCheck.copied'));
-      } catch (e) {
+      if (!text) {
         this.$alert('error', this.$t('versionCheck.copyFailed'));
+        return;
       }
+      // HTTP 内网站点属于非安全上下文：navigator.clipboard 不存在或会抛错。
+      // 先试现代 API，失败就降级到 textarea + execCommand('copy')，
+      // 最后再退到「点命令块自动全选 + Ctrl+C」。
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          this.$alert('success', this.$t('versionCheck.copied'));
+          return;
+        }
+      } catch (e) { /* 落到降级方案 */ }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-1000px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, ta.value.length);
+        const done = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (done) {
+          this.$alert('success', this.$t('versionCheck.copied'));
+          return;
+        }
+      } catch (e) { /* 落到手动全选 */ }
+      this.selectCommands();
+      this.$alert('error', this.$t('versionCheck.copyFailed'));
     },
   },
 };

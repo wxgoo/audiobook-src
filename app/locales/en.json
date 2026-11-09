@@ -1040,6 +1040,20 @@
         "startFailed": "Failed to start the transcription task"
     },
     "book": {
+        "copyrightTitle": "Copyright Notice",
+        "copyrightNotice": "Removed at the copyright holder's request. Please purchase a legitimate copy to support the author!",
+        "copyrightHint": "Online reading and downloads are no longer available for this book; its catalog entry is kept for reference only.",
+        "takedownSet": "Copyright takedown",
+        "takedownRestore": "Restore book",
+        "takedownSetHint": "Once taken down, nobody can read or download this book. The catalog entry and cover remain visible with a copyright notice.",
+        "takedownRestoreHint": "Reading and downloads will be available again. Re-check share links and download entries.",
+        "takedownReason": "Reason (internal record)",
+        "takedownReasonHint": "E.g. the rights holder's notice number and date. Admins only; never shown to readers.",
+        "takedownSetConfirm": "Take down",
+        "takedownRestoreConfirm": "Restore",
+        "takedownApplied": "Book taken down",
+        "takedownRestored": "Book restored",
+        "takedownFailed": "Operation failed, please try again",
         "readingStats": {
             "durationMinutes": "{minutes}m",
             "durationHoursMinutes": "{hours}h {minutes}m"
@@ -1452,6 +1466,7 @@
         "mergeConfirm": "Folder \"{target}\" already exists. {count} books will be merged into it and this cannot be undone. Merge?"
     },
     "appHeader": {
+        "copyrightTakedown": "Copyright Takedowns",
         "lite_mode": "Lite mode",
         "lite_mode_tip": "Lite mode is on and some features are reduced. Admins can adjust it under Extended Features in System Settings.",
         "home": "Home",
@@ -2778,6 +2793,8 @@
         "openMerged": "Open the combined tool"
     },
     "versionCheck": {
+        "baselineMissingTitle": "Local manifest missing - update baseline is unreliable",
+        "baselineMissingHint": "Update prompts are paused so the installed revision is not mistaken for a new one. Make sure the image contains update/manifest.json, then redeploy if needed. The paths actually probed are shown below.",
         "pageTitle": "Version & Updates",
         "pageSubtitle": "New versions are detected from the Gitee release manifest. Backend-only revisions can be applied online; front-end changes require a full redeploy.",
         "currentCard": "Installed",
@@ -2825,5 +2842,34 @@
         "cancel": "Cancel",
         "persistTitle": "Online update is not persisted into the deploy package",
         "persistHint": "The data volume records {rev}, but the image / source package is still older. Rebuilding the container would revert it — run deploy.sh / upgrade.sh once more to persist."
+    },
+    "takedown": {
+        "pageTitle": "Copyright Takedowns",
+        "pageSubtitle": "Books whose reading and downloads were stopped at a copyright holder's request. Takedown never deletes the book or its files.",
+        "refresh": "Refresh",
+        "add": "Add takedown",
+        "noticeTitle": "Current copyright notice",
+        "noticeHint": "Served by the backend; operators can override COPYRIGHT_TAKEDOWN_NOTICE. Readers see it on the detail page and at every read/download entry.",
+        "listTitle": "Books taken down",
+        "total": "{n} book(s)",
+        "empty": "No books taken down",
+        "selected": "{n} selected",
+        "restore": "Restore",
+        "batchRestore": "Restore selected",
+        "colBook": "Book",
+        "colReason": "Reason",
+        "colOperator": "Operator",
+        "colTime": "Taken down at",
+        "colActions": "Actions",
+        "addHint": "Enter the book ID. Takedown takes effect immediately: reading, downloads, push, sharing, OPDS, WebDAV and MCP are all blocked.",
+        "bookId": "Book ID",
+        "bookIdHint": "Find it in the detail page URL /book/<ID>",
+        "reason": "Reason (internal record)",
+        "reasonHint": "Admins only, for future copyright audits",
+        "confirmAdd": "Take down",
+        "invalidBookId": "Please enter a valid book ID",
+        "failed": "Operation failed, please try again",
+        "applied": "Book taken down",
+        "restored": "Book restored"
     }
 }

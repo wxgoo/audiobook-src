@@ -552,6 +552,20 @@
         "progressAudioImporting": "有聲書匯入中"
     },
     "book": {
+        "copyrightTitle": "版權聲明",
+        "copyrightNotice": "因版權人要求，已下架處理，請購買正版圖書支持原作者！",
+        "copyrightHint": "本書已停止提供線上閱讀與下載，書目資訊僅作說明保留。",
+        "takedownSet": "版權下架",
+        "takedownRestore": "恢復上架",
+        "takedownSetHint": "下架後所有讀者將無法閱讀或下載本書，書目與封面仍會顯示，並附上版權聲明。",
+        "takedownRestoreHint": "恢復後閱讀與下載重新開放，請重新檢查分享連結與下載入口。",
+        "takedownReason": "下架原因（內部留痕）",
+        "takedownReasonHint": "例如版權方來函編號、要求下架的日期；僅管理員可見，不展示給讀者。",
+        "takedownSetConfirm": "確認下架",
+        "takedownRestoreConfirm": "確認恢復",
+        "takedownApplied": "已下架",
+        "takedownRestored": "已恢復",
+        "takedownFailed": "操作失敗，請重試",
         "readingStats": {
             "durationMinutes": "{minutes}分鐘",
             "durationHoursMinutes": "{hours}小時{minutes}分"
@@ -1445,6 +1459,7 @@
         "mergeConfirm": "目錄「{target}」已存在，合併後 {count} 本書將併入該目錄，且無法撤回。是否合併？"
     },
     "appHeader": {
+        "copyrightTakedown": "版權下架",
         "lite_mode": "極速模式",
         "lite_mode_tip": "已開啟極速模式，部分功能已降級；管理員可在系統設定的擴充功能中調整。",
         "home": "首頁",
@@ -2724,6 +2739,8 @@
         "openMerged": "開啟合併後的工具"
     },
     "versionCheck": {
+        "baselineMissingTitle": "包內發布清單缺失，檢測基準不可信",
+        "baselineMissingHint": "已停止提示新版本，避免把目前安裝的版本誤報成待更新。請確認映像裡包含 update/manifest.json，必要時完整重新部署一次；下面是本次實際探測到的路徑。",
         "pageTitle": "版本與更新",
         "pageSubtitle": "以 Gitee 發佈清單為準偵測新版本；僅後端修訂可線上更新，前端產物變更需重新部署。",
         "currentCard": "目前安裝",
@@ -2771,5 +2788,34 @@
         "cancel": "取消",
         "persistTitle": "線上更新尚未固化到部署包",
         "persistHint": "資料卷記錄的修訂是 {rev}，但目前映像 / 源碼包仍是舊版；下次重建容器會回退，請重新執行一次 deploy.sh / upgrade.sh 固化。"
+    },
+    "takedown": {
+        "pageTitle": "版權下架管理",
+        "pageSubtitle": "應版權人要求停止提供閱讀與下載的圖書清單；下架不刪除書籍與檔案。",
+        "refresh": "重新整理",
+        "add": "新增下架",
+        "noticeTitle": "目前版權聲明文案",
+        "noticeHint": "文案由後端下發，維運可透過設定 COPYRIGHT_TAKEDOWN_NOTICE 覆蓋；讀者在詳情頁、下載與閱讀入口都會看到。",
+        "listTitle": "已下架圖書",
+        "total": "共 {n} 本",
+        "empty": "暫無已下架圖書",
+        "selected": "已選 {n} 本",
+        "restore": "恢復",
+        "batchRestore": "批次恢復",
+        "colBook": "圖書",
+        "colReason": "下架原因",
+        "colOperator": "操作人",
+        "colTime": "下架時間",
+        "colActions": "操作",
+        "addHint": "填寫需要下架的圖書 ID。下架立即生效：閱讀、下載、推送、分享、OPDS、WebDAV 與 MCP 都會被攔下。",
+        "bookId": "圖書 ID",
+        "bookIdHint": "可在圖書詳情頁 URL /book/<ID> 中找到",
+        "reason": "下架原因（內部留痕）",
+        "reasonHint": "僅管理員可見，用於日後因應版權方查核",
+        "confirmAdd": "確認下架",
+        "invalidBookId": "請填寫有效的圖書 ID",
+        "failed": "操作失敗，請重試",
+        "applied": "已下架",
+        "restored": "已恢復"
     }
 }

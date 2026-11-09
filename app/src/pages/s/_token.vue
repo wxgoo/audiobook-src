@@ -52,13 +52,20 @@
                     </v-card-actions>
 
                     <v-card-text v-if="granted" class="text-center pb-6">
-                        <v-btn v-if="allow_read" color="primary" class="ma-1" :href="'/read/' + book_id" target="_blank">
-                            <v-icon left>mdi-book-open-page-variant</v-icon>{{ $t('share.read') }}
-                        </v-btn>
-                        <template v-if="allow_download">
-                            <v-btn v-for="file in files" :key="file.format" color="primary" class="ma-1" :href="file.href">
-                                <v-icon left>mdi-download</v-icon>{{ file.format.toUpperCase() }}
+                        <!-- 版权下架：分享链接不能成为绕过下架的通道 -->
+                        <v-alert v-if="is_takedown" type="warning" outlined class="text-left mb-4">
+                            <div class="text-subtitle-2 font-weight-bold">{{ $t('book.copyrightTitle') }}</div>
+                            <div class="text-body-2 mt-1">{{ copyright_notice || $t('book.copyrightNotice') }}</div>
+                        </v-alert>
+                        <template v-if="!is_takedown">
+                            <v-btn v-if="allow_read" color="primary" class="ma-1" :href="'/read/' + book_id" target="_blank">
+                                <v-icon left>mdi-book-open-page-variant</v-icon>{{ $t('share.read') }}
                             </v-btn>
+                            <template v-if="allow_download">
+                                <v-btn v-for="file in files" :key="file.format" color="primary" class="ma-1" :href="file.href">
+                                    <v-icon left>mdi-download</v-icon>{{ file.format.toUpperCase() }}
+                                </v-btn>
+                            </template>
                         </template>
                     </v-card-text>
                 </template>
@@ -84,6 +91,8 @@ export default {
         expire_time: null,
         book_id: 0,
         files: [],
+        is_takedown: false,
+        copyright_notice: '',
         password: '',
         verifying: false,
         msg: '',

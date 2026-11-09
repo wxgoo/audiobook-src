@@ -554,6 +554,20 @@
         "progressAudioImporting": "有声书导入中"
     },
     "book": {
+        "copyrightTitle": "版权声明",
+        "copyrightNotice": "因版权人要求，已下架处理，请购买正版图书支持原作者！",
+        "copyrightHint": "本书已停止提供在线阅读与下载，书目信息仅作说明保留。",
+        "takedownSet": "版权下架",
+        "takedownRestore": "恢复上架",
+        "takedownSetHint": "下架后所有读者将无法阅读或下载本书，书目与封面仍会显示，并附上版权声明。",
+        "takedownRestoreHint": "恢复后阅读与下载重新开放，请重新检查分享链接与下载入口。",
+        "takedownReason": "下架原因（内部留痕）",
+        "takedownReasonHint": "例如版权方来函编号、要求下架的日期；仅管理员可见，不展示给读者。",
+        "takedownSetConfirm": "确认下架",
+        "takedownRestoreConfirm": "确认恢复",
+        "takedownApplied": "已下架",
+        "takedownRestored": "已恢复",
+        "takedownFailed": "操作失败，请重试",
         "readingStats": {
             "durationMinutes": "{minutes}分钟",
             "durationHoursMinutes": "{hours}小时{minutes}分"
@@ -1454,6 +1468,7 @@
         "mergeConfirm": "目录“{target}”已存在，合并后 {count} 本书将并入该目录，且无法撤回。是否合并？"
     },
     "appHeader": {
+        "copyrightTakedown": "版权下架",
         "lite_mode": "极速模式",
         "lite_mode_tip": "已开启极速模式，部分功能已降级；管理员可在系统设置的扩展功能中调整。",
         "home": "首页",
@@ -2792,6 +2807,8 @@
         "openMerged": "打开合并后的工具"
     },
     "versionCheck": {
+        "baselineMissingTitle": "包内发布清单缺失，检测基线不可信",
+        "baselineMissingHint": "已停止提示新版本，避免把当前安装的版本误报成待更新。请确认镜像里包含 update/manifest.json，必要时完整重新部署一次；下面是本次实际探测到的路径。",
         "pageTitle": "版本与更新",
         "pageSubtitle": "以 Gitee 发布清单为准检测新版本；仅后端修订可在线更新，前端产物变更需重新部署。",
         "currentCard": "当前安装",
@@ -2839,5 +2856,34 @@
         "cancel": "取消",
         "persistTitle": "在线更新尚未固化到部署包",
         "persistHint": "数据卷记录的修订是 {rev}，但当前镜像 / 源码包仍是旧版；下次重建容器会回退，请重新执行一次 deploy.sh / upgrade.sh 固化。"
+    },
+    "takedown": {
+        "pageTitle": "版权下架管理",
+        "pageSubtitle": "应版权人要求停止提供阅读与下载的图书清单；下架不删除书籍与文件。",
+        "refresh": "刷新",
+        "add": "新增下架",
+        "noticeTitle": "当前版权声明文案",
+        "noticeHint": "文案由后端下发，运维可通过配置 COPYRIGHT_TAKEDOWN_NOTICE 覆盖；读者在详情页、下载与阅读入口均会看到。",
+        "listTitle": "已下架图书",
+        "total": "共 {n} 本",
+        "empty": "暂无已下架图书",
+        "selected": "已选 {n} 本",
+        "restore": "恢复",
+        "batchRestore": "批量恢复",
+        "colBook": "图书",
+        "colReason": "下架原因",
+        "colOperator": "操作人",
+        "colTime": "下架时间",
+        "colActions": "操作",
+        "addHint": "填写需要下架的图书 ID。下架立即生效：阅读、下载、推送、分享、OPDS、WebDAV 与 MCP 都会被拦下。",
+        "bookId": "图书 ID",
+        "bookIdHint": "可在图书详情页 URL /book/<ID> 中找到",
+        "reason": "下架原因（内部留痕）",
+        "reasonHint": "仅管理员可见，用于日后应对版权方核查",
+        "confirmAdd": "确认下架",
+        "invalidBookId": "请填写有效的图书 ID",
+        "failed": "操作失败，请重试",
+        "applied": "已下架",
+        "restored": "已恢复"
     }
 }

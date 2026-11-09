@@ -18,6 +18,7 @@ def routes():
     from . import tts
     from . import koreader
     from . import version
+    from . import takedown
 
     routes = []
     routes += assistant.routes()
@@ -34,5 +35,7 @@ def routes():
     routes += tts.routes()
     routes += koreader.routes()
     routes += version.routes()
+    # 「版权下架」管理接口，必须排在 static_files 的 catch-all 之前
+    routes += takedown.routes()
     routes += static_files.routes()
     return routes

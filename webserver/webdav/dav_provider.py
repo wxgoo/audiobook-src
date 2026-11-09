@@ -11,6 +11,7 @@ from wsgidav.dav_provider import DAVProvider, DAVCollection, DAVNonCollection
 from wsgidav.fs_dav_provider import FilesystemProvider
 from wsgidav.dav_error import DAVError, HTTP_FORBIDDEN
 from webserver import loader
+from webserver.services import book_takedown
 
 CONF = loader.get_settings()
 
@@ -133,6 +134,10 @@ class WebDavResource(DAVNonCollection):
 
     def get_content(self):
         logging.info(f"****** Getting content for book ID {self.id}, path: {self.file_path}")
+        # 版权下架：WebDAV 是 WSGI 旁路，不经过 BaseHandler.prepare() 的门禁，
+        # 必须在真正 open() 之前拦住（这里是所有 WebDAV GET 的唯一出口）。
+        if book_takedown.is_takedown(self.id):
+            raise DAVError(HTTP_FORBIDDEN, context_info=book_takedown.notice())
         if self.file_path and os.path.exists(self.file_path):
             user = self.environ.get("mybooks.user")
             if user is not None:
@@ -273,6 +278,9 @@ class BooksCollection(VirtualCollection):
         try:
             for book_id in self.book_ids:
                 logging.info(f"Processing book ID {book_id} for collection '{self.title}'")
+                # 版权下架：目录列表里剔除，文件层 get_content() 再兜一层
+                if book_takedown.is_takedown(book_id):
+                    continue
                 try:
                     # Get metadata for this book
                     mi = self.provider.cache.get_metadata(book_id, get_cover=False, get_user_categories=False)

@@ -385,11 +385,17 @@ class BookBarnService(AsyncService):
                         if err or not remote:
                             logging.info("[BARN] 新版本检测跳过：%s", err or "清单为空")
                         else:
-                            cur = vc.read_local_manifest().get("revision") or (VERSION + "-r0")
+                            local = vc.read_local_manifest()
+                            cur = local.get("revision", "")
                             rev = remote.get("revision", "")
+                            # 基线缺失时绝不兜底成 -r0：否则会把刚部署的这一版
+                            # 当成新版本反复广播（r7 现场即此问题）。
+                            if not cur:
+                                logging.warning("[BARN] 包内发布清单缺失，跳过新版本检测：%s",
+                                                vc.LOCAL_MANIFEST)
                             # 与 version_check.status() 同口径：远端清单若比本地旧（例如
                             # 发布时漏更新 manifest，或临时回滚），不能倒过来提示升级。
-                            if rev and rev != cur and vc._rev_num(rev) >= vc._rev_num(cur):
+                            elif rev and rev != cur and vc._rev_num(rev) >= vc._rev_num(cur):
                                 logging.info("[BARN] 发现新修订 %s（本地 %s）", rev, cur)
                                 CONF[UPGRABLE_REVISION] = rev
                                 if not self.admin_uids:

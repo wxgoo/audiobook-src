@@ -3,7 +3,7 @@
 基于 [PoxenStudio/mybooks](https://github.com/PoxenStudio/mybooks) 的私人图书服务器定制版。
 在 Calibre 书库之上提供 Web 阅读、听书、权限分级、元数据刮削、格式转换等能力。
 
-> **当前版本：`4.6.0-build.27`**，当前部署包修订 **`4.6.0-build.27-r7`**
+> **当前版本：`4.6.0-build.27`**，当前部署包修订 **`4.6.0-build.27-r8`**
 > （上游 tag `4.6.0` + 第 27 次本地构建；新版本检测与在线更新见 `/admin/version`）
 
 ---
@@ -20,6 +20,7 @@
 | 跟着上游升级、搞清两个操作环境、日常运维套路 | [`docs/操作总纲.md`](docs/操作总纲.md) |
 | 部署包含什么、目录怎么摆 | [`docs/部署包说明.md`](docs/部署包说明.md) |
 | 检测新版本、在线更新、重新部署或回滚 | [`docs/在线更新说明.md`](docs/在线更新说明.md) |
+| 应版权人要求下架某本书、停止阅读与下载 | [`docs/版权下架说明.md`](docs/版权下架说明.md) |
 | Docker 缓存池重置、镜像备份恢复、文档索引 | [`docs/NAS-Docker缓存池重置与镜像备份恢复手册.md`](docs/NAS-Docker缓存池重置与镜像备份恢复手册.md) |
 | 改代码（代码结构、测试命令，给人和 AI 看） | [`CLAUDE.md`](CLAUDE.md) |
 | 安全问题怎么报 | [`SECURITY.md`](SECURITY.md) |
@@ -75,10 +76,10 @@ audiobook-src/
 
 ```sh
 cd /volume1/docker
-sha256sum -c audiobook-deploy-4.6.0-build.27-r7.tar.gz.sha256
+sha256sum -c audiobook-deploy-4.6.0-build.27-r8.tar.gz.sha256
 docker compose -f audiobook/docker-compose.yml down 2>/dev/null
 mv audiobook audiobook.old-$(date +%m%d-%H%M)
-tar -xzf audiobook-deploy-4.6.0-build.27-r7.tar.gz
+tar -xzf audiobook-deploy-4.6.0-build.27-r8.tar.gz
 cd /volume1/docker/audiobook && sh scripts/deploy.sh
 ```
 
@@ -133,7 +134,7 @@ cd app && npm run build-spa
 
 版本一律从上游**已发布 tag** 起算，与本项目无关的历史号段和 `4.6.0-build.N`
 没有版本先后关系，不参与任何比较或升级门控。当前本地修订用 `-rN` 区分
-（如 `4.6.0-build.27-r7`），由 Gitee 发布清单 `update/manifest.json` 比对；
+（如 `4.6.0-build.27-r8`），由 Gitee 发布清单 `update/manifest.json` 比对；
 对照表见 [CHANGELOG 开头的「号段重置说明」](CHANGELOG.md)。
 
 ### 四条不要搞错的事

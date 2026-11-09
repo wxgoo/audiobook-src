@@ -9,7 +9,56 @@
 
 ---
 
-## 4.6.0-build.27-r7（当前包修订）
+## 4.6.0-build.27-r8（当前包修订）
+
+> 主题：**版权下架（书级停止阅读 / 下载）**。应版权人要求下架的书不删除、不隐藏书目，
+> 后端在所有内容出口硬拦，前端在详情页 / 分享页 / WAP 显示版权声明并引导购买正版。
+> 本次新增 `/admin/takedowns` 管理页并重建了 `app/dist`，**必须完整部署一次**。
+
+### 变更
+
+1. **标记与留痕**：新增 `book_takedowns` 表（本站 SQLAlchemy 库，`book_id` 主键 +
+   书名快照 / 下架原因 / 操作人 / 时间），纳入 `ensure_new_tables()` 幂等补建，
+   **零手写迁移**；不动 Calibre `metadata.db`，不删任何书与文件。下架记录用于日后
+   应对版权方核查，原因只给管理员看。
+2. **统一硬拦截**：`webserver/services/book_takedown.py` + `BaseHandler.prepare()`
+   的路径门禁，覆盖下载直链、阅读页、epub 正文分片、TXT 正文、MyReader 文件路径、
+   格式转换、邮件 / 设备推送、音频、OPDS 直链。判定发生在设 `X-Accel-Redirect`
+   **之前**，nginx `"/_lib/"` 直出也绕不过；MyReader 必须经 `/api/book/<id>/filepath`
+   拿物理路径，因此同样被挡。刻意不拦详情页、封面 / 缩略图、编辑与管理接口——
+   书目还在，读者需要看到声明。
+3. **旁路补齐**：OPDS / WebDAV 目录剔除下架书，WebDAV `get_content()` 再兜一层；
+   MCP `download_book`（book_id 在请求体里，路径门禁看不到）显式拦截；
+   分享链接 `_payload` 不再下发文件与 `book_id`，并强制 `allow_read/allow_download=false`。
+4. **拒绝响应分流**：下载直链 / 阅读页 / 正文分片 / OPDS → **403 + 自包含 HTML 版权声明页**
+   （200 JSON 会被 aria2 / IDM / epub.js 当成资源解析成功、存成假书）；
+   其余 `/api/*` → 200 + `err=book.copyright_takedown` + 声明文案，前端弹提示。
+   默认文案「因版权人要求，已下架处理，请购买正版图书支持原作者！」，
+   可由 `CONF["COPYRIGHT_TAKEDOWN_NOTICE"]` 覆盖，输出一律 `html.escape`。
+5. **前端**：详情页顶部显示版权声明卡片；阅读 / 下载 / 推送 / 分享按钮改为
+   **点了弹声明**，不是静默置灰；管理员在「管理」菜单里可单本下架 / 恢复；
+   新增 `/admin/takedowns` 列表页（批量恢复、按 book_id 新增、声明文案预览），
+   左侧管理树直达。分享页与 WAP 老设备页同步显示声明，不再给下载直链。
+   三语 locale 补齐 `book.copyright*`、`book.takedown*`、`takedown.*`、
+   `appHeader.copyrightTakedown`。
+6. **管理接口**：`GET /api/admin/takedown/list`、`POST .../set`、`POST .../remove`，
+   均仅管理员，支持 `book_id` 单本与 `book_ids` 批量（上限 200），写操作同步刷新缓存，
+   下架 / 恢复**立即生效、无需重启**。
+7. **文档**：新增 `docs/版权下架说明.md`；README / 部署包说明 / 本日志同步到 r8 口径。
+8. **顺带修掉版本检测 `-r0` 误判**（用户装了 r7 却显示「已应用修订 `-r0`」、并提示重装）：
+   根因是 `webserver/services/version_check.py` 的 `CODE_ROOT` 少算一级，指向
+   `/var/www` 而非 `/var/www/mybooks`，读不到本地基线 `update/manifest.json` 被兜底成
+   `-r0`，连带在线热更新也会把文件写到 `/var/www/`。修正为正确的项目根；`read_local_manifest`
+   改为打日志而非静默返回空。`book_barn`（后台 8 小时检测）与 `admin.py`（版本弹窗）的
+   基线判定同步加上「远端比本地旧则不算有更新」的同口径保护，避免发布清单回滚时倒灌提示。
+   页内「复制命令」在非 `https` 下不再只弹「复制失败」，自动降级为「手动选中」提示。
+
+> 本次 r8 含前端改动，发布清单 `requires_dist=true`、`hotfixable=false`，
+> 页内「立即更新」会给出重新部署命令；运行期版本仍是 `4.6.0-build.27`。
+
+---
+
+## 4.6.0-build.27-r7（上一修订）
 
 > 主题：**「版本与更新」独立成页 + 分级在线更新**。检测源由上游 mybooks.top 的
 > release 接口改为本项目的 Gitee 发布清单；只改后端 Python 的修订支持点一下就更新，

@@ -14,6 +14,8 @@ Design principles:
 from html import escape
 from urllib.parse import urlencode
 
+from webserver.services import book_takedown
+
 
 # Inline CSS optimised for Kindle compatibility (CSS 2.1, block layout)
 WAP_CSS = """
@@ -186,11 +188,16 @@ class WapRenderer:
         authors = book.get("authors") or []
         author = cls.esc(", ".join(authors) if authors else "佚名")
 
-        fmt_links = " / ".join(
-            f'<a href="/api/book/{book_id}.{fmt.upper()}">{fmt.upper()}</a>'
-            for fmt in ("epub", "azw3", "mobi", "pdf", "txt")
-            if book.get(f"fmt_{fmt}")
-        ) or "无文件"
+        # 版权下架：WAP 老设备页面不再给下载直链，直接显示版权声明。
+        # 即使有人手拼 /api/book/<id>.<fmt>，BaseHandler 门禁仍会拦下。
+        if book_takedown.is_takedown(book_id):
+            fmt_links = '<span class="takedown">%s</span>' % cls.esc(book_takedown.notice())
+        else:
+            fmt_links = " / ".join(
+                f'<a href="/api/book/{book_id}.{fmt.upper()}">{fmt.upper()}</a>'
+                for fmt in ("epub", "azw3", "mobi", "pdf", "txt")
+                if book.get(f"fmt_{fmt}")
+            ) or "无文件"
 
         ts = book.get("ts", 0)
         cover = f"{cdn_url}/get/thumb_240_320/{book_id}.jpg?t={ts}&size=240x320"

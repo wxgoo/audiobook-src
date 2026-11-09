@@ -16,6 +16,7 @@ from webserver.i18n import _
 from webserver.models import BookShare
 from webserver.services.book_access_service import BookAccessService
 from webserver.services.book_share_service import RESULT_BAD_PASSWORD, RESULT_LOCKED, RESULT_OK, BookShareService, ShareParamError
+from webserver.services import book_takedown
 
 CONF = loader.get_settings()
 
@@ -138,6 +139,9 @@ class ShareInfoHandler(BaseHandler, ShareHandlerMixin):
         if not book:
             return None
         info = BookFormatter(self, book).format(with_files=True)
+        # 版权下架：分享链接不能成为绕过下架的通道。页面仍显示书名/封面与
+        # 版权声明，但不发任何文件链接；直链也会被 BaseHandler 门禁拦住。
+        taken = book_takedown.is_takedown(share.book_id)
         data = {
             "err": "ok",
             "site_title": CONF.get("site_title", "MyBooks"),
@@ -146,13 +150,15 @@ class ShareInfoHandler(BaseHandler, ShareHandlerMixin):
             "comments": info["comments"],
             "img": info["img"],
             "thumb": info["thumb"],
-            "allow_read": bool(share.allow_read),
-            "allow_download": bool(share.allow_download),
+            "allow_read": bool(share.allow_read) and not taken,
+            "allow_download": bool(share.allow_download) and not taken,
             "need_password": bool(share.password),
             "granted": granted,
             "expire_time": share.expire_time.isoformat() if share.expire_time else None,
+            "is_takedown": taken,
+            "copyright_notice": book_takedown.notice() if taken else "",
         }
-        if granted:
+        if granted and not taken:
             data["book_id"] = share.book_id
             data["files"] = info["files"] if share.allow_download else []
         return data

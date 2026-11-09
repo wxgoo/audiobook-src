@@ -35,6 +35,7 @@ from webserver.services.resource_service import ResourceService
 from webserver.services.perf_monitor import PerfMonitor
 from webserver.services.book_access_service import BookAccessService
 from webserver.services.book_share_service import BookShareService
+from webserver.services import book_takedown
 from webserver.services.search_index import get_search_index
 from webserver.models import Item, Message, Reader
 from webserver import constants
@@ -762,6 +763,10 @@ class BaseHandler(web.RequestHandler):
         self.process_auth_token()
         self.should_be_installed()
         self.should_be_invited()
+        # 版权下架优先于登录门禁：下架书的内容请求（阅读/下载/推送/正文分片/音频）
+        # 一律直接看到版权声明，不再跳登录页或走 401 Basic 认证。判定必须在任何
+        # X-Accel-Redirect 设置之前完成，否则 nginx 直出后 Python 拦不住。
+        book_takedown.check_path(self)
         self.should_be_logged_in()
 
     def set_i18n(self):
