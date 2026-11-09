@@ -14,9 +14,9 @@ WORKDIR /build
 # 下一行的 RUN 才是权威判定）。
 COPY app/dist* /build/dist/
 RUN if [ -f /build/dist/index.html ]; then \
-        echo "==> 预构建 dist：有（跳过 npm ci / build-spa）"; \
+        echo "==> 预构建 dist：有（跳过 npm ci / generate）"; \
     else \
-        echo "==> 预构建 dist：无（将现场 npm ci + build-spa）"; \
+        echo "==> 预构建 dist：无（将现场 npm ci + generate）"; \
     fi
 # 限定 Node 版本，避免落到旧版本又不报错
 RUN node -e "const m=+process.versions.node.split('.')[0]; if(m<20){console.error('Node >= 20 required, got '+process.version); process.exit(1)}"
@@ -75,17 +75,17 @@ COPY app/dist* /build/dist/
 COPY app/ /build/
 RUN if [ -f /build/dist/index.html ] && [ -f /build/dist/200.html ] \
        && [ -d /build/dist/_nuxt ]; then \
-        echo "==> 检测到预构建 dist，跳过 npm ci 与 build-spa"; \
+        echo "==> 检测到预构建 dist，跳过 npm ci 与 generate"; \
         mkdir -p /app-static/ && cp -r /build/dist /app-static/dist && \
         cp /build/nuxt.config.js /build/package.json /app-static/ 2>/dev/null || true; \
         cp /build/package-lock.json /app-static/ 2>/dev/null || true; \
         echo "==> dist 条目：$(find /app-static/dist -type f | wc -l) 个文件"; \
     else \
-        echo "==> 无预构建 dist，现场执行 npm ci + build-spa"; \
+        echo "==> 无预构建 dist，现场执行 npm ci + generate（注意：必须是 generate，build/build-spa 只输出 .nuxt/ 不产生 dist/）"; \
         npm ci --no-fund --no-audit --loglevel=error \
             || (echo "npm ci failed, retrying with --prefer-offline ..." && \
                 npm ci --no-fund --no-audit --loglevel=error --prefer-offline); \
-        mkdir -p /app-static/ && npm run build-spa && \
+        mkdir -p /app-static/ && npm run generate && \
         cp -r dist nuxt.config.js package* /app-static/; \
     fi
 

@@ -58,6 +58,10 @@ venv/
 
 node_modules/
 
+# 固化构建脚本（app/build.sh）把旧的 .nuxt / dist 改名归档到 .build-trash/（rename，非删除），
+# 避免触发沙箱批量删除保护；该目录由 app/build-clean.sh 在 NAS/本机清理，勿入库
+.build-trash/
+
 *.log
 
 
