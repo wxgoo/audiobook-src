@@ -134,8 +134,12 @@ if [ -z "$VER" ]; then
     bad "拿不到包内版本，中止"
     exit 1
 fi
-( cd "$PROJ" && DOCKER_BUILDKIT=1 docker build --no-cache \
-    --build-arg GIT_VERSION="$VER" -t "$IMAGE" . ) || {
+( cd "$PROJ" && if docker buildx version >/dev/null 2>&1; then
+    DOCKER_BUILDKIT=1 docker build --no-cache \
+        --build-arg GIT_VERSION="$VER" -t "$IMAGE" .
+  else
+    docker compose build --no-cache --build-arg GIT_VERSION="$VER"
+  fi ) || {
     bad "构建仍然失败。看是否停在同一步："
     say "  若仍是 layer does not exist：多为 Btrfs 配额/元数据问题，见交付说明第十节"
     say "  若变成 no space left：先清 /volume1 空间（镜像整体约 6-8GB，构建峰值需再多 6GB）"

@@ -155,7 +155,8 @@ if [ "$RUNNER" = "docker" ]; then
         exit 3
     fi
     if ! docker image inspect "$BACKUP_IMAGE" >/dev/null 2>&1; then
-        echo "!! 找不到镜像 $BACKUP_IMAGE，请先 cd 到源码目录执行 DOCKER_BUILDKIT=1 docker build --no-cache -t $BACKUP_IMAGE .，"
+        echo "!! 找不到镜像 $BACKUP_IMAGE，请先 cd 到源码目录执行 DOCKER_BUILDKIT=1 docker build --no-cache -t $BACKUP_IMAGE ."
+        echo "   （无独立 buildx 插件的 NAS 改用：docker compose build --no-cache），"
         echo "   或改用 RUNNER=local 并保证本机有 python3"
         exit 3
     fi

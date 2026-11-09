@@ -170,10 +170,18 @@ if [ "$FIX" = "1" ]; then
         echo "  raw: $(grep -n '^[[:space:]]*GIT_VERSION:' docker-compose.yml | head -1)"
     fi
     echo "==> 重建镜像（BuildKit --no-cache，显式 build-arg）"
-    DOCKER_BUILDKIT=1 docker build --no-cache --build-arg "GIT_VERSION=$SRC_VER" -t mybooks-local:latest . || {
-        echo "!! 构建失败，旧容器仍在跑，站点不受影响"
-        exit 1
-    }
+    # 没装独立 buildx 插件时回退 compose build（内嵌 buildx）
+    if docker buildx version >/dev/null 2>&1; then
+        DOCKER_BUILDKIT=1 docker build --no-cache --build-arg "GIT_VERSION=$SRC_VER" -t mybooks-local:latest . || {
+            echo "!! 构建失败，旧容器仍在跑，站点不受影响"
+            exit 1
+        }
+    else
+        docker compose build --no-cache --build-arg "GIT_VERSION=$SRC_VER" || {
+            echo "!! 构建失败，旧容器仍在跑，站点不受影响"
+            exit 1
+        }
+    fi
     # index.html 指纹比对：上下文快照复用（mtime/size 判重）会在这里现形
     HOST_SHA=$(sha256sum app/dist/index.html 2>/dev/null | awk '{print $1}')
     IMG_SHA=$(docker run --rm mybooks-local:latest sha256sum /var/www/mybooks/app/dist/index.html 2>/dev/null | awk '{print $1}')

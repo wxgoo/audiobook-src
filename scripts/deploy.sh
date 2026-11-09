@@ -129,8 +129,15 @@ echo "==> [3/5] Docker 构建镜像（BuildKit + --no-cache）"
 # 体积可能与上一代相同，理论上可能复用旧快照产出坏镜像——所以下方构建后必须做镜像内
 # index.html 的 sha256 比对，坏镜像在这里被当场拦下，不会走到起容器那一步。
 build_image() {
-    DOCKER_BUILDKIT=1 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" \
-        -t mybooks-local:latest . || return 1
+    # 选路：NAS 若没装独立 buildx 插件，DOCKER_BUILDKIT=1 docker build 会报
+    # "buildx component is missing"。compose v2 内嵌 buildx 库，不依赖插件。
+    # compose build 的上下文快照判重风险由下方 index.html 指纹比对兜底。
+    if docker buildx version >/dev/null 2>&1; then
+        DOCKER_BUILDKIT=1 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" \
+            -t mybooks-local:latest . || return 1
+    else
+        docker compose build --no-cache --build-arg "GIT_VERSION=$PKG_VER" || return 1
+    fi
     host_sha=$(sha256sum app/dist/index.html | awk '{print $1}')
     img_sha=$(docker run --rm mybooks-local:latest sha256sum /var/www/mybooks/app/dist/index.html | awk '{print $1}')
     if [ "$host_sha" != "$img_sha" ]; then

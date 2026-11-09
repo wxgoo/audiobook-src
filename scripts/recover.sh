@@ -119,7 +119,12 @@ else
     say "[3] 第一轮构建：BuildKit（复用仍有效的缓存层）"
     say "    目的：绕开上次写坏的那一层，最省时间"
     BUILD_OK=0
-    DOCKER_BUILDKIT=1 docker build --build-arg GIT_VERSION="$VER" -t "$IMAGE" . && BUILD_OK=1
+    # 没装独立 buildx 插件时 docker build 走不了 BuildKit，回退 compose build（内嵌 buildx）
+    if docker buildx version >/dev/null 2>&1; then
+        DOCKER_BUILDKIT=1 docker build --build-arg GIT_VERSION="$VER" -t "$IMAGE" . && BUILD_OK=1
+    else
+        docker compose build --build-arg GIT_VERSION="$VER" && BUILD_OK=1
+    fi
     [ "$BUILD_OK" = "1" ] && say "  第一轮成功" || say "  第一轮失败"
     hr
 
@@ -133,7 +138,11 @@ else
         restart_docker || exit 1
         say ""
         say "    开始全量构建（BuildKit --no-cache，耗时较久）"
-        DOCKER_BUILDKIT=1 docker build --no-cache --build-arg GIT_VERSION="$VER" -t "$IMAGE" . && BUILD_OK=1
+        if docker buildx version >/dev/null 2>&1; then
+            DOCKER_BUILDKIT=1 docker build --no-cache --build-arg GIT_VERSION="$VER" -t "$IMAGE" . && BUILD_OK=1
+        else
+            docker compose build --no-cache --build-arg GIT_VERSION="$VER" && BUILD_OK=1
+        fi
         hr
     fi
 
@@ -175,6 +184,7 @@ say "  包内=$VER / 镜像内=$GOT"
 if [ "$GOT" != "$VER" ]; then
     say "  !! 不一致，先别起容器。用 --build-arg 显式传版本重来："
     say "     DOCKER_BUILDKIT=1 docker build --no-cache --build-arg GIT_VERSION=$VER -t $IMAGE ."
+    say "     （无独立 buildx 插件时改用：docker compose build --no-cache --build-arg GIT_VERSION=$VER）"
     exit 1
 fi
 say "  OK"

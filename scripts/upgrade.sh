@@ -225,8 +225,13 @@ if [ "$SKIP_BUILD" = "1" ]; then
 else
     echo "==> [7/8] 构建镜像（BuildKit，耗时较久，请耐心）"
     # 2026-11-09 修订：弃用 legacy builder（btrfs 每层一子卷，攒千级后 layer does not exist）。
-    # 构建后有 index.html sha256 比对 + 版本门禁兜底，BuildKit 复用旧快照的风险在这里被拦下。
-    ( cd "$SRC" && DOCKER_BUILDKIT=1 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" -t mybooks-local:latest . ) || exit 1
+    # NAS 没装独立 buildx 插件时 docker build 走不了 BuildKit，回退 compose build（内嵌 buildx）；
+    # compose 快照判重的风险由下方 index.html 指纹比对 + 版本门禁兜底。
+    ( cd "$SRC" && if docker buildx version >/dev/null 2>&1; then
+          DOCKER_BUILDKIT=1 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" -t mybooks-local:latest .
+      else
+          docker compose build --no-cache --build-arg "GIT_VERSION=$PKG_VER"
+      fi ) || exit 1
     host_sha=$(sha256sum "$SRC/app/dist/index.html" | awk '{print $1}')
     img_sha=$(docker run --rm mybooks-local:latest sha256sum /var/www/mybooks/app/dist/index.html | awk '{print $1}')
     if [ "$host_sha" != "$img_sha" ]; then
