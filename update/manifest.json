@@ -14,7 +14,7 @@
   ],
   "requires_dist": true,
   "hotfixable": false,
-  "reason": "本次改动包含前端产物或镜像级文件，在线替换无法生效，请重新执行 deploy.sh / upgrade.sh",
+  "reason": "本次改动包含前端产物（app/dist 变化），在线替换无法生效。请在 NAS 的 git 克隆目录执行 git fetch && git reset --hard origin/master && docker compose up -d --build（dist 已预提交，跳过 npm）；或用部署包重新部署。",
   "files": [
     {
       "path": "webserver/base/formatter.py",
@@ -131,11 +131,10 @@
     ]
   },
   "deploy_commands": [
-    "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.6.0-build.27-r8.tar.gz.sha256",
-    "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
-    "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.6.0-build.27-r8.tar.gz",
-    "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
+    "cd /volume1/docker/audiobook",
+    "git fetch origin",
+    "git reset --hard origin/master",
+    "docker compose down",
+    "docker compose up -d --build"
   ]
 }
