@@ -49,6 +49,7 @@ if [ "${1:-}" = "--check" ]; then
         for f in Dockerfile docker-compose.yml myreader-dist/app/server.js \
                  conf/supervisor/mybooks.conf conf/nginx/mybooks.conf \
                  scripts/upgrade.sh scripts/deploy.sh scripts/check-reader.sh \
+                 scripts/check-myreader-links.sh scripts/myreader-links.manifest \
                  scripts/pack.sh scripts/hotfix.sh tools/category_backfill.py; do
             [ -e "$D/$f" ] || { echo "  !! 缺 $f"; fail=1; }
         done
@@ -59,6 +60,28 @@ if [ "${1:-}" = "--check" ]; then
         for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git skills .claude tests; do
             [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
         done
+
+        # 换行纪律（fix2 事故防复发，2026-11-07）：容器/宿主要执行的文本必须 LF。
+        # CRLF 进镜像后 start.sh 的 shebang 变成 "#!/bin/sh\r" → exec 报 no such file。
+        # POSIX sh 没有 $'\r'，用 printf 造。
+        CR=$(printf '\r')
+        crhit=$(grep -rlI "$CR" "$D/docker" "$D/conf" "$D/scripts" \
+                      "$D/Dockerfile" "$D/Dockerfile.base" "$D/docker-compose.yml" \
+                      "$D/run_webserver.sh" 2>/dev/null | head -5)
+        if [ -n "$crhit" ]; then
+            echo "  !! 以下文件含 CR（CRLF 换行），容器/宿主脚本会无法执行："
+            echo "$crhit" | sed 's/^/     /'
+            fail=1
+        fi
+
+        # dist 与 src 同步粗检：dist 语言包里必须能找到较新的键（抽查归一化指引 openClean）。
+        # 缺了说明 dist 早于 src —— 先 npm run build-spa 再打包，或人工补键。
+        if [ -d "$D/app/dist/_nuxt" ]; then
+            if ! grep -lq "openClean" "$D"/app/dist/_nuxt/*.js 2>/dev/null; then
+                echo "  !! app/dist 落后于 app/src（语言包缺 authorNorm.openClean）—— 重建前端后再打包"
+                fail=1
+            fi
+        fi
 
         # __pycache__ / .pytest_cache：允许零星几个（比如解压后又跑过脚本），但不该整片带进来
         npc=$(find "$D" -name '__pycache__' -type d 2>/dev/null | wc -l)
@@ -84,6 +107,18 @@ if [ "${1:-}" = "--check" ]; then
         if [ "$valid" -lt 100 ]; then
             echo "  !! 有效链接只有 $valid 个（应 ≥100）—— 多半被 --transform 改坏了，或解压压扁了"
             fail=1
+        fi
+        # 2026-11-09：新包带权威清单时逐根比对（旧包无清单则沿用上面的模糊判据）。
+        # 这一步能抓出「有效链接数够、但 .next 层带哈希的链接全丢」这类隐性损坏。
+        if [ -f "$D/scripts/check-myreader-links.sh" ] && [ -f "$D/scripts/myreader-links.manifest" ]; then
+            if ! sh "$D/scripts/check-myreader-links.sh" \
+                    --manifest "$D/scripts/myreader-links.manifest" \
+                    "$D/myreader-dist" >/dev/null 2>&1; then
+                echo "  !! 按 myreader-links.manifest 逐根校验不通过（链接缺失或目标不符）"
+                fail=1
+            else
+                echo "  ✓ 119 根链接清单校验通过"
+            fi
         fi
         # §断链必须为 0§ 4.6.0-16 起拒收任何断链。
         # 以前容忍 8 条「历史残留」（sharp / turso-database / styled-jsx 的悬空 pnpm 链接），
@@ -203,13 +238,29 @@ for d in books book data audios library upload imports sync cache logs; do
 done
 echo "  OK：无数据污染"
 
-echo "==> [2/4] MyReader 产物自检"
+echo "==> [2/4] MyReader 产物自检（清单驱动，119 根逐根校验）"
 [ -d myreader-dist/node_modules ] || { echo "  !! 缺 myreader-dist/node_modules（产物不完整，见 .gitignore 例外区）"; exit 1; }
 mr_total=$(find myreader-dist \( -type f -o -type l \) | wc -l)
 mr_valid=0
 for l in $(find myreader-dist -type l); do [ -e "$l" ] && mr_valid=$((mr_valid + 1)); done
 echo "  $mr_total 条，有效链接 $mr_valid"
-[ "$mr_valid" -ge 100 ] || { echo "  !! 有效链接只有 $mr_valid（应 ≥100），产物坏了"; exit 1; }
+# 2026-11-09：光数「有效链接 >=100」不够——static/ 里的悬空链接也会凑数，
+# 而 .next/node_modules 那 24 根带哈希的链接全丢时，myreader 照样显示
+# Ready、打开书却 500。必须按权威清单逐根比对。
+# 注意：本脚本若在 Windows 工作区运行（core.symlinks=false 把链接压扁成
+# 普通文件），这一步会明确失败——这正是目的：**不要从压扁的工作区出包**。
+# 请先在 Linux/WSL 里 `git checkout` 还原符号链接，或以完好部署包为底重打。
+if [ -f scripts/check-myreader-links.sh ] && [ -f scripts/myreader-links.manifest ]; then
+    sh scripts/check-myreader-links.sh || {
+        echo "  !! MyReader 链接不全，禁止出包。"
+        echo "     先修好再打： sh scripts/check-myreader-links.sh --fix myreader-dist"
+        echo "     （Windows 工作区无法创建符号链接时，须在 Linux 上重新检出或解包）"
+        exit 1
+    }
+else
+    echo "  !! 缺 scripts/check-myreader-links.sh 或 myreader-links.manifest，禁止出包"
+    exit 1
+fi
 
 # ---------- 打包 ----------
 echo "==> [3/4] 打包（cd 到父目录对目录名打包，不用 --transform）"

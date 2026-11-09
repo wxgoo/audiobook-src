@@ -154,7 +154,7 @@ CMD ["pytest", "/var/www/mybooks/tests"]
 # 生产环境（必须是最后一个 FROM：Docker 默认构建最后阶段）
 FROM docker.1ms.run/poxenstudio/mybooks_base:latest AS production
 ARG BUILD_COUNTRY="CN"
-ARG GIT_VERSION="4.6.0-build.21"
+ARG GIT_VERSION="4.6.0-build.27"
 # 是否安装 faster-whisper（音频转写）。默认装：不带 torch，只多约 250MB，
 # x86 上比 openai-whisper 快 4 倍以上，ARM/低端 CPU 也能跑 tiny/base。
 # 不需要时构建加 --build-arg WITH_WHISPER=0 即可跳过，镜像体积回落。
@@ -220,6 +220,9 @@ COPY docker/ /var/www/mybooks/docker/
 COPY webserver/ /var/www/mybooks/webserver/
 # 运维工具（如 tools/category_backfill.py 读者组 #category 回填），容器内 docker exec 直接可用
 COPY tools/ /var/www/mybooks/tools/
+# 注：音频转写文稿的识别内核 srt_core.py 已随 webserver/ 一起进入镜像
+# （webserver/toolbox/srt-tool/，工具箱「音频转写文稿」网页版依赖）；
+# faster-whisper 本体见 requirements-optional.txt，未装时工具页面自动降级提示
 # third-party/foliate-js 与 edge-tts 已随源码包内置（从上游仓库拉取后去 .git），
 # 不再依赖 git submodule。以下逻辑保留两分支作为兜底：万一目录被清空，
 # foliate-js 缺失只影响微信读书批注导入（警告不中断），
@@ -291,6 +294,18 @@ COPY --from=builder /app-static/dist/avatar/ /data/books/avatar/
 # 所以 .dockerignore 里对 myreader-dist 下的 node_modules 做了显式放行，
 # 少一层都会启动即 MODULE_NOT_FOUND。
 COPY myreader-dist/ /var/www/myreader/
+
+# ── 符号链接兜底：构建上下文里的链接状态会被原样 COPY 进来 ──
+# 2026-11-09 现场实锤：myreader-dist 的 119 根相对符号链接，经 Windows
+# 检出 / File Station 上传 / 图形界面解压后会被压扁成「内容=目标路径文本」
+# 的普通文件或空目录。deploy.sh / upgrade.sh 会在构建前修复宿主机目录，但
+# 手工 `docker compose build` 会绕过那一步，于是镜像里带着坏链接：
+#   myreader 启动 FATAL，或显示 Ready 但 /reader/open 首个请求就 500。
+# 这里按权威清单在镜像内再校验/重建一次（幂等，链接完好时只打印统计）。
+COPY scripts/check-myreader-links.sh scripts/myreader-links.manifest /tmp/mrcheck/
+RUN sh /tmp/mrcheck/check-myreader-links.sh --fix \
+        --manifest /tmp/mrcheck/myreader-links.manifest /var/www/myreader && \
+    rm -rf /tmp/mrcheck
 
 # ── 权限归一：必须在 COPY 之后 ──
 # 坑：上面第 191 行有 `chmod a+w -R /var/www`，但那是在 COPY 之前跑的。

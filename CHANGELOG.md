@@ -9,7 +9,59 @@
 
 ---
 
-## 4.6.0-build.27-r3（当前包修订）
+## 4.6.0-build.27-r4（当前包修订）
+
+> 主题：**MyReader 119 根符号链接清单化自愈**——解决「myreader 显示 Ready、打开书却 500」。
+> 代码与 dist 与 build.27 完全相同，运行期版本仍是 `4.6.0-build.27`。
+
+### 事故回顾（2026-11-09 现场）
+
+现场全新部署后 `supervisorctl status` 显示 `mybooks:myreader FATAL`，日志为
+`Cannot find module 'next/dist/server/lib/start-server'`；手工补链接后 myreader 变为
+`RUNNING`、`✓ Ready in 0ms`，但浏览器打开 `/reader/open?bookid=…` 仍报
+`Internal Server Error`。
+
+根因不是 build.27 的代码，而是**产物落地环节**：`myreader-dist` 是 Next.js
+standalone 产物，三层 `node_modules` 靠 **119 根相对符号链接**解析依赖。经 Windows
+检出（`core.symlinks=false`）、File Station 上传或图形界面解压后，这些链接被压扁成
+「内容=目标路径文本」的 0 字节文件 / 空目录：
+
+- `.pnpm` 实体包完好，但顶层与每个 `.pnpm/*/node_modules` 的链接全丢 →
+  `require('next')` 找不到 → 启动 FATAL；
+- 只补了顶层后，`app/.next/node_modules` 那 24 根带哈希的链接
+  （`clsx-531b805f92b6415e` 之类）仍缺失 → Next.js 看似 Ready，首个 SSR 请求就 500。
+
+git 里这些链接的 mode 是 `120000`（仓库本身是对的），**但从 Windows 工作区直接
+`pack.sh` 打包会重新压扁**，所以不能靠"重新检出"解决。
+
+### 变更
+
+1. **权威清单**：新增 `scripts/myreader-links.manifest`，从完好部署包导出的
+   119 根「相对路径 → 链接目标」（`node_modules` 92 / `app/node_modules` 3 /
+   `app/.next/node_modules` 24）。按包名推断不可行——链接名带哈希，且同名包在
+   `.pnpm` 里有多版本（`@opentelemetry/api` 1.9.0 与 1.9.1 并存，next 用 1.9.1）。
+2. **校验/重建脚本**：新增 `scripts/check-myreader-links.sh`（`--fix` 重建、
+   默认只读校验），逐根比对清单，不猜版本；已验证清单 119 根目标在包内全部存在。
+3. **部署链路自动自愈**：`deploy.sh` 的 [2/5]、`upgrade.sh` 新增的 [6.2/8]
+   在**构建之前**调用 `--fix` 修复宿主机 `myreader-dist`（构建上下文状态会被原样
+   COPY 进镜像，事后补容器没用）；`upgrade.sh` 显式调用新解压出来的脚本，
+   避免重演「旧目录里的旧脚本跑完整场」。
+4. **Dockerfile 构建期兜底**：`COPY myreader-dist/` 之后按清单再校验一次，
+   手工 `docker compose build` 绕过部署脚本也能修好。
+5. **出包堵源头**：`pack.sh` 打包前与 `--check` 验包时都跑清单校验，缺链接或
+   目标不符一律拒收；缺清单/脚本也拒收。Windows 压扁的工作区会在此明确失败，
+   提示须在 Linux 上重新检出或以完好包为底重打。
+6. 保留 `scripts/fix-pnpm-links.sh` 作为「清单不在时的应急兜底」（按 `.pnpm`
+   目录名 peer 后缀推断版本），正常部署不再依赖它。
+
+### 不变
+
+- 代码零改动：`app/dist/index.html` 指纹仍是 `56565065…`；
+- 站点运行期版本仍是 `4.6.0-build.27`；-r2/-r3/-r4 都是包修订号。
+
+---
+
+## 4.6.0-build.27-r3（已被 -r4 取代）
 
 > 主题：**构建口径全面切 BuildKit**——脚本与文档统一，代码与 dist 与 build.27 完全相同。
 

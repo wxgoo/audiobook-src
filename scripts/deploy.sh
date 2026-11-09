@@ -74,38 +74,43 @@ done
 echo "    OK：关键文件齐全"
 
 echo "==> [2/5] MyReader 产物完整性（之前 502 事故的教训：产物不全 → 书页空白）"
-# 原来这里只数符号链接总数（<100 就报错）。问题：myreader-dist/static/ 里有
-# 127 个断链（指向不存在的 f1.js…），正好把总数凑够，检查永远通过；
-# 而真正该在的三层 node_modules 一个都没有时，阅读器启动即
-# Cannot find module 'next' → 9100 不监听 → /readerx 全 502 → 打开书什么都没有。
-#
-# 现在改成查真东西：目录在不在、有效链接够不够（断链不计）。
+# 2026-11-09 修订：不再用「数有效链接 >=100」这种模糊判据。
+# 现场实锤：myreader-dist 经 Windows 检出/上传/图形界面解压后，
+# 119 根符号链接会被压扁成「内容=目标路径文本」的普通文件或空目录：
+#   - 启动即 Cannot find module（supervisor FATAL），或
+#   - Next.js 显示 Ready，但首个 /reader/open 请求就 500。
+# 现在以 scripts/myreader-links.manifest 为权威清单逐根校验，
+# 缺失/目标不符一律自动重建（--fix），修不好就停止部署。
 mr_fail=0
 [ -f myreader-dist/app/server.js ] || { echo "    !! 缺 myreader-dist/app/server.js"; mr_fail=1; }
 for sub in "node_modules" "app/node_modules" "app/.next/node_modules"; do
     [ -d "myreader-dist/$sub" ] || { echo "    !! 缺 myreader-dist/$sub"; mr_fail=1; }
 done
-
-valid=0; broken=0
-for l in $(find myreader-dist -type l 2>/dev/null); do
-    if [ -e "$l" ]; then valid=$((valid + 1)); else broken=$((broken + 1)); fi
-done
-echo "    有效符号链接: $valid   断链: $broken"
-
 if [ "$mr_fail" = "1" ]; then
     echo "    !! MyReader 产物不完整 —— 部署后 /readerx 会 502，书页打不开。"
     echo "       补救：从旧机器/备份取回完整 myreader-dist 后重试。"
     exit 1
 fi
-if [ "$valid" -lt 100 ]; then
-    echo "    !! 有效链接只有 $valid 个（应 ≥100）。"
-    echo "       如果远少于这个数，多半是被解压工具压扁了，请用命令行解压："
-    echo "         tar -xzf <包名>.tar.gz"
-    exit 1
-fi
-[ "$broken" -gt 0 ] && echo "    ! 提示：$broken 个断链（多在 myreader-dist/static/），无用残留，不影响运行"
 
-echo "    OK：MyReader 产物完整"
+if [ -f scripts/check-myreader-links.sh ] && [ -f scripts/myreader-links.manifest ]; then
+    sh scripts/check-myreader-links.sh --fix || {
+        echo "    !! MyReader 链接修复失败，停止部署（镜像会带着坏链接）"
+        exit 1
+    }
+else
+    echo "    ! 缺 scripts/check-myreader-links.sh 或 myreader-links.manifest，"
+    echo "      退回旧的模糊判据（不建议）。请确认部署包完整。"
+    valid=0
+    for l in $(find myreader-dist -type l 2>/dev/null); do
+        [ -e "$l" ] && valid=$((valid + 1))
+    done
+    if [ "$valid" -lt 100 ]; then
+        echo "    !! 有效链接只有 $valid 个（应 >=119）。多半被解压工具压扁了，"
+        echo "       请用命令行解压：tar -xzf <包名>.tar.gz"
+        exit 1
+    fi
+fi
+echo "    OK：MyReader 产物与 119 根链接均完整"
 
 # 默认图标/二维码：只在目标不存在时补一份（全新部署自动生效；存量站点不动已有文件）
 seed_logo_defaults() {

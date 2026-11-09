@@ -192,6 +192,26 @@ if ! grep -q "audiobook-data:/data" "$SRC/docker-compose.yml"; then
 fi
 echo "    OK：数据挂载指向 audiobook-data"
 
+# ---------- 6.2 MyReader 符号链接校验 / 重建 ----------
+# 2026-11-09 现场实锤：包内 myreader-dist 有 119 根相对符号链接，
+# Windows 检出 / File Station 上传 / 图形界面解压会把它压扁成普通文件，
+# 于是 myreader 要么启动 FATAL，要么显示 Ready 但打开书 /reader/open 报 500。
+# 这里必须在 docker build 之前把 $SRC/myreader-dist 修好——构建上下文里的
+# 链接状态会被原样 COPY 进镜像，事后补容器是没用的（重建容器就丢）。
+# 注意：本脚本可能仍是从旧目录里启动的旧版本，所以显式调用新解压出来的脚本。
+if [ -f "$SRC/scripts/check-myreader-links.sh" ] && [ -f "$SRC/scripts/myreader-links.manifest" ]; then
+    echo "==> [6.2/8] MyReader 119 根链接校验 / 重建"
+    sh "$SRC/scripts/check-myreader-links.sh" --fix \
+        --manifest "$SRC/scripts/myreader-links.manifest" \
+        "$SRC/myreader-dist" || {
+        echo "    !! MyReader 链接修复失败，停止部署（镜像会带着坏链接）"
+        exit 1
+    }
+else
+    echo "    !! 新包缺 scripts/check-myreader-links.sh 或 myreader-links.manifest，停止部署"
+    exit 1
+fi
+
 # compose 里的版本号只服务于「手工 docker compose build」，本脚本用 --build-arg 覆盖。
 # 但两者不一致时提示一句：手工 compose build 会写回旧版本，正是页脚显示旧号的成因。
 CVER=$(sed -n 's/^[[:space:]]*GIT_VERSION:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$SRC/docker-compose.yml" 2>/dev/null | head -1 | tr -d '\r')

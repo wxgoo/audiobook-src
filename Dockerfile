@@ -295,6 +295,18 @@ COPY --from=builder /app-static/dist/avatar/ /data/books/avatar/
 # 少一层都会启动即 MODULE_NOT_FOUND。
 COPY myreader-dist/ /var/www/myreader/
 
+# ── 符号链接兜底：构建上下文里的链接状态会被原样 COPY 进来 ──
+# 2026-11-09 现场实锤：myreader-dist 的 119 根相对符号链接，经 Windows
+# 检出 / File Station 上传 / 图形界面解压后会被压扁成「内容=目标路径文本」
+# 的普通文件或空目录。deploy.sh / upgrade.sh 会在构建前修复宿主机目录，但
+# 手工 `docker compose build` 会绕过那一步，于是镜像里带着坏链接：
+#   myreader 启动 FATAL，或显示 Ready 但 /reader/open 首个请求就 500。
+# 这里按权威清单在镜像内再校验/重建一次（幂等，链接完好时只打印统计）。
+COPY scripts/check-myreader-links.sh scripts/myreader-links.manifest /tmp/mrcheck/
+RUN sh /tmp/mrcheck/check-myreader-links.sh --fix \
+        --manifest /tmp/mrcheck/myreader-links.manifest /var/www/myreader && \
+    rm -rf /tmp/mrcheck
+
 # ── 权限归一：必须在 COPY 之后 ──
 # 坑：上面第 191 行有 `chmod a+w -R /var/www`，但那是在 COPY 之前跑的。
 # 产物是谁在哪台机器打包的，就带着谁的权限位进来。实测从 NAS 以 root
