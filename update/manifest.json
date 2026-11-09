@@ -10,7 +10,8 @@
     "自动检测改走 Gitee update/manifest.json，停用上游 mybooks.top release 接口",
     "仅后端 Python 修订支持下载校验→备份→替换→重启；提供 Web 回滚与宿主机回滚命令",
     "deploy.sh / upgrade.sh 加固化钩子，防止重建容器时热更新被冲掉",
-    "右上角新版本角标、首页/页脚版本弹窗、消息弹窗旧文案统一改为 Gitee 口径"
+    "右上角新版本角标、首页/页脚版本弹窗、消息弹窗旧文案统一改为 Gitee 口径",
+    "文档统一：README/安装指南/部署包说明/在线更新说明/CHANGELOG 与 NAS 运维手册同步到 r7 口径"
   ],
   "requires_dist": true,
   "hotfixable": false,
@@ -113,11 +114,21 @@
     ],
     "docs": [
       "CHANGELOG.md",
+      "INSTALL_GUIDE.md",
+      "README.md",
       "delivery/overlay/files/CHANGELOG.md",
+      "delivery/overlay/files/INSTALL_GUIDE.md",
+      "delivery/overlay/files/README.md",
+      "delivery/overlay/files/docs/NAS-Docker缓存池重置与镜像备份恢复手册.md",
       "delivery/overlay/files/docs/在线更新说明.md",
+      "delivery/overlay/files/docs/备份与恢复演练.md",
+      "delivery/overlay/files/docs/操作总纲.md",
       "delivery/overlay/files/docs/部署包说明.md",
       "delivery/overlay/files/update/README.md",
+      "docs/NAS-Docker缓存池重置与镜像备份恢复手册.md",
       "docs/在线更新说明.md",
+      "docs/备份与恢复演练.md",
+      "docs/操作总纲.md",
       "docs/部署包说明.md",
       "update/README.md"
     ]

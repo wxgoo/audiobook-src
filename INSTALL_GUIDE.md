@@ -1,6 +1,13 @@
 # MyBooks（audiobook 功能移植版）安装使用说明书
 
 > 版本：4.6.0-15（基于上游 mybooks tag 4.6.0）
+>
+> ⚠️ **本指南写于早期版本，功能章节是当时的说明。当前 `4.6.0-build.27-r7` 的部署、
+> 版本检测与 Docker 运维请以 `README.md`、`docs/部署包说明.md`、`docs/在线更新说明.md`、
+> `docs/NAS-Docker缓存池重置与镜像备份恢复手册.md` 为准**；下文涉及解压与构建的命令
+> 已按 r7 口径修正，冲突时一律以上述四份为准。文中 `v4.8.x` 只是早期功能章节的
+> 时间标记，不是当前版本号，也不参与任何版本比较。
+>
 > 本版变化：新增「**音频批量转码**」工具箱（见第七节附）；修复有声书播放卡死/进度不动（nginx 缓存头 + 后端 HEAD/Range + 前端 seek 时序三处）；详情页「有声书」改为直接进入播放页。「读者组分级权限」「音频转写文稿」「有声书挂靠」见第五~七节；内嵌阅读器见第八节。
 
 ---
@@ -141,26 +148,35 @@ docker compose down      # 删除容器（data 目录里的数据仍在）
 
 ## 三、NAS 部署（群晖 / 威联通 / 其他 Linux）
 
-### 一键部署（推荐，v4.8.1 起）
+### 一键部署（推荐）
 
-SSH 登录 NAS 后，**三行命令**完成部署：
+SSH 登录 NAS 后完成部署（r7 含前端产物，必须完整部署一次）：
 
 ```bash
 cd /volume1/docker
-tar -xzf audiobook-deploy-4.6.0-build.27.tar.gz
+sha256sum -c audiobook-deploy-4.6.0-build.27-r7.tar.gz.sha256
+docker compose -f audiobook/docker-compose.yml down 2>/dev/null
+mv audiobook audiobook.old-$(date +%m%d-%H%M)
+tar -xzf audiobook-deploy-4.6.0-build.27-r7.tar.gz
 cd audiobook && sh scripts/deploy.sh
 ```
 
-`scripts/deploy.sh` 会自动做五步：
+> **解压必须用命令行 `tar -xzf`**：File Station / GUI 解压会把 MyReader 的符号链接压扁，
+> 表现为阅读器进程 FATAL 或打开书报 500。
+
+`scripts/deploy.sh` 会自动做这些事（r7 口径）：
 
 1. **关键文件校验**——Dockerfile、docker-compose.yml、myreader-dist 产物、
-   supervisor/nginx 配置、回填脚本，缺一个直接报错停止；
-2. **符号链接抽查**——`app/node_modules` 首层应为 3 个链接（next/react/react-dom）、
-   全产物合计应为 127 个，数量异常说明被解压工具压扁，会给出正确解压命令；
-3. `DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .`（legacy builder 构建镜像）；
-4. `docker compose up -d --force-recreate --no-build`（启动容器）；
-5. 等 20 秒后自动输出 supervisor 各进程状态和 myreader 日志尾部，一眼确认
-   `myreader RUNNING`、日志无 `SyntaxError`。
+   supervisor/nginx 配置、回填脚本、`update/manifest.json`，缺一个直接报错停止；
+2. **MyReader 符号链接逐根校验**——按 `scripts/myreader-links.manifest` 的
+   **119 根**相对链接逐根比对，缺失或被解压工具压扁就自动重建；
+3. **固化在线热更新**——`scripts/sync-hotfix.sh` 比对数据卷与包内修订号，
+   把尚未固化进镜像的后端修订合并进源码目录，防止版本倒退；
+4. **BuildKit 构建**——有独立 `docker buildx` 组件时走
+   `DOCKER_BUILDKIT=1 docker build --no-cache`，DSM 缺该插件时自动回退
+   `docker compose build`；不要手工切回旧版 builder；
+5. `docker compose up -d --force-recreate --no-build` 启动容器，等 20 秒后输出
+   supervisor 各进程状态和 myreader 日志尾部，确认 `myreader RUNNING`、日志无 `SyntaxError`。
 
 只构建不启动：`sh scripts/deploy.sh build-only`。
 手动部署与脚本等效，见下面的分步说明。
@@ -169,18 +185,19 @@ cd audiobook && sh scripts/deploy.sh
 ### 群晖 DSM
 
 1. **套件中心**安装 **Container Manager**（DSM 7）或 Docker（DSM 6）。
-2. 用 File Station 把解压后的项目文件夹上传到 NAS，例如 `/docker/audiobook/`。
-3. 打开 Container Manager → **项目** → 新增：
-   - 路径选择 `/docker/audiobook/`（它会自动读取里面的 docker-compose.yml）
-   - 点击「构建」→ 等待完成 →「启动」。
-   - 也可以 SSH 进 NAS 在项目目录直接执行：
-     `sudo env DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .`
-     `&& sudo docker compose up -d --force-recreate --no-build`。
+2. 把部署包传到 NAS，用**命令行**解压（File Station / GUI 解压会压扁符号链接）：
+   ```bash
+   cd /volume1/docker && tar -xzf audiobook-deploy-4.6.0-build.27-r7.tar.gz
+   ```
+3. 推荐 SSH 进项目目录执行 `sh scripts/deploy.sh`（含 119 根链接校验、热更新固化、
+   BuildKit 探测与构建）。
+4. 若要在 Container Manager → **项目** → 新增里操作：路径选 `/volume1/docker/audiobook/`，
+   点「构建」→ 等待完成 →「启动」，启动后确认 `myreader RUNNING`。
 
 ### 威联通 QTS
 
 1. App Center 安装 **Container Station**。
-2. SSH 进 NAS，进入项目目录执行 `DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . && docker compose up -d --force-recreate --no-build`。
+2. SSH 进 NAS，命令行解压部署包后进入项目目录执行 `sh scripts/deploy.sh`（构建口径由脚本探测，不要手工指定 builder）。
 
 ### 纯 Linux 服务器
 
@@ -189,8 +206,7 @@ cd audiobook && sh scripts/deploy.sh
 sudo apt install docker-compose-plugin
 
 cd /path/to/audiobook
-sudo env DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
-sudo docker compose up -d --force-recreate --no-build
+sudo sh scripts/deploy.sh
 ```
 
 ### NAS 专属注意事项
@@ -517,8 +533,7 @@ pnpm --filter @poxenstudio/myreader build-docker-dist
 # 6. 拿回 MyBooks
 rsync -a --delete app/myreader-dist/ <mybooks 路径>/myreader-dist/
 cd <mybooks 路径>
-DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
-docker compose up -d --force-recreate --no-build
+sh scripts/deploy.sh
 ```
 
 > 第 5 步的脚本输出目录结构就是 MyBooks 的 `Dockerfile` 期望的
@@ -787,9 +802,8 @@ git status                          # 看冲突清单（需要在 audiobook-git 
 vi <冲突文件>                        # 找 <<<<<<< 标记手工融合
 git add <解决完的文件>
 git commit
-# 然后手工收尾：
-DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
-docker compose up -d --force-recreate --no-build
+# 然后手工收尾（构建口径由脚本探测，不要手工指定 builder）：
+sh scripts/upgrade.sh
 ```
 
 #### git 仓库放在哪、为什么、怎么防删
@@ -819,12 +833,12 @@ GIT_DIR=/volume1/docker/audiobook-git GIT_WORK_TREE=/volume1/docker/audiobook gi
 | 升级前 | `git status` 干净（没有未提交的手工改动）；磁盘余量 ≥ 5GB（构建需要） |
 | 构建后 | `docker compose exec mybooks supervisorctl status` 四进程全 RUNNING |
 | 访问验证 | 首页出书、点一本能进阅读器、有声书能播、管理后台读者组模板还在 |
-| 回滚（有问题时） | `git reset --hard ORIG_HEAD && DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . && docker compose up -d --force-recreate --no-build` |
+| 回滚（有问题时） | `git reset --hard ORIG_HEAD && sh scripts/upgrade.sh` |
 
 #### 配套使用习惯
 
 - 每次手工改过本站代码后 `git add -A && git commit`，让"我们的补丁层"保持成一条干净的提交线；
-- 升级出问题 24 小时内都能秒回：`git reset --hard ORIG_HEAD && DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . && docker compose up -d --force-recreate --no-build`；
+- 升级出问题 24 小时内都能秒回：`git reset --hard ORIG_HEAD && sh scripts/upgrade.sh`；
 - 长期不跟随上游也没关系，本站自洽；想同步时再跑一次脚本即可，git 历史永远在。
 
 ### 一次性：把数据目录分离出源码目录（v4.8.2 布局，强烈建议）
