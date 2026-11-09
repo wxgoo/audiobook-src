@@ -150,7 +150,9 @@ def main():
     }
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    with open(args.out, "w", encoding="utf-8") as f:
+    # 显式 LF：Windows 上默认 newline=None 会写成 CRLF，虽然 JSON 仍能解析，
+    # 但部署包与 Gitee raw 上的同一份清单会逐字节不一致，核对时容易误判。
+    with open(args.out, "w", encoding="utf-8", newline="\n") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
         f.write("\n")
     print("已生成", args.out)

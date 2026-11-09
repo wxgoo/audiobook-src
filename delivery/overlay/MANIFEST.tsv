@@ -65,10 +65,10 @@ add|app/src/pages/admin/version.vue|644|-|798bcc76709e165b57308edd2a9489406c4ec1
 add|docker/start.sh|644|-|1522abe663e784f19e4e64fe1243c938d1aaddc9efdfb3a0491a699cc5a3481f
 add|docs/在线更新说明.md|644|-|7c3e216fb54aa5d578c560fb82d115b64fc17cc8b57878931d41718373bd12b8
 add|scripts/deploy.sh|644|-|adf71918c37f26862e1037573ac986c548f86367fb1d5886413a260c4c695b32
-add|scripts/gen-update-manifest.py|644|-|da76ef662d23433f156d80e186e009d6894f3b683ea52d03e1a894941484d9e3
+add|scripts/gen-update-manifest.py|644|-|dd37765d97e46178688a9a76cad6bcc9a0ce6703bf18623b96cdb4b48e4d04a0
 add|scripts/sync-hotfix.sh|644|-|9851875e3f69c09c861de86f08febc8d6d69c5528c6050f1d54075f584e9736c
 add|scripts/upgrade.sh|644|-|d93ddf05818d91a84036b187a1fccca1a147f8307ddb3e3cbc15eccf71b540c5
-add|update/manifest.json|644|-|5aa1d2b4b87647604b5079efb31722b143c80f0a6b71c4932c5b0cc85fb296f5
+add|update/manifest.json|644|-|b3db5f0ab39ded4c5caa6c94eee10007908bf0fad12f0171ddf293083d6b1d9b
 add|update/README.md|644|-|511218142290b229f222e843597b25c8dafa098670b045dee13fdd6bcf31100d
 add|webserver/handlers/__init__.py|644|-|032f311d7ebcea20a747b6686e30494c4173bcb84f1570c5e47d8e9934f4e0ce
 add|webserver/handlers/version.py|644|-|a58e6568c0c865cb30f8e09cb0b2d994c67b99f218cb7c19065a7664252f27b3
