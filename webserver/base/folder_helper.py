@@ -46,6 +46,29 @@ def folder_counts(cache):
     return {v: len(table.col_book_map.get(i, ())) for i, v in table.id_map.items()}
 
 
+def folder_counts_for(cache, visible_ids):
+    """Return {folder value: number of books directly in it} restricted to visible_ids.
+
+    与 folder_counts 同口径（按完整路径逐本计数），但只数 visible_ids 里的书。
+    用于读者组受限用户：左侧目录树每级的 (N) 必须按「他真正读得到的书」重算，
+    否则会出现「目录显示 128 本，点进去只有 12 本」的口径漂移。
+    """
+    table = folder_table(cache)
+    if table is None or not visible_ids:
+        return {}
+    # #folder 是单值列：一本书只属于一个目录值，先建 book_id → 目录值 的正向映射。
+    book_to_value = {}
+    for i, v in table.id_map.items():
+        for bid in table.col_book_map.get(i, ()):
+            book_to_value[bid] = v
+    result = {}
+    for bid in visible_ids:
+        v = book_to_value.get(bid)
+        if v:
+            result[v] = result.get(v, 0) + 1
+    return result
+
+
 def top_level_count(counts):
     return len({split_folder(v)[0] for v, n in counts.items() if v and n > 0})
 
