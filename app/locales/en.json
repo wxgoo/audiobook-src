@@ -2824,6 +2824,7 @@
         "copyCommands": "Copy commands",
         "copied": "Copied",
         "copyFailed": "Copy failed, please select the commands manually",
+        "copyManual": "Commands selected, press Ctrl+C to copy",
         "docsOnlyTitle": "Documentation-only change",
         "docsOnlyHint": "No action needed. See the Gitee repository for the change details.",
         "restartTitle": "Service is restarting",

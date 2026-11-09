@@ -2770,6 +2770,7 @@
         "copyCommands": "複製指令",
         "copied": "已複製",
         "copyFailed": "複製失敗，請手動選取上面的指令",
+        "copyManual": "已自動選取指令，請按 Ctrl+C 複製",
         "docsOnlyTitle": "僅文件或無需變更執行檔",
         "docsOnlyHint": "無需執行更新；如需查看變更內容請到 Gitee 倉庫。",
         "restartTitle": "服務正在重啟",

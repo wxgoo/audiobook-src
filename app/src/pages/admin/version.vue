@@ -373,35 +373,40 @@ export default {
         this.$alert('error', this.$t('versionCheck.copyFailed'));
         return;
       }
-      // HTTP 内网站点属于非安全上下文：navigator.clipboard 不存在或会抛错。
-      // 先试现代 API，失败就降级到 textarea + execCommand('copy')，
-      // 最后再退到「点命令块自动全选 + Ctrl+C」。
-      try {
-        if (navigator.clipboard && window.isSecureContext) {
+      // 1) 现代剪贴板 API：仅 HTTPS / localhost 等安全上下文可用
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
           await navigator.clipboard.writeText(text);
           this.$alert('success', this.$t('versionCheck.copied'));
           return;
-        }
-      } catch (e) { /* 落到降级方案 */ }
+        } catch (e) { /* 落到降级 */ }
+      }
+      // 2) execCommand 降级：textarea 必须留在视口内，否则部分浏览器拒绝复制视口外元素
       try {
         const ta = document.createElement('textarea');
         ta.value = text;
         ta.setAttribute('readonly', '');
         ta.style.position = 'fixed';
-        ta.style.top = '-1000px';
+        ta.style.top = '0';
+        ta.style.left = '0';
+        ta.style.width = '1px';
+        ta.style.height = '1px';
         ta.style.opacity = '0';
+        ta.style.pointerEvents = 'none';
         document.body.appendChild(ta);
+        ta.focus();
         ta.select();
         ta.setSelectionRange(0, ta.value.length);
-        const done = document.execCommand('copy');
+        const ok = document.execCommand('copy');
         document.body.removeChild(ta);
-        if (done) {
+        if (ok) {
           this.$alert('success', this.$t('versionCheck.copied'));
           return;
         }
       } catch (e) { /* 落到手动全选 */ }
+      // 3) 最终兜底：自动选中命令块并给中性提示（不弹错误框抢焦点，保证 Ctrl+C 可用）
       this.selectCommands();
-      this.$alert('error', this.$t('versionCheck.copyFailed'));
+      this.$alert('info', this.$t('versionCheck.copyManual'));
     },
   },
 };

@@ -534,7 +534,7 @@ def make_app():
     app_routes += koreader.routes()
     # 「版本与更新」：Gitee 发布清单检测 + 在线热更新（仅管理员）
     app_routes += version_handler.routes()
-    # 「版权下架」：书级停止阅读/下载 + 版权声明（仅管理员可管理）。
+    # 「版权下架」：书籍停止阅读/下载 + 版权声明（仅管理员可管理）。
     # 不并入上面的 names 解包，避免改动 names[:-1] 的变量个数。
     app_routes += importlib.import_module("webserver.handlers.takedown").routes()
 

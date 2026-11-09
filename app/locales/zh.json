@@ -2838,6 +2838,7 @@
         "copyCommands": "复制命令",
         "copied": "已复制",
         "copyFailed": "复制失败，请手动选中上面的命令",
+        "copyManual": "已自动选中命令，请按 Ctrl+C 复制",
         "docsOnlyTitle": "仅文档或无需运行态变更",
         "docsOnlyHint": "无需执行更新操作；如需查看变更内容请到 Gitee 仓库。",
         "restartTitle": "服务正在重启",
