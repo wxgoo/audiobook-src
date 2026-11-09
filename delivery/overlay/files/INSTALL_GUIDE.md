@@ -1001,7 +1001,7 @@ calibre-webserver.db + audios 音频）。
 > - `tools/hotfix-from-src.sh`（本节讲这个）：从**当前源码目录**（git 仓库）挑改过的 `.py` 推容器。你手里有源码、在改代码时用它。
 > - `scripts/hotfix.sh`：从**指定部署包** `.tar.gz` 解出后挑 `.py` 推容器。只有部署包、没有源码时用它，用法 `sh audiobook/scripts/hotfix.sh <包> [--restart]`。
 
-完整镜像构建（`DOCKER_BUILDKIT=0 docker build --no-cache`）最慢的一步是 `npm run build-spa`（前端编译，CPU 密集）。
+完整镜像构建（`sh scripts/deploy.sh`）最慢的一步是 `npm run build-spa`（前端编译，CPU 密集）。
 如果只改了 **Python 后端**，没必要为它等构建，用热更新把改动直接推进运行中的容器：
 
 ```bash
@@ -1019,7 +1019,7 @@ mtime，只把**改过的**用 `docker cp` 推进去 → `chown mybooks` → 清
 | 改动位置 | 能否热更 | 说明 |
 |---|---|---|
 | `webserver/**.py`、`server.py`、`tools/*.py` | ✅ 能 | 脚本自动处理 |
-| `app/**/*.vue`、`app/locales/*.json` | ❌ 不能 | 已编译进静态 `dist/`，必须 `DOCKER_BUILDKIT=0 docker build --no-cache` 重建镜像 |
+| `app/**/*.vue`、`app/locales/*.json` | ❌ 不能 | 已编译进静态 `dist/`，必须 `sh scripts/deploy.sh` 重建镜像 |
 | `conf/nginx/*`、`conf/supervisor/*` | ❌ 不能 | 需重建镜像或手工 `docker cp` + reload |
 
 **关键提醒**：热更新**不持久**——容器重建、镜像重建、`docker compose down` 之后就回到
@@ -1027,7 +1027,7 @@ mtime，只把**改过的**用 `docker cp` 推进去 → `chown mybooks` → 清
 
 ```bash
 sh tools/hotfix-from-src.sh --frontend   # 验证后端（同时提醒前端未生效）
-DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .   # 验证通过后固化进镜像
+sh scripts/deploy.sh   # 验证通过后固化进镜像
 docker compose up -d --force-recreate --no-build
 ```
 
@@ -1057,7 +1057,7 @@ docker compose up -d --force-recreate --no-build
 旧 `index.html`」。因此构建一律走 legacy builder + 全量重建：
 
 ```bash
-DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
+sh scripts/deploy.sh
 docker compose up -d --force-recreate --no-build
 ```
 
@@ -1099,10 +1099,10 @@ npm run build-spa   → Compiled successfully in 36s   （含 ESLint）
 ### 构建很慢或失败
 - 本机 `docker compose build` 会走 compose 内嵌 BuildKit，且会复用旧上下文快照
   （表现为「新 `_nuxt` + 旧 `index.html`」），**不要用**；统一用
-  `DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .`。
+  `sh scripts/deploy.sh`。
 - 网络问题。国内给 Docker 配镜像加速（见上）；重试同一条 legacy 构建命令。
 - legacy builder 没有 `--progress=plain`，直接看 `docker build` 的 `Step N/M` 输出即可；
-  想只看末尾报错：`DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . 2>&1 | tail -50`。
+  想只看末尾报错：`sh scripts/deploy.sh 2>&1 | tail -50`。
 - `--no-cache` 是**规定动作**，不是可选项：本机曾因缓存/上下文判重吃过「新旧 dist 混装」，
   交付与升级一律全量重建。
 
@@ -1148,11 +1148,11 @@ curl -sI https://registry.npmmirror.com | head -1
 `"proxies": {"http-proxy": "...", "https-proxy": "..."}`）。
 
 **想定位到具体包**：legacy builder 不支持 `--progress`，用
-`DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . 2>&1 | tail -50`
+`sh scripts/deploy.sh 2>&1 | tail -50`
 看末尾报错。`--target production` 仍依赖 builder 阶段的产物，不是绕过前端的捷径。
 
 ```bash
-DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest . 2>&1 | tail -50
+sh scripts/deploy.sh 2>&1 | tail -50
 ```
 
 ### `COPY failed: no source files were specified`（myreader-dist）
@@ -1175,7 +1175,7 @@ git submodule update --init third-party/foliate-js
 然后重新执行规定构建命令：
 
 ```bash
-DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
+sh scripts/deploy.sh
 docker compose up -d --force-recreate --no-build
 ```
 
@@ -1207,7 +1207,7 @@ sudo docker exec audiobook-mybooks-1 python3 -c "import faster_whisper; print('O
 `WITH_WHISPER: "1"` 确认无误后重新构建：
 
 ```bash
-sudo env DOCKER_BUILDKIT=0 docker build --no-cache -t mybooks-local:latest .
+sudo sh scripts/deploy.sh
 sudo docker compose up -d --force-recreate --no-build
 ```
 
@@ -1428,7 +1428,7 @@ print(f'共 {n} 个用户带个人设置（这些人组配置不生效）')
 2. **一层一层剥**：浏览器 502 → nginx 到 9100 不通 → supervisor FATAL → 日志 SyntaxError，
    每层只回答「这一层通不通」，不通就停在这一层查，不要跳到别的层改东西；
 3. **改配置类操作**（nginx conf、supervisor conf）都在镜像里，容器内手改
-   只是临时生效，`DOCKER_BUILDKIT=0 docker build --no-cache` + `up -d --no-build` 重建才是根治；
+   只是临时生效，`sh scripts/deploy.sh` + `up -d --no-build` 重建才是根治；
 4. **写脚本要实测阈值**：deploy.sh 的符号链接检查就曾把「正确的 3 个」
    误判为异常（链接大头在根层 node_modules），任何自动检查先在好的环境
    上跑一遍校准再上线。

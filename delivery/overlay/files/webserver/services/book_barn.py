@@ -127,7 +127,7 @@ class BookBarnClient:
         """已废弃：新版本检测统一走 webserver.services.version_check（Gitee 发布清单）。
 
         这里原本请求上游 mybooks.top 的 release 接口，返回的是与本项目无关的
-        4.8.x 号段，而且只发一条「请重新构建容器」的消息、没有任何可执行的
+        号段，而且只发一条「请重新构建容器」的消息、没有任何可执行的
         更新动作。保留方法签名仅为兼容旧调用，不再发起网络请求。
         """
         logging.debug("[BARN] check_latest_release 已废弃，请使用 version_check")

@@ -44,8 +44,8 @@
     },
     {
       "path": "webserver/services/book_barn.py",
-      "sha256": "e881be0c9f0ce8361cc3f79e6d2a61592e5c38076bfc18c15553b6b533ed46eb",
-      "bytes": 27886
+      "sha256": "8fb615fc74995f8d101e5c2993e6877ab16bda19435fc00e22561414bcfb9ba8",
+      "bytes": 27880
     },
     {
       "path": "webserver/services/version_check.py",
