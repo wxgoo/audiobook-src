@@ -13,7 +13,6 @@ from webserver.i18n import _
 
 from webserver import loader
 from webserver.constants import META_SELECTED_SOURCES
-from webserver.plugins.meta.douban import DoubanMetaPlugin, has_proper_book
 from webserver.plugins.meta.douban_v2 import DoubanV2MetaPlugin
 from webserver.plugins.meta.baike import BaikeMetaPlugin
 from webserver.plugins.meta.calibre import CalibreMetaPlugin
@@ -22,13 +21,11 @@ from webserver.plugins.meta.neodb import NeodbMetaPlugin
 from webserver.plugins.meta.ujxsw import UjxswMetaPlugin
 
 CONF = loader.get_settings()
-_PLUGIN_CLASSES = [DoubanMetaPlugin, DoubanV2MetaPlugin, BaikeMetaPlugin, CalibreMetaPlugin, NeodbMetaPlugin, UjxswMetaPlugin]
+_PLUGIN_CLASSES = [DoubanV2MetaPlugin, BaikeMetaPlugin, CalibreMetaPlugin, NeodbMetaPlugin, UjxswMetaPlugin]
 _PROVIDER_PLUGIN_CLASSES = _PLUGIN_CLASSES + [XhsdMetaPlugin]  # XhsdMetaPlugin 不参与聚合搜索但需要 provider 路由
 
 
 class BookSearch:
-    has_proper_book = staticmethod(has_proper_book)
-
     _search_executor = None
 
     @classmethod
@@ -208,16 +205,10 @@ class BookSearch:
         sources = CONF.get(META_SELECTED_SOURCES, [])
         book_data = None
 
-        douban_plugin = DoubanMetaPlugin()
-        if douban_plugin.is_enabled(sources):
-            try:
-                book_data = douban_plugin.search_physical_by_isbn(isbn)
-            except Exception as e:
-                logging.error(f"Douban API error for ISBN {isbn}: {e}")
-                book_data = None
-
+        # §douban v1 已下线§（build.27-r12）：douban-rs-api 伴生容器在本部署中
+        # 不存在，v1 源从未实际命中。ISBN 兜底链改为 v2 → xhsd 两级。
         douban_plugin = DoubanV2MetaPlugin()
-        if douban_plugin.is_enabled(sources) and not book_data:
+        if douban_plugin.is_enabled(sources):
             try:
                 book_data = douban_plugin.search_physical_by_isbn(isbn)
             except Exception as e:

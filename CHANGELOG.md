@@ -22,6 +22,10 @@
   `future.result` 60→15s。8 源全开的最坏情况从 60s 降到 15s 左右。
 - **douban-rs-api 无效默认值去除**：单容器/vDSM 部署没有该伴生容器，默认地址
   永远无效；未配置插件地址时 douban 源直接跳过。已取消勾选无效源的实例不受影响。
+- **douban v1 源连同配置全量下线**：`DoubanMetaPlugin` 从聚合搜索与 provider
+  路由注销，`douban_apikey` / `douban_baseurl` / `douban_max_count` 三键从默认值
+  与两份白名单移除，admin 校验块删除，设置页字段清理（下一版随 dist 下发）。
+  ISBN 兜底链改为 douban_v2 → xhsd 两级。v2 直连源不受影响。
 - `gen-update-manifest.py` 分类修正：`tests/**` 与维护者侧工具自身的改动归为
   非阻塞（原来一个测试文件就会把纯后端修订顶成「必须重新部署」）。
 

@@ -665,16 +665,7 @@ class AdminSettings(BaseHandler):
                         args["MAIN_PAGE_RANDOM_COUNT"] = 12
                 except (TypeError, ValueError):
                     args["MAIN_PAGE_RANDOM_COUNT"] = 12
-        # Check the douban_apikey if only number, letters, _ or -, and length <=48
-        if "douban_apikey" in args:
-            apikey = args["douban_apikey"]
-            if apikey and not re.match(r"^[a-zA-Z0-9_-]{1,48}$", apikey):
-                return {
-                    "err": "params.douban_apikey.invalid",
-                    "msg": _(
-                        "豆瓣API密钥无效, 只能包含数字、字母、下划线或短横线，且长度不能超过48个字符"
-                    ),
-                }
+        # §douban_apikey 校验已随 douban v1 源下线移除§（build.27-r12）
         need_sync_authors = args.get("ENABLE_AUTHOR_INFO", False) and not CONF.get(
             "ENABLE_AUTHOR_INFO", False
         )

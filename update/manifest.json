@@ -4,16 +4,26 @@
   "base_revision": "4.6.0-build.27-r11",
   "version": "4.6.0-build.27",
   "date": "2026-11-10",
-  "summary": "刮削提速：信息源超时收敛 + 搜索索引修复 + douban-rs-api 无效默认值去除",
+  "summary": "刮削提速：信息源超时收敛 + 搜索索引修复 + douban v1 源下线",
   "notes": [
     "1. 检索索引（FTS5）修复：_fill_index 引用了 calibre books 表不存在的 b.publisher/b.series（真实结构走 books_publishers_link / books_series_link 链接表），索引自 build.20 引入起重建从未成功、中文检索一直静默回退；现按链接表聚合出版社/丛书，评论聚合去重（FTS5 重复 rowid 会 constraint failed）。升级后后台 5 分钟内自动重建成功，中文/出版社/丛书均可检索。",
     "2. 刮削超时收敛：calibre 插件 ISBN 查询 timeout 60→8s；book_search 外层 future.result 60→15s。8 源全开的最坏情况从 60s 降到 15s 左右。",
-    "3. douban-rs-api 无效默认值去除：单容器/vDSM 部署没有该伴生容器，默认值永远无效；未配置插件地址时 douban 源直接跳过（不再空耗 DNS+超时）。已在设置里取消勾选 douban/amazon/google/neodb 的实例不受影响。"
+    "3. douban v1 源全量下线：插件注销、三键配置移除、ISBN 兜底链改为 v2→xhsd。douban-rs-api 伴生容器不再需要。"
   ],
   "requires_dist": false,
   "hotfixable": true,
   "reason": "仅后端 Python 代码变更，可在线替换并重启服务，无需重建镜像",
   "files": [
+    {
+      "path": "webserver/base/setting_saver.py",
+      "sha256": "584324688076b8f8cc456db487f4a7374063e5d64743da45a5edc28d2ee8930e",
+      "bytes": 14704
+    },
+    {
+      "path": "webserver/handlers/admin.py",
+      "sha256": "1b1b31263b6517f7425df184d1c7e2e1106203d7ef3570671d7f887e35d3b785",
+      "bytes": 84665
+    },
     {
       "path": "webserver/handlers/book.py",
       "sha256": "8d52ee680e28261b15f94b03c89e0764a0548109e2c2b9bf1e8b8112cfc83e2d",
@@ -47,6 +57,8 @@
   ],
   "changed": {
     "hotfix": [
+      "webserver/base/setting_saver.py",
+      "webserver/handlers/admin.py",
       "webserver/handlers/book.py",
       "webserver/plugins/meta/calibre/plugin.py",
       "webserver/plugins/meta/douban/plugin.py",

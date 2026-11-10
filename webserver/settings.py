@@ -194,7 +194,9 @@ settings = {
     "CALIBRE_CACHE_CLEAN_INTERVAL": 1800,
     "ENABLE_TXT_TO_TXTZ_PLUGIN": False,
 
-    "META_SELECTED_SOURCES": ["douban", "baidu", "xinhua", "douban_v2"],
+    # §douban v1 已下线§（build.27-r12）：douban-rs-api 伴生容器在本部署中不存在，
+    # 默认源清单与 settings UI 均不再包含 douban（v2 直连保留）。
+    "META_SELECTED_SOURCES": ["baidu", "xinhua", "douban_v2"],
 
     "ENABLE_AUTHOR_INFO": True,
 
@@ -304,11 +306,8 @@ settings = {
     'smtp_encryption'   : "TLS",
     'smtp_username'     : "sender@126.com",
     'smtp_password'     : "password",
-    'douban_apikey'     : "0df993c66c0c636e29ecbb5344252a4a",
-    # §默认空§（build.27-r12）：单容器/vDSM 部署没有 douban-rs-api 伴生容器，
-    # 原默认值永远无效、每次搜索空耗 DNS+超时。跑该镜像的用户自行填写。
-    'douban_baseurl'    : "",
-    'douban_max_count'  : 2,
+    # §douban v1 配置已随源下线§（build.27-r12）：douban_apikey / douban_baseurl /
+    # douban_max_count 三键移除；douban_v2 直连不受影响。
     'douban_v2_max_per_hour': 180,
     'ujxsw_max_count'   : 2,
     'auto_fill_meta'    : True,
