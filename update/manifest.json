@@ -1,58 +1,49 @@
 {
   "schema": 1,
-  "revision": "4.6.0-build.27-r10",
-  "base_revision": "4.6.0-build.27-r9",
+  "revision": "4.6.0-build.27-r11",
+  "base_revision": "4.6.0-build.27-r10",
   "version": "4.6.0-build.27",
   "date": "2026-11-10",
-  "summary": "扩展在线阅读格式白名单 + docx 改转 EPUB",
+  "summary": "电台实时流断流修复 + Dockerfile 镜像源修正",
   "notes": [
-    "入库格式 11→24 种；新增 lit/pdb/prc/rb/snb/tcr/lrf/rtf/odt/html/htm/azw1/tpz 等 Calibre 原生可转换格式，打开时自动转 EPUB 后读",
-    "docx 旧逻辑转 PDF（分页不可重排），现统一改转 EPUB 流式阅读，支持重排与全文搜索；同时有 docx+pdf 时优先转 docx→epub",
-    "仅改后端 Python，app/dist 未动，可在线热更（替换 .py 并重启）；详见 docs/支持的图书格式.md"
+    "MiniPlayer.vue: hls.js 致命错误改为自动恢复(startLoad/recoverMediaError)，原生 <audio> 出错自动重连，避免每十几秒规律暂停",
+    "Dockerfile / delivery/overlay/files/Dockerfile: node 基础镜像源由 docker.1ms.run 改为直连 node:20-alpine，规避代理源间歇性 503",
+    "改动含前端源码与构建文件，需重建镜像(docker compose up -d --build)，不可仅热更"
   ],
-  "requires_dist": false,
-  "hotfixable": true,
-  "reason": "仅后端 Python 代码变更，可在线替换并重启服务，无需重建镜像",
+  "requires_dist": true,
+  "hotfixable": false,
+  "reason": "改动涉及前端源码(MiniPlayer.vue)与 Dockerfile，需重建镜像后生效",
   "files": [
     {
-      "path": "webserver/constants.py",
-      "sha256": "1fa215fc988d146c5994c863bedba01ac5517bdf031743682f68720aace9cb2e",
-      "bytes": 5667
+      "path": "app/src/components/MiniPlayer.vue",
+      "sha256": "1eb7c76182b10fb950393e6adc5ffe7da2d397eb1865570c61990ccf402cd8d0",
+      "bytes": 26305
     },
     {
-      "path": "webserver/handlers/book.py",
-      "sha256": "40d4e3e261cddf3df64dbb677feb0b659fbcdb97b36770595d6c842f2de0ea85",
-      "bytes": 249022
+      "path": "Dockerfile",
+      "sha256": "4c463d03cde1622c6e8f203ffd72a98c00a0e21c0c1e3dc16239644b44de7b97",
+      "bytes": 24485
     },
     {
-      "path": "webserver/services/batch_convert.py",
-      "sha256": "7a107754355379a50e1afbf746a286be17daf8734e277962337283d2f98683b5",
-      "bytes": 8561
+      "path": "delivery/overlay/files/Dockerfile",
+      "sha256": "8d5a95368426de80052371da487c308d57d64f67d94e4fc150cf9d37527acec0",
+      "bytes": 24406
     },
     {
-      "path": "webserver/services/converter.py",
-      "sha256": "bff58ab1598299d9a8831114b28a2d850c75210c1609658b7df98036662e2c29",
-      "bytes": 11981
-    },
-    {
-      "path": "webserver/services/reading_stats_service.py",
-      "sha256": "8a8bf237776833e8f39f9fb326a0bac22da1108c1afcf5930dd80f2e6c472058",
-      "bytes": 33557
+      "path": "apply_radio_fix.py",
+      "sha256": "ee1ae8587d2947b3afa46bacb863064ef8c1cf05ff6557193eedf185a4608c1f",
+      "bytes": 3225
     }
   ],
   "changed": {
-    "hotfix": [
-      "webserver/constants.py",
-      "webserver/handlers/book.py",
-      "webserver/services/batch_convert.py",
-      "webserver/services/converter.py",
-      "webserver/services/reading_stats_service.py"
+    "hotfix": [],
+    "blocking": [
+      "app/src/components/MiniPlayer.vue",
+      "Dockerfile",
+      "delivery/overlay/files/Dockerfile"
     ],
-    "blocking": [],
     "docs": [
-      "CHANGELOG.md",
-      "README.md",
-      "docs/支持的图书格式.md"
+      "CHANGELOG.md"
     ]
   },
   "deploy_commands": [

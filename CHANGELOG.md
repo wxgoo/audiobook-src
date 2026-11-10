@@ -9,7 +9,27 @@
 
 ---
 
-## 4.6.0-build.27-r10（当前包修订）
+## 4.6.0-build.27-r11（当前包修订）
+
+> 主题：**电台实时流断流修复 + Dockerfile 镜像源修正**。`MiniPlayer.vue` 改为出错自动恢复/重连，
+> 不再每十几秒规律暂停；`Dockerfile` 中 node 基础镜像源由 `docker.1ms.run` 改为直连 `node:20-alpine`，
+> 规避代理源间歇性 503。改动含前端源码与构建文件，需重建镜像（`docker compose up -d --build`），
+> 不可仅热更。运行期版本仍是 `4.6.0-build.27`。
+
+### 变更
+
+1. **电台流出错自动恢复**（`app/src/components/MiniPlayer.vue`）：hls.js 致命错误由「直接暂停」改为
+   按错误类型自愈——网络错误 `startLoad()`、媒体错误 `recoverMediaError()`，其余才暂停；原生
+   `<audio>` 出错时自动在 2 秒后重连同一源，避免直播流规律断流。
+2. **Dockerfile 镜像源修正**（`Dockerfile` / `delivery/overlay/files/Dockerfile`）：`node` 基础镜像由
+   `docker.1ms.run/library/node:20-alpine` 改为直连 `node:20-alpine`（`poxenstudio/mybooks_base`、
+   `ubuntu` 仍走原源），规避该代理源偶发 503 导致构建失败。
+3. **部署影响**：改动涉及前端源码与 Dockerfile，必须重建镜像后生效（`docker compose up -d --build`），
+   不能仅替换 .py 热更；修复脚本 `apply_radio_fix.py` 一并入库，便于换环境复用。
+
+---
+
+## 4.6.0-build.27-r10
 
 > 主题：**扩展在线阅读支持的图书格式 + docx 改走 EPUB**。入库白名单从 11 种扩到
 > 24 种；`docx` 不再转 PDF，改为转 EPUB 流式阅读（可重排、可全文搜索）；新增
