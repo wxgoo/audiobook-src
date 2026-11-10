@@ -3124,7 +3124,7 @@ class BookAddByISBN(BaseHandler):
             return {"err": "ok", "msg": _("图书添加成功"), "book_id": book_id}
         except Exception as e:
             logging.error("Failed to add book by ISBN: %s", e)
-            return {"err": "internal", "msg": _("查询ISBN失败，请在系统设置中配置互联网信息源中插件地址。如http://douban-rs-api:80/。")}
+            return {"err": "internal", "msg": _("查询ISBN失败，请在系统设置中配置互联网信息源的插件地址（仅部署 douban-rs-api 镜像时才需要；未部署请取消勾选 douban 源）。")}
 
 
 # 直接录入书名/作者/ISBN添加实体图书（ISBN、作者可选），添加后强制刮削

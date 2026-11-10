@@ -9,6 +9,24 @@
 
 ---
 
+## 4.6.0-build.27-r12（2026-11-10，未随包，可页内热更）
+
+- **检索索引（FTS5）修复（重点）**：`search_index._fill_index` 引用了 calibre
+  books 表**不存在的** `b.publisher` / `b.series`（真实结构走
+  `books_publishers_link` / `books_series_link` 链接表），索引自 build.20 引入起
+  重建从未成功（syslog 反复报 no such column），中文检索一直静默回退原生检索。
+  现按链接表聚合出版社/丛书；评论聚合后按 book 去重——FTS5 对重复 rowid 的
+  INSERT 直接 constraint failed，多评论行的老库会炸掉整个重建（已实测钉住）。
+  升级后后台 5 分钟内自动重建成功，中文 / 出版社 / 丛书均可检索。
+- **刮削超时收敛**：calibre 插件 ISBN 查询 timeout 60→8s；`book_search` 外层
+  `future.result` 60→15s。8 源全开的最坏情况从 60s 降到 15s 左右。
+- **douban-rs-api 无效默认值去除**：单容器/vDSM 部署没有该伴生容器，默认地址
+  永远无效；未配置插件地址时 douban 源直接跳过。已取消勾选无效源的实例不受影响。
+- `gen-update-manifest.py` 分类修正：`tests/**` 与维护者侧工具自身的改动归为
+  非阻塞（原来一个测试文件就会把纯后端修订顶成「必须重新部署」）。
+
+---
+
 ## 4.6.0-build.27-r11（当前包修订）
 
 > 主题：**电台实时流断流修复 + Dockerfile 镜像源修正**。`MiniPlayer.vue` 改为出错自动恢复/重连，

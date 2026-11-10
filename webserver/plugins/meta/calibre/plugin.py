@@ -34,7 +34,9 @@ class CalibreMetaPlugin(MetaSourcePlugin):
         books = []
         try:
             if isbn:
-                calibre_books = CalibreMetadataApi.get_book_by_isbn(isbn, sources)
+                # §timeout=8§（build.27-r12）：默认 60s 会把整个并行搜索拖到
+                # 外层 future 超时；calibre 本地库查询 8s 绰绰有余
+                calibre_books = CalibreMetadataApi.get_book_by_isbn(isbn, sources, timeout=8)
                 if calibre_books:
                     books.extend(calibre_books)
             if title:

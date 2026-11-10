@@ -127,7 +127,10 @@ class BookSearch:
         results = {}
         for future, plugin in futures.items():
             try:
-                results[plugin] = future.result(timeout=60) or []
+                # §timeout=15§（build.27-r12）：原 60s 会让一次刮削等满一分钟。
+                # 各源内部已有自己的超时（calibre 插件 8s、douban/neo 源更短），
+                # 15s 足够正常源返回，卡死的源及时放弃
+                results[plugin] = future.result(timeout=15) or []
             except Exception as e:
                 logging.error("信息源[%s]查询失败: %s" % (plugin.name, str(e)))
                 results[plugin] = []

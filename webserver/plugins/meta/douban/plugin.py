@@ -23,9 +23,16 @@ class DoubanMetaPlugin(MetaSourcePlugin):
         return min(int(CONF.get("douban_max_count", 2)), 5)
 
     def _api(self, copy_image=True):
+        baseurl = (CONF.get("douban_baseurl") or "").strip()
+        # §douban-rs-api 默认值已去除§（build.27-r12）：单容器部署（含 vDSM）没有
+        # 这个伴生容器，默认值永远无效、每次搜索都空耗一次 DNS + 超时。
+        # 未配置 baseurl 时本源直接跳过；跑 douban-rs-api 镜像的用户在
+        # 系统设置里自行填写地址即可恢复。
+        if not baseurl:
+            return None
         return DoubanBookApi(
             CONF["douban_apikey"],
-            CONF["douban_baseurl"],
+            baseurl,
             copy_image=copy_image,
             manual_select=False,
             maxCount=self._max_count(),
@@ -36,6 +43,8 @@ class DoubanMetaPlugin(MetaSourcePlugin):
             return []
 
         api = self._api(copy_image=False)
+        if api is None:
+            return []
         books = []
         try:
             books = api.search_books(title) or []
@@ -60,6 +69,8 @@ class DoubanMetaPlugin(MetaSourcePlugin):
         title = mi.title
         try:
             api = self._api(copy_image=True)
+            if api is None:
+                return None
 
             # 优先按 ISBN 精确查询
             book = api.get_book_by_isbn(mi.isbn)
@@ -92,6 +103,9 @@ class DoubanMetaPlugin(MetaSourcePlugin):
     def get_metadata_by_provider(self, provider_value, mi=None):
         mi.douban_id = provider_value
         api = self._api(copy_image=True)
+        if api is None:
+            raise RuntimeError({"err": "httprequest.douban.failed",
+                                "msg": _("豆瓣信息源未配置插件地址，无法查询")})
         try:
             return api.get_book(mi)
         except Exception:
@@ -105,6 +119,8 @@ class DoubanMetaPlugin(MetaSourcePlugin):
         from .api import SimpleMetaData
 
         api = self._api(copy_image=True)
+        if api is None:
+            return None
         return api.get_book(SimpleMetaData(isbn=isbn))
 
 

@@ -305,7 +305,9 @@ settings = {
     'smtp_username'     : "sender@126.com",
     'smtp_password'     : "password",
     'douban_apikey'     : "0df993c66c0c636e29ecbb5344252a4a",
-    'douban_baseurl'    : "http://douban-rs-api:80/",
+    # §默认空§（build.27-r12）：单容器/vDSM 部署没有 douban-rs-api 伴生容器，
+    # 原默认值永远无效、每次搜索空耗 DNS+超时。跑该镜像的用户自行填写。
+    'douban_baseurl'    : "",
     'douban_max_count'  : 2,
     'douban_v2_max_per_hour': 180,
     'ujxsw_max_count'   : 2,

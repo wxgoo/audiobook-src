@@ -1,56 +1,72 @@
 {
   "schema": 1,
-  "revision": "4.6.0-build.27-r11",
-  "base_revision": "4.6.0-build.27-r10",
+  "revision": "4.6.0-build.27-r12",
+  "base_revision": "4.6.0-build.27-r11",
   "version": "4.6.0-build.27",
   "date": "2026-11-10",
-  "summary": "电台实时流断流修复 + Dockerfile 镜像源修正",
+  "summary": "刮削提速：信息源超时收敛 + 搜索索引修复 + douban-rs-api 无效默认值去除",
   "notes": [
-    "MiniPlayer.vue: hls.js 致命错误改为自动恢复(startLoad/recoverMediaError)，原生 <audio> 出错自动重连，避免每十几秒规律暂停",
-    "Dockerfile / delivery/overlay/files/Dockerfile: node 基础镜像源由 docker.1ms.run 改为直连 node:20-alpine，规避代理源间歇性 503",
-    "改动含前端源码与构建文件，需重建镜像(docker compose up -d --build)，不可仅热更"
+    "1. 检索索引（FTS5）修复：_fill_index 引用了 calibre books 表不存在的 b.publisher/b.series（真实结构走 books_publishers_link / books_series_link 链接表），索引自 build.20 引入起重建从未成功、中文检索一直静默回退；现按链接表聚合出版社/丛书，评论聚合去重（FTS5 重复 rowid 会 constraint failed）。升级后后台 5 分钟内自动重建成功，中文/出版社/丛书均可检索。",
+    "2. 刮削超时收敛：calibre 插件 ISBN 查询 timeout 60→8s；book_search 外层 future.result 60→15s。8 源全开的最坏情况从 60s 降到 15s 左右。",
+    "3. douban-rs-api 无效默认值去除：单容器/vDSM 部署没有该伴生容器，默认值永远无效；未配置插件地址时 douban 源直接跳过（不再空耗 DNS+超时）。已在设置里取消勾选 douban/amazon/google/neodb 的实例不受影响。"
   ],
-  "requires_dist": true,
-  "hotfixable": false,
-  "reason": "改动涉及前端源码(MiniPlayer.vue)与 Dockerfile，需重建镜像后生效",
+  "requires_dist": false,
+  "hotfixable": true,
+  "reason": "仅后端 Python 代码变更，可在线替换并重启服务，无需重建镜像",
   "files": [
     {
-      "path": "app/src/components/MiniPlayer.vue",
-      "sha256": "1eb7c76182b10fb950393e6adc5ffe7da2d397eb1865570c61990ccf402cd8d0",
-      "bytes": 26305
+      "path": "webserver/handlers/book.py",
+      "sha256": "8d52ee680e28261b15f94b03c89e0764a0548109e2c2b9bf1e8b8112cfc83e2d",
+      "bytes": 249078
     },
     {
-      "path": "Dockerfile",
-      "sha256": "4c463d03cde1622c6e8f203ffd72a98c00a0e21c0c1e3dc16239644b44de7b97",
-      "bytes": 24485
+      "path": "webserver/plugins/meta/calibre/plugin.py",
+      "sha256": "4798ef662669bc87e204f4887d6478a0134495e7058ec08fd6405b17ee14976e",
+      "bytes": 3197
     },
     {
-      "path": "delivery/overlay/files/Dockerfile",
-      "sha256": "8d5a95368426de80052371da487c308d57d64f67d94e4fc150cf9d37527acec0",
-      "bytes": 24406
+      "path": "webserver/plugins/meta/douban/plugin.py",
+      "sha256": "c9a29a88b4420c27a7ff2586bd84052738c1b9c980720c2ca38c671c83dfb529",
+      "bytes": 5149
     },
     {
-      "path": "apply_radio_fix.py",
-      "sha256": "ee1ae8587d2947b3afa46bacb863064ef8c1cf05ff6557193eedf185a4608c1f",
-      "bytes": 3225
+      "path": "webserver/services/book_search.py",
+      "sha256": "597a9c81c83a55e22c164b5336bfd0b22516391e34f2b8b5bc8ed55fd0d56205",
+      "bytes": 9290
+    },
+    {
+      "path": "webserver/services/search_index.py",
+      "sha256": "7df7f656cd3752dad6d5b84df8be502e42899ee1ce49700618713ac38f47e114",
+      "bytes": 17682
+    },
+    {
+      "path": "webserver/settings.py",
+      "sha256": "137c4ef8858fd53b410269bfc573378b668d7c3a34d3b22ab9f271b9a20ca2a1",
+      "bytes": 24160
     }
   ],
   "changed": {
-    "hotfix": [],
-    "blocking": [
-      "app/src/components/MiniPlayer.vue",
-      "Dockerfile",
-      "delivery/overlay/files/Dockerfile"
+    "hotfix": [
+      "webserver/handlers/book.py",
+      "webserver/plugins/meta/calibre/plugin.py",
+      "webserver/plugins/meta/douban/plugin.py",
+      "webserver/services/book_search.py",
+      "webserver/services/search_index.py",
+      "webserver/settings.py"
     ],
+    "blocking": [],
     "docs": [
-      "CHANGELOG.md"
+      "CHANGELOG.md",
+      "scripts/gen-update-manifest.py",
+      "tests/test_search_index.py"
     ]
   },
   "deploy_commands": [
-    "cd /volume1/docker/audiobook",
-    "git fetch origin",
-    "git reset --hard origin/master",
-    "docker compose down",
-    "docker compose up -d --build"
+    "cd /volume1/docker",
+    "sha256sum -c audiobook-deploy-4.6.0-build.27-r12.tar.gz.sha256",
+    "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
+    "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
+    "tar -xzf audiobook-deploy-4.6.0-build.27-r12.tar.gz",
+    "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }
