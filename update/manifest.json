@@ -21,23 +21,23 @@
     },
     {
       "path": "webserver/plugins/meta/calibre/plugin.py",
-      "sha256": "4798ef662669bc87e204f4887d6478a0134495e7058ec08fd6405b17ee14976e",
-      "bytes": 3197
+      "sha256": "5ffb9b17f0d315543a72b2686278adb4fc1ab440d556eef99cb4336a9845fe98",
+      "bytes": 3123
     },
     {
       "path": "webserver/plugins/meta/douban/plugin.py",
-      "sha256": "c9a29a88b4420c27a7ff2586bd84052738c1b9c980720c2ca38c671c83dfb529",
-      "bytes": 5149
+      "sha256": "2abb3cb59c076d624193187017bae45596e4288516ceb4aec3ce82efae90936c",
+      "bytes": 5012
     },
     {
       "path": "webserver/services/book_search.py",
-      "sha256": "597a9c81c83a55e22c164b5336bfd0b22516391e34f2b8b5bc8ed55fd0d56205",
-      "bytes": 9290
+      "sha256": "8240a18e9ee4b07edf9b05ab0b127260d9ccf68f15e5c6a467f10aa06f07fb0e",
+      "bytes": 9055
     },
     {
       "path": "webserver/services/search_index.py",
-      "sha256": "7df7f656cd3752dad6d5b84df8be502e42899ee1ce49700618713ac38f47e114",
-      "bytes": 17682
+      "sha256": "a15bc8f5fd11327576bc357a8b3ef00afdaf964a84ea04ed38df07a811e3f798",
+      "bytes": 17218
     },
     {
       "path": "webserver/settings.py",

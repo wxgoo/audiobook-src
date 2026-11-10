@@ -100,6 +100,21 @@ def sha256_of(path):
     return h.hexdigest()
 
 
+def git_blob_bytes(rel):
+    """HEAD 里该路径的字节内容——热更下载（Gitee raw）拿到的就是它。
+
+    §必须按 git blob 算哈希§（build.27-r12 现场教训）：清单若用工作区文件计算，
+    Windows 检出是 CRLF、提交进 git / Gitee raw 是 LF（.gitattributes 强制），
+    一个换行符之差会让六份文件的 sha256 全部对不上，热更在第一份文件就中止。
+    未跟踪的新文件回退到工作区读取（按流程应先提交再出清单）。
+    """
+    r = subprocess.run(["git", "-C", ROOT, "show", "HEAD:" + rel], capture_output=True)
+    if r.returncode == 0:
+        return r.stdout
+    with open(os.path.join(ROOT, rel), "rb") as f:
+        return f.read()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--revision", required=True, help="本次发布修订号，如 4.6.0-build.27-r8")
@@ -128,11 +143,20 @@ def main():
             # 删除文件不能靠「下载」完成，交给重新部署
             blocking.append(dict(item, reason="deleted"))
             continue
+        blob = git_blob_bytes(rel)
         files.append({
             "path": rel,
-            "sha256": sha256_of(full),
-            "bytes": os.path.getsize(full),
+            "sha256": hashlib.sha256(blob).hexdigest(),
+            "bytes": len(blob),
         })
+        try:
+            disk_sha = sha256_of(full)
+            if disk_sha != files[-1]["sha256"]:
+                # 换行符/编码漂移提示：不影响清单正确性（清单以 git blob 为准），
+                # 但说明工作区与仓库形态不一致，出部署包前留意
+                print("  !! 工作区与 git 内容不一致（多为换行差异，清单已按 git 内容计算）：%s" % rel)
+        except OSError:
+            pass
 
     requires_dist = bool(blocking)
     manifest = {
