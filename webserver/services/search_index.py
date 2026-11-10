@@ -365,7 +365,15 @@ class SearchIndexService:
             self._build_lock.release()
 
     def _fill_index(self, conn):
-        """从 metadata.db 只读导出一遍书目元数据。"""
+        """从 metadata.db 只读导出一遍书目元数据。
+
+        §calibre 表结构注意§（build.27-r11 复审修正）：calibre 的 books 表
+        **没有** publisher / series 列——出版社与丛书分别走
+        books_publishers_link / books_series_link 链接表。原实现直接
+        `b.publisher`、`b.series`，整个索引重建自 build.20 起就从未成功过
+        （每次都报 no such column，搜索静默回退 calibre）。
+        出版社/丛书均可能有多条链接行，统一 group_concat 聚合防重。
+        """
         src = sqlite3.connect(
             "file:%s?mode=ro" % urllib.parse.quote(self.library_db), uri=True, timeout=5)
         try:
@@ -377,26 +385,35 @@ class SearchIndexService:
                 "SELECT bt.book, group_concat(t.name, ' ') "
                 "FROM books_tags_link bt JOIN tags t ON t.id = bt.tag "
                 "GROUP BY bt.book"))
+            publisher_map = dict(src.execute(
+                "SELECT bp.book, group_concat(p.name, ' ') "
+                "FROM books_publishers_link bp JOIN publishers p ON p.id = bp.publisher "
+                "GROUP BY bp.book"))
+            series_map = dict(src.execute(
+                "SELECT bs.book, group_concat(s.name, ' ') "
+                "FROM books_series_link bs JOIN series s ON s.id = bs.series "
+                "GROUP BY bs.book"))
             rows = src.execute(
-                "SELECT b.id, b.title, b.sort, p.name, s.name, c.text "
+                "SELECT b.id, b.title, b.sort, c.text "
                 "FROM books b "
-                "LEFT JOIN publishers p ON p.id = b.publisher "
-                "LEFT JOIN series s ON s.id = b.series "
-                "LEFT JOIN comments c ON c.book = b.id"
+                "LEFT JOIN (SELECT book, group_concat(text, ' ') AS text "
+                "           FROM comments GROUP BY book) c ON c.book = b.id"
             ).fetchall()
         finally:
             src.close()
 
         count = 0
         batch = []
-        for book_id, title, sort_title, publisher, series, comments in rows:
+        for book_id, title, sort_title, comments in rows:
+            publisher = publisher_map.get(book_id, "")
+            serie = series_map.get(book_id, "")
             doc_text = normalize_text(" ".join(filter(None, [
                 title, sort_title, authors.get(book_id, ""), tags.get(book_id, ""),
-                series, publisher, comments,
+                serie, publisher, comments,
             ])))
             tokens = build_search_tokens(
                 title, sort_title, authors.get(book_id, ""), tags.get(book_id, ""),
-                series, publisher, comments)
+                serie, publisher, comments)
             if not tokens:
                 continue
             batch.append((book_id, tokens, doc_text))

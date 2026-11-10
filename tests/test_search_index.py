@@ -44,28 +44,42 @@ def test_build_tokens_splits_cjk_only():
 
 @pytest.fixture()
 def library(tmp_path):
-    """最小的 calibre metadata.db 结构。"""
+    """真实 calibre metadata.db 表结构（build.27-r11 修正）。
+
+    §契约§ books 表**没有** publisher / series 列——出版社与丛书分别走
+    books_publishers_link / books_series_link 链接表。早先夹具错误地把
+    publisher/series 建成 books 的列，把 _fill_index 的 SQL bug 复刻成了
+    「本地全绿、真库必炸」——这里按真实 schema 建表钉住。
+    """
     library_dir = tmp_path / "library"
     library_dir.mkdir()
     db = sqlite3.connect(str(library_dir / "metadata.db"))
     db.executescript(
         """
-        CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, sort TEXT,
-                            publisher INTEGER, series INTEGER);
+        CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, sort TEXT);
         CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT);
         CREATE TABLE books_authors_link (book INTEGER, author INTEGER);
         CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT);
         CREATE TABLE books_tags_link (book INTEGER, tag INTEGER);
         CREATE TABLE publishers (id INTEGER PRIMARY KEY, name TEXT);
+        CREATE TABLE books_publishers_link (book INTEGER, publisher INTEGER);
         CREATE TABLE series (id INTEGER PRIMARY KEY, name TEXT);
+        CREATE TABLE books_series_link (book INTEGER, series INTEGER);
         CREATE TABLE comments (book INTEGER, text TEXT);
         """
     )
     db.execute("INSERT INTO authors VALUES (1, '刘慈欣')")
-    db.execute("INSERT INTO books VALUES (1, '三体（全集）', 'san ti', NULL, NULL)")
-    db.execute("INSERT INTO books VALUES (2, 'Harry Potter and the Philosopher', 'harry', NULL, NULL)")
+    db.execute("INSERT INTO publishers VALUES (1, '重庆出版社')")
+    db.execute("INSERT INTO series VALUES (1, '地球往事')")
+    db.execute("INSERT INTO books VALUES (1, '三体（全集）', 'san ti')")
+    db.execute("INSERT INTO books VALUES (2, 'Harry Potter and the Philosopher', 'harry')")
     db.execute("INSERT INTO books_authors_link VALUES (1, 1)")
+    db.execute("INSERT INTO books_publishers_link VALUES (1, 1)")
+    db.execute("INSERT INTO books_series_link VALUES (1, 1)")
     db.execute("INSERT INTO comments VALUES (1, '演播：李野墨。地球往事三部曲第一部。')")
+    # §多评论行§ calibre 正常一书一评论，但老库/手工导入可能出现多行——
+    # group_concat 聚合后不得产生重复 rowid（FTS5 重复 rowid 会 constraint failed）
+    db.execute("INSERT INTO comments VALUES (2, '第二段简介文本。')")
     db.commit()
     db.close()
     return library_dir
@@ -89,3 +103,15 @@ def test_rebuild_and_search_chinese(library, tmp_path):
     assert service.search("红楼梦") == []
     # calibre 高级语法交回原生搜索
     assert service.search("author:刘慈欣") is None
+
+
+def test_publisher_and_series_are_indexed_via_link_tables(library, tmp_path):
+    """出版社/丛书走链接表聚合进索引（build.27-r11 修复：原 SQL 引用不存在的
+    b.publisher / b.series，真库重建必炸 no such column）。"""
+    service = SearchIndexService(path=str(tmp_path / "search_index.db"),
+                                 library_dir=str(library))
+    service.rebuild(force=True)
+    # 出版社名能搜到书
+    assert service.search("重庆出版社") == [1]
+    # 丛书名也能搜到
+    assert service.search("地球往事") == [1]
