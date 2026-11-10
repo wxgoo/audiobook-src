@@ -3,7 +3,7 @@
 # 第一阶段，拉取 node 基础镜像并安装依赖，执行构建
 # 必须用 Node 20+：@clack/core 使用了 node:util 的 styleText（Node >= 20.12 才有），
 # Node 16 会在 import 阶段直接 SyntaxError。node:16-alpine 已 EOL，禁止回退。
-FROM docker.1ms.run/library/node:20-alpine AS builder
+FROM node:20-alpine AS builder
 ARG BUILD_COUNTRY=""
 ARG APP_VERSION=""
 

@@ -74,6 +74,7 @@ export default {
             hls: null,
             intentPlay: false,
             lastEmit: 0,
+            recovering: false,
             // 拖动状态：拖动期间显示/写回都以 dragPercent 为准，
             // 避免 timeupdate 把用户正在拖的值弹回旧位置
             dragging: false,
@@ -225,9 +226,17 @@ export default {
                 }
                 this.hls = new Hls({ enableWorker: true })
                 this.hls.on(Hls.Events.ERROR, (evt, data) => {
-                    if (data && data.fatal === true) {
-                        this.error = this.$t('miniPlayer.error')
-                        this.$store.commit('miniPlayer_pause')
+                    if (!data || !data.fatal) return
+                    switch (data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            this.hls.startLoad()
+                            break
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            this.hls.recoverMediaError()
+                            break
+                        default:
+                            this.error = this.$t('miniPlayer.error')
+                            this.$store.commit('miniPlayer_pause')
                     }
                 })
                 this.hls.loadSource(url)
@@ -476,6 +485,23 @@ export default {
             this.$store.commit('miniPlayer_pause')
         },
         onError() {
+            if (this.hls) return
+            const audio = this.$refs.audio
+            if (audio && audio.src && !this.recovering) {
+                this.recovering = true
+                const src = audio.src
+                const wasPlaying = !audio.paused
+                this.error = ''
+                setTimeout(() => {
+                    this.recovering = false
+                    try {
+                        audio.src = src
+                        audio.load()
+                        if (wasPlaying) audio.play().catch(() => {})
+                    } catch (e) { /* ignore */ }
+                }, 2000)
+                return
+            }
             this.error = this.$t('miniPlayer.error')
             this.$store.commit('miniPlayer_pause')
         },
