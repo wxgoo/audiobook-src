@@ -4,13 +4,15 @@
   "base_revision": "4.6.0-build.27-r12",
   "version": "4.6.0-build.27",
   "date": "2026-11-11",
-  "summary": "douban v1 尸体彻底清除 + 修正 douban_max_count 误删 + 设置页字段清理（含 dist）",
+  "summary": "douban v1 尸体清除 + dist 残缺事故修复（源码重建 dist）+ 读者组持久化修正",
   "notes": [
     "1. douban v1 插件本体与测试删除（r12 只注销，本条连根拔）：plugins/meta/douban/ 3 文件、test_douban.py、test_douban_search.py、TestReferDouban 类。",
     "2. 修正 r12 误删：douban_max_count 恢复——豆瓣V2 每源返回条数也读它，删了 v2 就没有配置入口。",
     "3. str2date/has_proper_book 迁 meta_helper 公共层，baike/book.py/ai_fillinfo 改引。",
     "4. 设置页删豆瓣插件 2 字段与说明条，搜索索引 mapping 约 20 处清理，三语 locale 各删 4 键；app/dist 已重建——本修订含前端产物，需重新部署或热更 dist。",
-    "5. 《在线更新说明》补 8.10：rsync 目录报 not a git repository 的就地 git init 处理。"
+    "5. 《在线更新说明》补 8.10：rsync 目录报 not a git repository 的就地 git init 处理。",
+    "6. 【事故修复】app/.gitignore 两条 dist 忽略规则导致 app/dist/_nuxt/*.js 从未入库，线上所有 chunk 404；已删规则并以源码重建 dist（757 文件 / 142 chunk），补回 admin/version、toolbox/author_tools、友情链接设置。",
+    "7. 【持久化】READER_GROUPS 补进 PERSISTABLE_KEYS（原来设置页任意保存都会抹掉分组规则），tests/test_setting_saver.py 加两条断言；scripts/pack.sh 改 bash 解释器（原 sh 跑 pipefail 导致验包必崩）。"
   ],
   "requires_dist": true,
   "hotfixable": false,

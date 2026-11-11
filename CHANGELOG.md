@@ -9,7 +9,7 @@
 
 ---
 
-## 4.6.0-build.27-r13（2026-11-11，未随包）
+## 4.6.0-build.27-r13（2026-11-11，随包 `audiobook-deploy-4.6.0-build.27.tar.gz`）
 
 **含前端产物**：设置页字段清理随 `app/dist` 下发（`requires_dist=true`），已热更到
 r12 的实例也不能页内点更新，需随包或 `git pull && docker compose up -d --build` 重新部署。
@@ -29,6 +29,25 @@ r12 的实例也不能页内点更新，需随包或 `git pull && docker compose
 - **文案与 i18n**：ISBN 查询失败提示去掉「配置插件地址」口径，中/英/繁同步。
 - **文档**：《在线更新说明》补 8.10 节——rsync 拷贝目录报 "not a git repository" 的
   就地 `git init` + fetch + reset 处理（vDSM 排错现场补充）。
+
+### 当日收尾修复（部署后暴露的五个坑）
+
+- **前端 chunk 全线 404（事故根因）**：`app/.gitignore` 里有**两条**模板自带的 dist 忽略规则
+  （Node 模板 `/dist` + Nuxt 模板 `dist`），`app/dist/_nuxt/*.js` 从未入库。仓库里的 dist
+  是「有页面、没 JS」的残骸，NAS 走 `git reset --hard` + 重建镜像拿到的就是这套，
+  浏览器所有 `_nuxt/*.js`、`css/*.css` 一律 404，怎么重建镜像、怎么强刷都没用。
+  已删除两条规则并留注释防复发，dist 完整入库。
+- **dist 改用 r13 源码重建**：补回 js 后的 dist 仍是早期构建产物，缺 `admin/version`
+  （左侧树「版本与更新」入口）、`toolbox/author_tools`（作者归一 / 清理合并页）、友情链接设置。
+  现以当前源码 `nuxt generate --spa` 重建：**757 文件 / 142 个 js chunk**，入口资源
+  `06f853b.js / 14efd0e.js / 9d0d704.js / a262561.js`，引用全量自洽。
+- **读者组分组规则重建后丢失**：`READER_GROUPS` 曾不在 `PERSISTABLE_KEYS`，而 `dumpfile()`
+  是**整份覆盖** `auto.py`——设置页任意一次保存都会把分组规则静默抹掉。已补进白名单，
+  并在 `tests/test_setting_saver.py` 加两条断言（键在白名单 + 保存无关键后值不变），已做反向验证。
+- **`scripts/pack.sh` 验包必崩**：shebang 是 `sh` 却用了 `set -o pipefail`（bash 专有），
+  第 4 步 `sh` 自调用做验包必报 `Illegal option -o pipefail`，md5 打不出来。已改 `#!/usr/bin/env bash`。
+- **文档同步**：本文件、《部署包说明》（当前包名 / md5 / dist 自检）、《在线更新说明》8.11
+  （chunk 404 排查）、《开发指南》踩坑 9~11、`.claude/memory/MEMORY.md` ②b 与 ⑨。
 
 ---
 

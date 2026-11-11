@@ -192,15 +192,23 @@ https://codeload.github.com/{owner}/{repo}/zip/refs/heads/{branch}
 ## ⑨ 前端构建与打包
 
 ```bash
-cd app && npx nuxt build --spa     # 产物在 app/dist，约 746 文件
+cd app && npm ci                                        # package-lock 对齐，约 14s
+node node_modules/nuxt/bin/nuxt.js generate --spa       # 产物 app/dist，757 文件 / 142 js
+bash scripts/pack.sh                                    # 出包，必须 bash 不能 sh
 ```
-改前端**必须重建 dist**，否则浏览器加载的还是旧 JS。
+改前端**必须重建 dist**，否则浏览器加载的还是旧 JS。注意两点：
+
+- `nuxt generate` 才是静态产物（`dist/` 含 200.html 与各路由目录）；`nuxt build` 只出 `.nuxt/`
+- **不要用旧包里的 dist 顶替**：旧 dist 自洽但缺新页面，会出现「升级入口 / 友情链接 /
+  作者归一页消失」这类假 bug（r13 踩过）。判断方法：`ls app/dist/admin/version`、
+  `ls app/dist/toolbox/author_tools`，缺了就说明是旧构建
+- 构建产物里若出现 `dist/myreader` 软链，删掉——那是本地 `public/` 的临时链接被带进来了
 
 打包终验锚点：后端类/路由存在、`dist/_nuxt` 含新 chunk、语言包键存在、包内无过程文档残留。
 
 **整包部署（换机器/大版本）**：
 ```bash
-cd /volume1/docker && mv audiobook audiobook-backup-$(date +%m%d) && tar xzf audiobook-deploy-4.6.0-19-r13-patched.tar.gz && cd audiobook && docker compose up -d --build
+cd /volume1/docker && mv audiobook audiobook-backup-$(date +%m%d) && tar xzf audiobook-deploy-4.6.0-build.27.tar.gz && cd audiobook && docker compose up -d --build
 ```
 
 ---
