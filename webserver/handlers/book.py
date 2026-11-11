@@ -1269,6 +1269,31 @@ class BookRefer(BaseHandler):
             self._set_cached_books(key, books)
         return {"err": "ok", "books": self._format_refer_books(books)}
 
+    def _resolve_refer_mi(self, provider_key, provider_value, metadata, mi, only_meta, only_author_comments):
+        """按 provider 解析本次要写入的 metadata。
+
+        douban v1 插件已在 build.27-r12 移除（模块、插件注册、前端入口都没了），
+        `aa457b8` 之后这里还留着一句 `if provider_key == douban.KEY:`——`douban`
+        这个名字没有 import，任何 provider 的 POST 都会在第一行比较时抛 NameError。
+        现在不再保留 v1 分支：所有 provider（含库里存量的 provider_key="douban"）
+        统一走「v2 占位注释修正 → 表单 metadata / 现有 mi → 补封面」。
+        """
+        refer_mi = None
+        if provider_key == douban_v2.KEY and metadata and metadata["comments"] == ".....":
+            metadata["comments"] = ""
+            refer_mi = self.plugin_get_book_meta(provider_key, provider_value, metadata)
+        if not refer_mi:
+            refer_mi = self._convert_to_metadata(metadata) if metadata else mi
+        if only_meta != "yes" and only_author_comments != "yes":
+            try:
+                cover_url = metadata.get("cover_url") if metadata else None
+                logging.debug(f"[Metadata] Try to get cover {cover_url}")
+                if cover_url:
+                    refer_mi.cover_data = self.plugin_fill_book_cover(provider_key, cover_url)
+            except Exception as e:
+                logging.error(f"Error filling book metadata from plugin {provider_key}: {e}")
+        return refer_mi
+
     @js
     @auth
     def post(self, id):
@@ -1306,33 +1331,8 @@ class BookRefer(BaseHandler):
         if [only_meta, only_cover, only_author_comments].count("yes") > 1:
             return {"err": "params.conflict", "msg": _("参数冲突")}
 
-        refer_mi = None
-        if provider_key == douban.KEY:
-            try:
-                refer_mi = self.plugin_get_book_meta(provider_key, provider_value, mi)
-                if not refer_mi:
-                    return {"err": "plugin.no_result", "msg": _("未找到相关信息或被限制访问，频繁出现请稍后再试，或查看日志确认原因")}
-                # Correct the author if douban detail not return authors
-                if not refer_mi.authors or (len(refer_mi.authors) == 1 and refer_mi.authors[0] in ("佚名", "")):
-                    refer_mi.author_sort = metadata.get("author_sort", None) if metadata else mi.author_sort
-                    refer_mi.authors = metadata.get("authors", []) if metadata else mi.authors
-            except Exception as e:
-                logging.error(f"Error fetching book meta from plugin {provider_key}: {e}")
-                return {"err": "plugin.no_result", "msg": _("未找到相关信息或被限制访问，频繁出现请稍后再试，或查看日志确认原因")}
-        else:
-            if provider_key == douban_v2.KEY and metadata and metadata["comments"] == ".....":
-                metadata["comments"] = ""
-                refer_mi = self.plugin_get_book_meta(provider_key, provider_value, metadata)
-            if not refer_mi:
-                refer_mi = self._convert_to_metadata(metadata) if metadata else mi
-            if only_meta != "yes" and only_author_comments != "yes":
-                try:
-                    cover_url = metadata.get("cover_url") if metadata else None
-                    logging.debug(f"[Metadata] Try to get cover {cover_url}")
-                    if cover_url:
-                        refer_mi.cover_data = self.plugin_fill_book_cover(provider_key, cover_url)
-                except Exception as e:
-                    logging.error(f"Error filling book metadata from plugin {provider_key}: {e}")
+        refer_mi = self._resolve_refer_mi(
+            provider_key, provider_value, metadata, mi, only_meta, only_author_comments)
 
         if not refer_mi:
             return {"err": "plugin.fail", "msg": _("拉取图书信息异常，请重试")}
