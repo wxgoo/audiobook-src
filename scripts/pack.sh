@@ -58,7 +58,8 @@ if [ "${1:-}" = "--check" ]; then
         # 不该有的东西：归档、开发侧杂物
         # 注意：app/node_modules 是要的 —— Dockerfile 里 COPY app/ /build/ 靠它走「已有产物」快路，
         # 少了它镜像里没有 next，阅读器起不来。别当成杂物排掉。
-        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git skills .claude tests; do
+        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git skills .claude tests \
+                    .build-trash .pack-stage app/.nuxt; do
             [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
         done
 
@@ -294,6 +295,9 @@ for item in $(ls -A); do
     case "$item" in
         # 版本库与开发侧杂物
         .git|.claude|node_modules|cache|sync|books|data|__pycache__|logs) continue ;;
+        # app/build.sh 的构建归档目录：它把旧的 .nuxt / dist 改名挪到这里（rename 不删除），
+        # 一份能到 40M 以上。属于本机构建垃圾，混进包里既撑大体积又让人以为要部署它。
+        .build-trash) continue ;;
         # skills/ 是给 AI 客户端（clawdbot / openclaw）加载的 skill 包，走 HTTP API
         # 操作书库，不是服务端依赖。NAS 上用不到，要用的在 PC 上装。
         skills) continue ;;
@@ -321,6 +325,10 @@ echo "  暂存 OK: $(ls "$STAGE/audiobook" | tr '\n' ' ')"
 for junk in scripts/archive docs/archive docs/settings-redesign tests; do
     [ -e "$STAGE/audiobook/$junk" ] && rm -rf "$STAGE/audiobook/$junk"
 done
+
+# app/.nuxt 是 nuxt generate 的中间缓存（构建后可达上百 MB），部署只用 app/dist。
+# Dockerfile 走「已有 dist 就跳过 npm ci/generate」的快路，不读 .nuxt，带上纯属负担。
+rm -rf "$STAGE/audiobook/app/.nuxt"
 
 # srt-tool 是 PC 上的辅助工具，NAS 上既跑不了也不该跑。包内只留能直接运行的
 # 4 个文件（README / make_srt.py / srt_core.py / make_srt_gui.py）：

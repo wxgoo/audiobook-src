@@ -8,6 +8,7 @@
           :class="['folder-tab', { 'active': activeTab === index }]"
           @click="activeTab = index"
         >
+          <v-icon small class="tab-icon" :color="tabIconColor(category, index)">{{ category.icon || 'mdi-tag-outline' }}</v-icon>
           <span class="tab-name">{{ category.name }}</span>
           <span class="tab-count">({{ category.count }})</span>
         </div>
@@ -53,6 +54,12 @@ export default {
     },
   },
   methods: {
+    // 分类图标由后端按名称规则给出（见 webserver/base/category_icons.py）；
+    // 选中态是深蓝底，图标改用白色，未选中用分类自己的颜色。
+    tabIconColor(category, index) {
+      if (this.activeTab === index) return "white";
+      return (category && category.color) || "";
+    },
     async fetchCategories() {
       try {
         const response = await this.$backend("/categories");
@@ -169,6 +176,10 @@ export default {
   transition: all 0.3s ease;
 }
 
+.folder-tab .tab-icon {
+  margin-right: 6px;
+}
+
 .folder-tab .tab-name {
   font-weight: 500;
   font-size: 14px;
@@ -247,6 +258,10 @@ export default {
 
   .folder-tab .tab-name {
     font-size: 13px;
+  }
+
+  .folder-tab .tab-icon {
+    margin-right: 4px;
   }
 
   .folder-tab .tab-count {

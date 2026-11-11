@@ -26,6 +26,7 @@ from sqlalchemy import func
 
 from webserver import loader, perf, site_time, utils
 from webserver.base import accel
+from webserver.base import category_icons
 from webserver.base.formatter import BookFormatter, ReadingStateFormatter
 from webserver.base.image_generator import ImageGenerator
 from webserver.base.image_helper import ImageHelper
@@ -855,6 +856,9 @@ class BookCategories(BaseHandler):
             elif CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
                 categories = self._filter_categories_by_reading_range(categories)
 
+            # 分类没有原生图标（calibre 自定义列是自由文本），按名称规则补一个，
+            # 未命中关键词的按名字哈希稳定取备选图标 —— 分类页每个 tab 前面才有东西可看。
+            category_icons.decorate(categories)
             return {"err": "ok", "categories": categories}
         except Exception as e:
             logging.error(f"Error fetching categories: {e}")
