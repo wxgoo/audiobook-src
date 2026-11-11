@@ -20,7 +20,7 @@
   blocking  镜像配置 / myreader / tools / 系统级改动 —— 必须重新 deploy 或 upgrade
   docs      *.md、docs/**、delivery/overlay/files/docs/** —— 只影响说明，不触发更新操作
 
-dist 变更是否允许在线更新，看规模：文件数与总字节在阈值内（默认 200 个 / 20MB）
+dist 变更是否允许在线更新，看规模：文件数与总字节在阈值内（默认 300 个 / 20MB）
 则写进 dist_files，页面可一键更新；超过阈值（例如整包重建 757 个文件）或含
 非静态资源，仍退回「重新部署」——逐个 raw 下载几百个文件既慢又容易被限流。
 
@@ -49,9 +49,10 @@ DIST_SUFFIX = (".js", ".css", ".html", ".json", ".map", ".txt",
                ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico",
                ".woff", ".woff2", ".ttf", ".eot")
 # 在线更新 dist 的规模上限：超过就不走页内更新，退回重新部署。
-# Nuxt 每次构建都会重写全部路由 html（buildId 变），一个页面小改也会动 ~80 个文件，
-# 阈值按「一次小改能覆盖、整包重建覆盖不了」来定。
-DIST_HOTFIX_MAX_FILES = 200
+# Nuxt 每次构建都会重写全部路由 html（buildId 变），一个异步 chunk 改动还会连带重写引用
+# 它的 chunk——实测「只改一个设置页」= 210 个文件 / 3.4MB，所以 200 那个值每次都会误伤。
+# 现取 300：够覆盖一次小改，仍能拦住整包重建（757 文件 / 71MB）。
+DIST_HOTFIX_MAX_FILES = 300
 DIST_HOTFIX_MAX_BYTES = 20 * 1024 * 1024
 # 文档类：改动不需要用户执行任何操作（但仍会体现在 changed 里，方便核对）。
 DOCS_PREFIX = ("docs/", "document/", "delivery/overlay/files/docs/",
