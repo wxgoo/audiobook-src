@@ -17,6 +17,19 @@
 
 
 /*!
+ * Vue.js v2.7.16
+ * (c) 2014-2023 Evan You
+ * Released under the MIT License.
+ */
+
+/*!
+ * vuex v3.6.2
+ * (c) 2021 Evan You
+ * @license MIT
+ */
+
+
+/*!
  * Cropper.js v1.6.2
  * https://fengyuanchen.github.io/cropperjs
  *
@@ -31,19 +44,6 @@
  * Sortable 1.10.2
  * @author	RubaXa   <trash@rubaxa.org>
  * @author	owenm    <owen23355@gmail.com>
- * @license MIT
- */
-
-
-/*!
- * Vue.js v2.7.16
- * (c) 2014-2023 Evan You
- * Released under the MIT License.
- */
-
-/*!
- * vuex v3.6.2
- * (c) 2021 Evan You
  * @license MIT
  */
 

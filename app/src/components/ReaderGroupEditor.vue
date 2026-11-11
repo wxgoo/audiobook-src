@@ -275,15 +275,6 @@ export default {
         { text: this.$t("settings.reader_group_mode_open"), value: "open" },
       ];
     },
-    // 组列表里的模式列：三态映射，别再写成二元三元表达式
-    modeText(mode) {
-      if (mode === "open") return this.$t("settings.reader_group_mode_open");
-      return this.$t(
-        mode === "blacklist"
-          ? "settings.reader_group_mode_blacklist"
-          : "settings.reader_group_mode_whitelist"
-      );
-    },
     groupNames() {
       return Object.keys(this.groups).sort();
     },
@@ -350,6 +341,18 @@ export default {
     },
   },
   methods: {
+    // 组列表里的模式列：三态映射，别再写成二元三元表达式。
+    // 注意必须放在 methods：模板里是 modeText(groups[name].mode) 带参调用，
+    // 放进 computed 会被 Vue 无参求值成字符串，再调用就抛
+    // “modeText is not a function”，整个组件渲染中断、列表停在转圈。
+    modeText(mode) {
+      if (mode === "open") return this.$t("settings.reader_group_mode_open");
+      return this.$t(
+        mode === "blacklist"
+          ? "settings.reader_group_mode_blacklist"
+          : "settings.reader_group_mode_whitelist"
+      );
+    },
     // ---------- 列表字符串 <-> 数组 ----------
     splitList(value) {
       const parts = Array.isArray(value)
