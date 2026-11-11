@@ -106,6 +106,11 @@ export const mutations = {
             }
         }
     }, alert(state, v) {
+        // 没有文案的告警在 default.vue 里会渲染成 persistent 空对话框，且关掉前挡住整页，
+        // 从任何调用点漏进来都等于一次“假空白”，这里直接忽略。
+        if (!v || !v.msg) {
+            return;
+        }
         state.alert.to = v.to;
         state.alert.type = v.type;
         state.alert.msg = v.msg;

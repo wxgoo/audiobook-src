@@ -13,18 +13,10 @@
  */
 
 
-/*! @license DOMPurify 2.5.9 | (c) Cure53 and other contributors | Released under the Apache license 2.0 and Mozilla Public License 2.0 | github.com/cure53/DOMPurify/blob/2.5.9/LICENSE */
-
-
-/*!
- * Vue.js v2.7.16
- * (c) 2014-2023 Evan You
- * Released under the MIT License.
- */
-
-/*!
- * vuex v3.6.2
- * (c) 2021 Evan You
+/**!
+ * Sortable 1.10.2
+ * @author	RubaXa   <trash@rubaxa.org>
+ * @author	owenm    <owen23355@gmail.com>
  * @license MIT
  */
 
@@ -40,12 +32,7 @@
  */
 
 
-/**!
- * Sortable 1.10.2
- * @author	RubaXa   <trash@rubaxa.org>
- * @author	owenm    <owen23355@gmail.com>
- * @license MIT
- */
+/*! @license DOMPurify 2.5.9 | (c) Cure53 and other contributors | Released under the Apache license 2.0 and Mozilla Public License 2.0 | github.com/cure53/DOMPurify/blob/2.5.9/LICENSE */
 
 
 /*!
@@ -64,4 +51,17 @@
  * vue-no-ssr v1.1.1
  * (c) 2018-present egoist <0x142857@gmail.com>
  * Released under the MIT License.
+ */
+
+
+/*!
+ * Vue.js v2.7.16
+ * (c) 2014-2023 Evan You
+ * Released under the MIT License.
+ */
+
+/*!
+ * vuex v3.6.2
+ * (c) 2021 Evan You
+ * @license MIT
  */

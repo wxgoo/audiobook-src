@@ -16,6 +16,50 @@
 
 ---
 
+## 4.6.0-build.27-r26（2026-11-12，**前端 + 服务端**，须重建镜像）
+
+### 修复：列表页数据失败只留空白壳（`this.alert` 静默 TypeError）
+
+现场截图是「所有书籍」页：标题、翻页、页脚版本、左侧栏计数全部正常，中间网格空白，
+**连空态文案都没有**。这不是接口慢，也不是 chunk 404。
+
+根因在 `ListBook.vue` 的错误分支：调用了不存在的 `this.alert(...)`。
+Vue 插件用 `inject('alert')` 暴露的是 **`this.$alert`**，`this.alert` 是 `undefined`，
+`this.alert(...)` 抛 `TypeError: this.alert is not a function`；它发生在 `$backend().then(...)`
+回调里，异常被 Promise 链吞掉，`books` 停在 `[]`，界面既没书也没提示 —— 正是截图表现。
+`modeText` 那次（r24）是同一个模式：**调用了不存在的成员，render/回调抛错被吞**。
+
+| 文件 | 改动 |
+| --- | --- |
+| `app/src/pages/ListBook.vue` | 错误分支改 `this.$alert`；新增 `load_error` / `errorText` 与「加载失败 + 重试」「暂无书籍」两种可见状态；`init()` 加请求令牌（旧响应不覆盖新页面）；`asyncData` 走 `$backend(fullPath, {timeout: 20000})`；页大小改用 `clampPageSize` |
+| `app/src/pages/book/_bookid.vue` | `init()` 的错误弹窗同样改为 `this.$alert`，并带 `msg` 兜底 |
+| `app/src/store/index.js` | `alert` mutation 对空 `msg` 直接返回，避免弹窗组件拿到空对象 |
+| `app/src/plugins/mybooks.js` | `$backend` 新增 `options.timeout`（`AbortController` + 定时器）；502 与 `server_starting` 分支不再返回永不 settle 的 Promise，改为 10s 看门狗返回可展示错误 |
+| `app/src/utils/pageSize.js`（新增） | `clampPageSize(value, fallback, max=200)`：页大小封顶 200（LITE 60），对齐后端 `MAX_PAGE_SIZE` |
+| `app/src/components/BookCards.vue` | `render_books` 不再改写父级 `book` 对象（`{...b, href}`）；卡片加 `content-visibility: auto` + `contain-intrinsic-size`，降低长列表一次性渲染开销 |
+| `app/locales/{zh,zh-TW,en}.json`、`delivery/overlay/files/app/locales/*` | `listBook` 新增 `empty` / `loadFailed` / `retry` |
+| `app/scripts/check-vue-method-refs.js`（新增）+ `npm run lint:refs` | 静态扫描 `app/src/**/*.vue`（129 个）：脚本段比对 `this.NAME()` 是否真实存在（methods/computed/data/props/inject/运行时赋值），模板段只提示；`--strict` 有脚本级错误即退出 1 |
+| `tests/test_frontend_silent_failures.py`（新增） | 8 条：禁止 `this.alert(`、ListBook 必须用 `$alert` 且带 `load_error/errorText`、模板三 key 存在、store 空文案保护、三语与 overlay key 齐全、`lint:refs --strict` 退出 0 |
+
+### 服务端：列表 `total` 与可见集合一致
+
+`webserver/handlers/base.py` 的 `ids` 分支原来直接 `total = len(ids)`，但渲染时会过滤掉
+对当前用户隐藏的独享书，可能出现「总数有值、items 为空」。改为 `len(ids)` 后再扣除隐藏项，
+隐藏集合按 `(user_id, library_version)` 缓存 30s。
+
+### 验证
+
+- `pytest tests/test_frontend_silent_failures.py -q` → **8 passed**
+- `node app/scripts/check-vue-method-refs.js --strict` → **0 处脚本级错误，0 处模板级待确认**（129 个 .vue）
+- 改动文件 `npx eslint` → 0 error；`python -m py_compile webserver/handlers/base.py` 通过
+- `npx nuxt generate` 后 `scripts/check-dist.sh` → **757 个文件**，pdfjs 369 / 字体 3 / 壁纸 4 / 图片 4 齐全
+- `app/dist/index.html` sha256 = `35e7560f091a97306e423f05e6bb960f20783827da44031e3948c4c90c7524f4`（23273 字节）
+
+> `app/public` 是 `dir.static` 的真实来源（`srcDir: src/` + `../public`）。本轮重建前它在工作树里被删过，
+> generate 只会产出 301 个构建产物；重新从 HEAD 取回 456 个非构建资源后才恢复到 757。**重编前先确认 `app/public` 存在。**
+
+> 本次改的是 `app/src`，**必须重建镜像才生效**；`docker cp app/dist` 进容器只是临时，重启/重建即回到旧产物。
+
 ## 4.6.0-build.27-r25（2026-11-11，**服务端 + 构建期**，须重建镜像）
 
 ### 构建期硬门禁：dist 缺 pdfjs viewer 直接中止

@@ -89,12 +89,13 @@ export default {
                 // 确保b是一个对象
                 if (!b) return {};
 
+                // 不要在 computed 里改写父级传进来的书对象（会污染 props 并触发额外重渲染），
+                // 只给渲染用的副本补 href。
                 if ( b['href'] == undefined ) {
                     if (this.isAudioPage) {
-                        b['href'] = "/audio/" + (b.id || '');
-                    } else {
-                        b['href'] = "/book/" + (b.id || '');
+                        return { ...b, href: "/audio/" + (b.id || '') };
                     }
+                    return { ...b, href: "/book/" + (b.id || '') };
                 }
                 return b;
             }).filter(Boolean); // 过滤掉空对象
@@ -220,6 +221,12 @@ export default {
     text-overflow: clip;
     text-align: left;
     font-weight: bold;
+}
+.book-list-card {
+    /* 屏幕外的卡片跳过布局与绘制：一页几十上百张卡时能明显减少首屏开销，
+       不改变 DOM 结构与交互，旧浏览器会自动忽略。 */
+    content-visibility: auto;
+    contain-intrinsic-size: 260px 120px;
 }
 .book-list-card .v-card {
     position: relative;

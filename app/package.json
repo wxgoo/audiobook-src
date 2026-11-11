@@ -10,6 +10,7 @@
     "generate": "eslint --ext .js,.vue src && nuxt generate --spa",
     "lint": "eslint --ext .js,.vue src",
     "lint:fix": "eslint --ext .js,.vue src --fix",
+    "lint:refs": "node scripts/check-vue-method-refs.js",
     "icons:subset": "node scripts/build-mdi-subset.js"
   },
   "dependencies": {

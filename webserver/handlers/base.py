@@ -2360,6 +2360,7 @@ class ListHandler(BaseHandler):
         if ids:
             ids = list(ids)
             count = len(ids)
+            count = self._adjust_total_excluding_sole(ids, count)
             if count > 3 * size and sort_fields == "title":
                 sort_fields = "id"
 
@@ -2415,6 +2416,50 @@ class ListHandler(BaseHandler):
             "next_cursor": next_cursor,
             "books": [self.fmt(b, include_comments=include_comments, strip_comments=True) for b in books],
         }
+
+    _sole_hidden_cache = {}
+
+    def _adjust_total_excluding_sole(self, ids, count):
+        """修正 total：`_merge_books_full` 会把「他人独占」的书从当页剔除，
+        但 total 仍按原始 id 数算，导致受限用户看到多出来的尾页、点进去是空白。
+        这里只做独占这一项（一条 SQL + 30s 缓存），阅读范围过滤需要 tags/category，
+        代价随全库行数增长，留待实测后再决定是否进程内预计算。
+        """
+        hidden = self._sole_hidden_ids()
+        if not hidden:
+            return count
+        removed = 0
+        for book_id in ids:
+            if book_id in hidden:
+                removed += 1
+        return max(0, count - removed)
+
+    def _sole_hidden_ids(self):
+        """他人独占的 book id 集合；按 (用户, 库版本) 缓存 30s。
+        查询失败返回 None，让调用方退回未修正的 total（不要因为统计失败影响列表本身）。
+        """
+        try:
+            version = self.library_version()
+        except Exception:
+            version = None
+        key = (self.user_id(), version)
+        now = time.time()
+        cached = self._sole_hidden_cache.get(key)
+        if cached and now - cached[0] < 30:
+            return cached[1]
+        try:
+            query = self.sqlite_session.query(Item.book).filter(Item.sole == 1)
+            user_id = self.user_id()
+            if user_id:
+                query = query.filter(Item.collector_id != user_id)
+            hidden = {row[0] for row in query.all()}
+        except Exception as exc:
+            logging.debug("query sole hidden ids failed: %s", exc)
+            return None
+        if len(self._sole_hidden_cache) > 64:
+            self._sole_hidden_cache.clear()
+        self._sole_hidden_cache[key] = (now, hidden)
+        return hidden
 
     @js
     def render_book_list(self, all_books, ids=None, title=None, sort_fields=None):

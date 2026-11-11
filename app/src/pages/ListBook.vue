@@ -42,6 +42,20 @@
         </book-cards>
       </v-col>
 
+      <v-col v-if="!books.length && errorText" cols="12" class="text-center pb-8">
+        <v-alert type="error" outlined class="text-left">
+          {{ errorText }}
+        </v-alert>
+        <v-btn text color="primary" @click="reload">
+          <v-icon small class="mr-1">mdi-refresh</v-icon>{{ $t('listBook.retry') }}
+        </v-btn>
+      </v-col>
+
+      <v-col v-else-if="!books.length && loaded && !isPrintBooksPage" cols="12" class="text-center grey--text pb-10">
+        <v-icon large class="mb-3 d-block">mdi-bookshelf</v-icon>
+        {{ $t('listBook.empty') }}
+      </v-col>
+
       <v-col cols=12>
         <v-container class="max-width">
           <v-pagination v-if="page_cnt > 0" v-model="page" :length="page_cnt" circle
@@ -121,6 +135,7 @@
 
 <script>
 import BookCards from "../components/BookCards.vue";
+import { clampPageSize } from "~/utils/pageSize";
 
 const SELECTABLE_ACTIONS = {
   '/favorites': 'favorite',
@@ -138,10 +153,10 @@ export default {
       if (process.client) {
         const stored = localStorage.getItem('defaultPageSize');
         if (stored) {
-          return parseInt(stored);
+          return clampPageSize(stored, 60);
         }
       }
-      return this.$store?.state?.default_page_size || 60;
+      return clampPageSize(this.$store?.state?.default_page_size, 60);
     },
     pageDisplayTitle() {
       return this.getPageTitle();
@@ -162,6 +177,15 @@ export default {
     isSelectablePage() {
       return Object.prototype.hasOwnProperty.call(SELECTABLE_ACTIONS, this.$route.path);
     },
+    errorText() {
+      if (this.load_error) {
+        return this.load_error;
+      }
+      if (this.err && this.err !== 'ok') {
+        return this.msg || this.$t('listBook.loadFailed');
+      }
+      return '';
+    },
     confirmRemoveContent() {
       const action = SELECTABLE_ACTIONS[this.$route.path];
       const keys = {
@@ -180,6 +204,8 @@ export default {
     total: 0,
     page_cnt: 0,
     inited: false,
+    loaded: false,
+    load_error: "",
     isAudioPage: false,
     multiSelectMode: false,
     selectedIds: [],
@@ -196,7 +222,7 @@ export default {
     if (res !== undefined) {
       res.setHeader('Cache-Control', 'no-cache');
     }
-    return app.$backend(route.fullPath);
+    return app.$backend(route.fullPath, { timeout: 20000 });
   },
   head() {
     return {
@@ -209,6 +235,7 @@ export default {
     }
     this.page_cnt = Math.max(1, Math.ceil(this.total / this.page_size))
 
+    this.loaded = true;
     this.checkIfAudioPage();
   },
 
@@ -297,22 +324,52 @@ export default {
     },
     init(route, next) {
       this.inited = true;
+      this.loaded = true;
       this.$store.commit('navbar', true);
 
       this.isAudioPage = route.path === '/audiobooks';
 
-      this.$backend(route.fullPath)
+      // 同一组件内切页/切筛选会重复进入这里，用递增令牌丢弃过期响应，
+      // 避免先发后到的旧请求覆盖新页数据（表现为“有时正常有时空白”）。
+      const token = (this._reqToken || 0) + 1;
+      this._reqToken = token;
+      const reqPath = route.fullPath;
+
+      this.$backend(reqPath, { timeout: 20000 })
         .then(rsp => {
-          if (rsp.err != 'ok') {
-            this.alert("error", rsp.msg);
+          if (token !== this._reqToken || this.$route.fullPath !== reqPath) {
             return;
           }
+          if (rsp.err != 'ok') {
+            this.books = [];
+            this.total = 0;
+            this.page_cnt = 1;
+            this.load_error = rsp.msg || this.$t('listBook.loadFailed');
+            this.$alert("error", this.load_error);
+            return;
+          }
+          this.load_error = "";
+          this.err = "ok";
+          this.msg = "";
           this.title = rsp.title;
           this.books = rsp.books;
           this.total = rsp.total
           this.page_cnt = Math.max(1, Math.ceil(this.total / this.page_size));
         })
+        .catch(() => {
+          if (token !== this._reqToken) {
+            return;
+          }
+          this.books = [];
+          this.total = 0;
+          this.page_cnt = 1;
+          this.load_error = this.$t('listBook.loadFailed');
+          this.$alert("error", this.load_error);
+        })
       if (next) next();
+    },
+    reload() {
+      this.init(this.$route);
     },
     change_page() {
       var r = Object.assign({}, this.$route.query);

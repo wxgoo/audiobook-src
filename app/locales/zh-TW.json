@@ -91,6 +91,9 @@
     },
     "listBook": {
         "title": "書籍列表",
+        "empty": "暫無書籍",
+        "loadFailed": "載入失敗，請稍後重試",
+        "retry": "重試",
         "hotBooks": "熱門書籍",
         "search": "搜尋",
         "allBooks": "所有書籍",

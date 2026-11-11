@@ -51,11 +51,38 @@ export default ({ app }, inject) => {
             Object.assign(args, options);
         }
 
+        // 可选超时：默认 0=不启用，避免影响 /book/txt/parser 这类长轮询。
+        // 超时返回 {err:"timeout"} 而不是 throw，让调用方能渲染错误态而不是卡在 loading。
+        let timeoutMs = args.timeout || 0;
+        delete args.timeout;
+        let timeoutId = null;
+        if (timeoutMs > 0 && typeof AbortController !== "undefined") {
+            const controller = new AbortController();
+            args.signal = controller.signal;
+            timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        }
+        const clearTimer = () => {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+        };
+
         // 记下发出请求时的会话代次：请求在飞行期间登录/退出，回来的 need_login 就过期了
         const sessionEpoch = app.$sessionEpoch ? app.$sessionEpoch() : 0;
 
         return fetch(fullUrl, args)
+            .catch(err => {
+                if (err && (err.name === "AbortError" || err.code === 20)) {
+                    return { __timedout: true };
+                }
+                throw err;
+            })
             .then(rsp => {
+                clearTimer();
+                if (rsp && rsp.__timedout) {
+                    return { err: "timeout", msg: "请求超时，请重试" };
+                }
                 const shouldIgnore = url.endsWith("/tasks/running") && rsp.status !== 200;
                 if (shouldIgnore) {
                     return { err: 'ok' };
@@ -81,7 +108,13 @@ export default ({ app }, inject) => {
                                 }
                             }, 300);
                         }
-                        return new Promise(() => {});
+                        // 10s 看门狗：整页跳转若被拦截（扩展/代理/路由异常），
+                        // 也不能让调用方永远停在 loading。
+                        return new Promise(resolve => {
+                            setTimeout(() => {
+                                resolve({ err: "timeout", msg: "服务器正在启动中，请稍后重试" });
+                            }, 10000);
+                        });
                     }
                     msg = "服务器正在启动中...";
                     app.$alert("info", msg);
@@ -121,7 +154,17 @@ export default ({ app }, inject) => {
                             }
                         }, 300);
                     }
-                    return process.server ? rsp : new Promise(() => {});
+                    if (process.server) {
+                        return rsp;
+                    }
+                    return new Promise(resolve => {
+                        setTimeout(() => {
+                            resolve({
+                                err: "server_starting",
+                                msg: rsp.msg || "服务正在启动中，请稍后重试",
+                            });
+                        }, 10000);
+                    });
                 }
                 if (rsp.err === 'not_installed') {
                     redirect(301, "/install");

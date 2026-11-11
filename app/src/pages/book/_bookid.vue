@@ -1725,7 +1725,7 @@ export default {
         if (res !== undefined) {
             res.setHeader("Cache-Control", "no-cache");
         }
-        return app.$backend(`/book/${params.bookid}`);
+        return app.$backend(`/book/${params.bookid}`, { timeout: 20000 });
     },
     head() {
         return {
@@ -2135,9 +2135,10 @@ export default {
         },
         init(route, next) {
             this.$store.commit("navbar", true);
-            var rsp = this;
-            if (rsp.err !== "ok") {
-                this.$alert("error", rsp.msg, "/");
+            // asyncData 会把 {err, msg, ...} 合并进组件实例；只有接口明确返回非 ok 时才提示。
+            // 不要用 var rsp = this 再取 rsp.err —— 实例上 err 为 undefined 时会被误判成失败。
+            if (this.err && this.err !== "ok") {
+                this.$alert("error", this.msg || this.$t('message.operationFailed'), null);
             }
             if (next) next();
         },

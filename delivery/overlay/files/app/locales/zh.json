@@ -92,6 +92,9 @@
     },
     "listBook": {
         "title": "书籍列表",
+        "empty": "暂无书籍",
+        "loadFailed": "加载失败，请稍后重试",
+        "retry": "重试",
         "hotBooks": "热门书籍",
         "search": "搜索",
         "allBooks": "所有书籍",

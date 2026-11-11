@@ -92,6 +92,9 @@
     },
     "listBook": {
         "title": "Book List",
+        "empty": "No books yet",
+        "loadFailed": "Failed to load. Please try again.",
+        "retry": "Retry",
         "hotBooks": "Hot Books",
         "search": "Search",
         "allBooks": "All Books",

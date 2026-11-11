@@ -1,0 +1,77 @@
+"""前端“静默失败”回归测试。
+
+对应故障：书列表/详情页接口失败时，错误分支调用了不存在的成员（如 this.alert），
+异常被 Promise 吞掉，页面只剩空白，没有任何提示。这里用静态断言锁住修复点。
+"""
+
+import json
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "app" / "src"
+LIST_BOOK = SRC / "pages" / "ListBook.vue"
+STORE = SRC / "store" / "index.js"
+LOCALES = ROOT / "app" / "locales"
+OVERLAY_LOCALES = ROOT / "delivery" / "overlay" / "files" / "app" / "locales"
+
+
+def test_no_this_alert_calls():
+    """注入到组件上的是 $alert，this.alert 必然抛 TypeError。"""
+    offenders = []
+    for path in SRC.rglob("*.vue"):
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"this\.alert\s*\(", text):
+            offenders.append(str(path.relative_to(ROOT)))
+    assert offenders == [], f"发现 this.alert( 调用：{offenders}"
+
+
+def test_list_book_error_is_visible():
+    text = LIST_BOOK.read_text(encoding="utf-8")
+    assert "this.$alert(" in text
+    assert "load_error" in text
+    assert "errorText" in text
+
+
+def test_list_book_has_empty_state():
+    text = LIST_BOOK.read_text(encoding="utf-8")
+    for key in ("listBook.empty", "listBook.loadFailed", "listBook.retry"):
+        assert key in text, f"ListBook.vue 缺少文案 key：{key}"
+
+
+def test_alert_mutation_ignores_empty_message():
+    text = STORE.read_text(encoding="utf-8")
+    assert re.search(r"if\s*\(!v\s*\|\|\s*!v\.msg\)\s*\{?\s*return", text), \
+        "alert mutation 缺少空文案保护"
+
+
+@pytest.mark.parametrize("name", ["zh.json", "zh-TW.json", "en.json"])
+def test_list_book_locale_keys(name):
+    data = json.loads((LOCALES / name).read_text(encoding="utf-8"))
+    section = data.get("listBook") or {}
+    for key in ("empty", "loadFailed", "retry"):
+        assert key in section, f"{name} 的 listBook 缺少 {key}"
+    overlay = OVERLAY_LOCALES / name
+    if overlay.exists():
+        overlay_section = (json.loads(overlay.read_text(encoding="utf-8")).get("listBook") or {})
+        for key in ("empty", "loadFailed", "retry"):
+            assert key in overlay_section, f"delivery/overlay 的 {name} 缺少 listBook.{key}"
+
+
+def test_vue_method_refs_are_clean():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node 不可用")
+    script = ROOT / "app" / "scripts" / "check-vue-method-refs.js"
+    result = subprocess.run(
+        [node, str(script), "--strict"],
+        cwd=str(ROOT / "app"),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
