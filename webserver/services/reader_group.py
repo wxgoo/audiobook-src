@@ -357,9 +357,13 @@ class ReaderGroupService:
     def clear_members_of(group_names, session=None) -> int:
         """清掉指向「已不存在的组」的成员引用，返回修复人数。
 
-        场景：管理员删了组（或改名失败/导入数据没带设置），但成员的 extra
-        里仍写着旧组名。这类悬空引用在权限判定里等于「受限且读不到书」，
-        而界面上又看不到这些人——必须在读列表时就顺手修掉，并报出来。
+        **当前没有调用方，也不要在列表接口里调用它。**
+        清掉 Reader.extra["reader_group"] 是不可逆的（DB 里没有 extra 的历史），
+        悬空引用一旦被抹，管理员重建同名组也找不回人。r17 起列表接口只报告
+        （orphan_groups），恢复走 revive_groups()。
+
+        保留本方法仅为「管理员明确要求丢弃这些归属」的场景，
+        且必须先让管理员看到组名与人数。
         """
         if session is None or not group_names:
             return 0
