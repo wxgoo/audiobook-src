@@ -11,6 +11,7 @@
     的白名单/黑名单语义。
 """
 
+import json
 import logging
 
 from webserver import loader
@@ -240,6 +241,15 @@ def _normalize_tags(value) -> str:
 
 def _groups() -> dict:
     raw = CONF.get(GROUPS_KEY) or {}
+    # §历史数据兼容§ 这份配置曾通过通用设置表单原样落盘，被写成 JSON 字符串
+    # （auto.py 里是带引号的文本）。重启后 isinstance(raw, dict) 为假，所有组
+    # 会静默消失——列表显示「暂无分组」、批量分配下拉没有任何组名，而成员
+    # 归属其实还在 Reader.extra 里。这里先把字符串解回 dict，再判类型。
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raw = {}
     return raw if isinstance(raw, dict) else {}
 
 
@@ -411,7 +421,7 @@ class ReaderGroupService:
     # ---------- 悬空引用 ----------
 
     @staticmethod
-    def orphan_groups(session) -> dict:
+    def orphan_groups(session, members=None) -> dict:
         """{组名: [用户名]}：成员 extra 里写着某组名，但该组定义已不存在。
 
         这些人在权限判定里走 effective_limits 的 "group-missing" 分支
@@ -423,7 +433,8 @@ class ReaderGroupService:
         （旧实现在 GET 列表时直接 clear_members_of，等于把唯一能恢复的线索
         当场删了，重建组也找不回人。）
         """
-        members = ReaderGroupService.members_of(session)
+        if members is None:
+            members = ReaderGroupService.members_of(session)
         known = ReaderGroupService.list_groups()
         return {name: users for name, users in members.items() if name not in known}
 
@@ -463,15 +474,17 @@ class ReaderGroupService:
     # ---------- 成员 ----------
 
     @staticmethod
-    def members_of(session) -> list:
-        """列出所有组员。需要调用方提供 SQLAlchemy session
+    def members_of(session) -> dict:
+        """列出所有组员 {组名: [用户名]}。需要调用方提供 SQLAlchemy session
         （handler 里有 settings["ScopedSession"]），service 不直接碰 DB。"""
         from webserver.models import Reader
         try:
             rows = session.query(Reader).all()
         except Exception as e:  # pragma: no cover - DB 不可用
             logging.warning("[reader-group] members_of failed: %s", e)
-            return []
+            # 必须返回 dict：调用方紧接着 .get(name) / .items()，返回 [] 会把
+            # 「数据库读失败」变成 AttributeError，列表接口直接 500。
+            return {}
         out = {}
         for r in rows:
             g = (r.extra or {}).get(MEMBER_KEY, "")

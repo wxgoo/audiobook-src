@@ -7,6 +7,7 @@
 不用逐个用户设置。生效逻辑见 services/reader_group.py。
 """
 
+import asyncio
 import json
 import logging
 
@@ -15,6 +16,35 @@ from webserver.handlers.base import BaseHandler, is_admin, js
 from webserver.services.reader_group import ReaderGroupService, get_presets
 
 CONF = loader.get_settings()
+
+# 这两个接口是「打开页面就要出数据」的入口，任何一步卡住都会让整页空白。
+# 给每步一个上限：超过就返回已有部分 + 明确错误，绝不让浏览器无限转圈。
+# 注意超时只是止损，真正的根因是同步 IO 不许待在 ioloop 线程上（见下）。
+_LIST_TIMEOUT = 8.0
+_OPTIONS_TIMEOUT = 8.0
+
+
+def _usernames(session):
+    """候选用户名（跑在工作线程里，用调用方给的 session）。"""
+    from webserver.models import Reader
+    return [r.username for r in session.query(
+        Reader.username).order_by(Reader.username).all()]
+
+
+async def _with_deadline(coro, timeout):
+    """最多等 timeout 秒，返回 (是否完成, 结果)。
+
+    超时时**不取消**底层任务：run_sqlite_async 的收尾（关 session / remove()
+    线程本地 session）必须留在工作线程里，取消它会让工作线程继续使用已被
+    主线程关掉的 session。让它自然跑完，结果丢弃即可。
+    """
+    task = asyncio.ensure_future(coro)
+    done, _pending = await asyncio.wait({task}, timeout=timeout)
+    if task in done:
+        return True, task.result()
+    # 取一下异常，避免 "Task exception was never retrieved"
+    task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+    return False, None
 
 
 class ReaderGroupPresets(BaseHandler):
@@ -44,65 +74,98 @@ class ReaderGroupOptions(BaseHandler):
     @js
     @is_admin
     async def get(self):
-        categories, tags = [], []
-        # 用户名候选：给「批量分配用户到组」的下拉多选框用，
-        # 管理员不用再凭记忆手打用户名（打错只会静默 missing）。
-        usernames = []
+        return await self._load_options()
+
+    async def _load_options(self):
+        # §为什么全部丢线程池§
+        # 这三份候选值原来都在 ioloop 线程上取：user 查询是同步 SQLite 读，
+        # #category 还要先碰 calibre 的 field_metadata（冷启动要建缓存）。
+        # 只要其中一步卡住（数据库写锁、calibre 预热持锁），唯一的 ioloop 线程
+        # 就被占住，同页面上后发的 /reader_groups、/presets 也一起排队 ——
+        # 表现就是「下拉全空 + 列表一直转圈」。现在每一步都在工作线程里跑，
+        # 并各自限时，失败只降低对应那一项，不再拖垮整页。
+        categories, tags, usernames = [], [], []
+        degraded = []
+
         try:
-            from webserver.models import Reader
-            ScopedSession = self.settings["ScopedSession"]
-            session = ScopedSession()
-            try:
-                usernames = [r.username for r in session.query(
-                    Reader.username).order_by(Reader.username).all()]
-            finally:
-                session.close()
+            ok, value = await _with_deadline(
+                self.run_sqlite_async(_usernames), _OPTIONS_TIMEOUT)
+            if not ok:
+                raise RuntimeError("timeout")
+            usernames = value
         except Exception as e:
+            degraded.append("usernames")
             logging.warning("[reader-group] load usernames failed: %s", e)
-        # 分类：calibre 自定义列 #category，值在 custom_column_<colnum> 表里。
-        # 复用 base.py 里已有的非阻塞查询封装，避免自己拼 SQL 踩连接池的坑。
-        #
-        # §只列「真的有书在用」的值§
-        # custom_column_<colnum> 是 calibre 的**值字典**，不是「当前分类集合」。
-        # 一本书从某分类下移走之后，字典里的那条记录仍然留着（calibre 不清理），
-        # 于是 SELECT DISTINCT value 会把孤儿值一起吐出来——用户实测看到
-        # 「哈利波特中文版」「台版」这种明显不是分类的条目混在分类下拉里。
-        #
-        # 危害不只是碍眼：书籍侧的判定是 `book_category in limit_categories`，
-        # 而 book_category 来自 books_custom_column_<n>_link 关联的实际值。
-        # 管理员若把孤儿值当分类选进白名单，那本书根本不存在 → 该组看不到任何书，
-        # 而且界面上完全看不出原因（选项明明是从「系统里真实存在的分类」来的）。
-        #
-        # 所以必须 JOIN link 表，只保留至少被一本书引用的值，与书籍侧口径一致。
         try:
-            from webserver.constants import CALIBRE_COLUMN_CATEGORY
-
-            if CALIBRE_COLUMN_CATEGORY in self.calibre_db.field_metadata:
-                colnum = int(self.calibre_db.field_metadata[CALIBRE_COLUMN_CATEGORY]["colnum"])
-                sql = (
-                    "SELECT DISTINCT d.value FROM custom_column_%d d "
-                    "JOIN books_custom_column_%d_link l ON l.value = d.id "
-                    "WHERE d.value IS NOT NULL AND d.value != '' "
-                    "ORDER BY d.value" % (colnum, colnum)
-                )
-
-                def _query():
-                    # 注意：run_calibre_async(locked=True) 内部已经持有 db_lock，
-                    # 这里再 with self.db_lock 会自死锁，直接查即可。
-                    rows = self.calibre_db_cache.backend.conn.get(sql) or []
-                    return [r[0] for r in rows]
-
-                categories = await self.run_calibre_async(_query)
+            ok, value = await _with_deadline(
+                self.run_calibre_async(self._category_options), _OPTIONS_TIMEOUT)
+            if not ok:
+                raise RuntimeError("timeout")
+            categories = value
         except Exception as e:
+            degraded.append("categories")
             logging.warning("[reader-group] load categories failed: %s", e)
-        # 标签：直接复用已有的分类统计方法（返回 [{id,name,count}]）
         try:
-            items = await self.get_category_with_count_async("tag")
+            ok, items = await _with_deadline(
+                self.get_category_with_count_async("tag"), _OPTIONS_TIMEOUT)
+            if not ok:
+                raise RuntimeError("timeout")
             tags = sorted({it["name"] for it in (items or []) if it.get("name")})
         except Exception as e:
+            degraded.append("tags")
             logging.warning("[reader-group] load tags failed: %s", e)
         return {"err": "ok", "categories": categories, "tags": tags,
-                "usernames": usernames}
+                "usernames": usernames, "degraded": degraded}
+
+    def _category_options(self):
+        """#category 的真实取值（工作在 calibre 线程池里）。
+
+        复用 base.py 里已有的非阻塞封装约定：run_calibre_async(locked=True)
+        已经持有 db_lock，这里不能再 with self.db_lock（RLock 同线程可重入，
+        但显式再取一次只会误导后来人）。
+
+        §只列「真的有书在用」的值§
+        custom_column_<colnum> 是 calibre 的**值字典**，不是「当前分类集合」。
+        一本书从某分类下移走之后，字典里的那条记录仍然留着（calibre 不清理），
+        于是 SELECT DISTINCT value 会把孤儿值一起吐出来 —— 用户实测看到
+        「哈利波特中文版」「台版」这种明显不是分类的条目混在分类下拉里。
+        危害不只是碍眼：书籍侧的判定是 `book_category in limit_categories`，
+        而 book_category 来自 books_custom_column_<n>_link 关联的实际值。
+        管理员若把孤儿值当分类选进白名单，那本书根本不存在 → 该组看不到任何书，
+        界面上还完全看不出原因。所以必须 JOIN link 表，与书籍侧口径保持一致。
+        """
+        from webserver.constants import CALIBRE_COLUMN_CATEGORY
+
+        meta = self.calibre_db.field_metadata
+        if CALIBRE_COLUMN_CATEGORY not in meta:
+            return []
+        colnum = int(meta[CALIBRE_COLUMN_CATEGORY]["colnum"])
+        sql = (
+            "SELECT DISTINCT d.value FROM custom_column_%d d "
+            "JOIN books_custom_column_%d_link l ON l.value = d.id "
+            "WHERE d.value IS NOT NULL AND d.value != '' "
+            "ORDER BY d.value" % (colnum, colnum)
+        )
+        rows = self.calibre_db_cache.backend.conn.get(sql) or []
+        return [r[0] for r in rows]
+
+
+def _collect_groups(session) -> tuple:
+    """组定义 + 成员名单 + 悬空引用，一次查完。返回 (groups, orphans)。
+
+    session 由调用方提供：写路径（POST）在请求线程用 handler 的 session，
+    读路径（GET）由 run_sqlite_async 在工作线程里新建，避免全表扫描占住 ioloop。
+    """
+    members = ReaderGroupService.members_of(session)
+    # 复用同一份 members：orphan_groups 内部再查一次等于把 Reader 全表扫两遍。
+    orphan = ReaderGroupService.orphan_groups(session, members=members)
+    groups = ReaderGroupService.list_groups()
+    for name, cfg in groups.items():
+        cfg["members"] = members.get(name, [])
+    if orphan:
+        logging.warning("[reader-group] orphan group refs: %s",
+                        {k: len(v) for k, v in orphan.items()})
+    return groups, orphan
 
 
 def collect_groups(handler) -> tuple:
@@ -123,24 +186,33 @@ def collect_groups(handler) -> tuple:
     ScopedSession = handler.settings["ScopedSession"]
     session = ScopedSession()
     try:
-        members = ReaderGroupService.members_of(session)
-        orphan = ReaderGroupService.orphan_groups(session)
+        return _collect_groups(session)
     finally:
         session.close()
-    groups = ReaderGroupService.list_groups()
-    for name, cfg in groups.items():
-        cfg["members"] = members.get(name, [])
-    if orphan:
-        logging.warning("[reader-group] orphan group refs: %s",
-                        {k: len(v) for k, v in orphan.items()})
-    return groups, orphan
 
 
 class ReaderGroupList(BaseHandler):
     @js
     @is_admin
-    def get(self):
-        groups, orphan = collect_groups(self)
+    async def get(self):
+        return await self._load_groups()
+
+    async def _load_groups(self):
+        # 原来是同步 def get：Tornado 把它放在 ioloop 线程上跑，Reader 全表
+        # 扫描一旦遇上数据库写锁（busy_timeout=60s）就把整个进程冻住 ——
+        # 同一页面里后发的 /options、/presets 全排队，界面表现为「下拉全空、
+        # 列表一直转圈」。现在扫描进工作线程，并加一道上限。
+        try:
+            ok, value = await _with_deadline(
+                self.run_sqlite_async(_collect_groups), _LIST_TIMEOUT)
+            if not ok:
+                logging.warning("[reader-group] list groups timeout (%.1fs)", _LIST_TIMEOUT)
+                return {"err": "timeout",
+                        "msg": "读取读者组超时（数据库繁忙），请稍后重试"}
+            groups, orphan = value
+        except Exception as e:
+            logging.exception("[reader-group] list groups failed: %s", e)
+            return {"err": "exception", "msg": str(e)}
         return {"err": "ok", "groups": groups, "orphans": orphan}
 
     @js
