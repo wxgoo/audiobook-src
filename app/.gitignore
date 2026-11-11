@@ -4,7 +4,7 @@
 *.log
 .DS_Store
 node_modules
-/dist
+# /dist 与下方的 `dist` 已移除：本仓库把 app/dist 预构建产物完整入库（见下方注释）
 .nuxt
 
 # local env files
@@ -78,7 +78,11 @@ typings/
 .nuxt
 
 # Nuxt generate
-dist
+# 注意：本仓库把 app/dist 作为「预构建产物」完整入库（NAS 构建时 COPY 进镜像
+# 即可跳过 npm ci，见 Dockerfile builder 阶段），因此这里【不能】忽略 dist。
+# 此前模板默认的 `dist` 规则导致 .js chunk 全部未入库，只有 html/css/fonts
+# 被迫加 -f 进来，线上伺服的 index.html 引用的 js 全部 404（r13 前端 404 事故根因）。
+# 本地若要清理 dist，用 app/build-clean.sh 或手动删除后重新 generate。
 
 # vuepress build output
 .vuepress/dist
