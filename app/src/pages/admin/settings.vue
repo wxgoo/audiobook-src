@@ -3351,10 +3351,16 @@ export default {
       return result;
     },
     moveFriend(idx, dir) {
-      const arr = this.settings.FRIENDS;
+      const arr = Array.isArray(this.settings.FRIENDS)
+        ? this.settings.FRIENDS
+        : [];
       const t = idx + dir;
       if (t < 0 || t >= arr.length) return;
-      [arr[idx], arr[t]] = [arr[t], arr[idx]];
+      // 注意：Vue 2 无法侦测「按下标赋值」，原地交换后视图不会重排（点了没反应）。
+      // 必须换一份新数组再整体 $set 回去，让依赖追踪重新求值。
+      const order = arr.slice();
+      [order[idx], order[t]] = [order[t], order[idx]];
+      this.$set(this.settings, "FRIENDS", order);
     },
     // 网站图标下拉的预览地址。favicon_0 表示「沿用当前图标」，要展示站点此刻真正
     // 生效的 /logo/favicon.ico（保存其它图标时它会被覆盖），因此带时间戳绕过缓存；
