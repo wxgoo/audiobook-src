@@ -43,6 +43,7 @@ export default {
     loading: false,
     error: null,
     logLink: null,
+    ssr_loaded: false,
   }),
   computed: {
     logText() {
@@ -71,13 +72,24 @@ export default {
     }
     try {
       const data = await app.$backend("/admin/syslog");
-      return { lines: data.lines || [], error: data.err !== "ok" ? data.msg : null, logLink: data.href || null };
+      const payload = { lines: data.lines || [], error: data.err !== "ok" ? data.msg : null, logLink: data.href || null };
+      // 静态产物里 asyncData 只在构建期执行，构建期的结果不能当成运行时已加载
+      if (data.err === "ok") {
+        payload.ssr_loaded = true;
+      }
+      return payload;
     } catch (e) {
       return { lines: [], error: String(e) };
     }
   },
   created() {
     this.$store.commit("navbar", true);
+  },
+  mounted() {
+    // 直接进入/强刷时补一次取数；服务端已取到数据则不重复请求
+    if (!this.ssr_loaded) {
+      this.fetchLog();
+    }
   },
   methods: {
     async fetchLog() {

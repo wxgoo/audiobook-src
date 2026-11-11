@@ -75,3 +75,38 @@ def test_vue_method_refs_are_clean():
         timeout=120,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+LIST_META = SRC / "pages" / "ListMeta.vue"
+SYSLOG = SRC / "pages" / "admin" / "syslog.vue"
+TOOLBOX = SRC / "pages" / "toolbox" / "_id.vue"
+FIRST_LOAD_PAGES = [
+    (LIST_BOOK, "this.init("),
+    (LIST_META, "this.init("),
+    (SYSLOG, "this.fetchLog("),
+    (TOOLBOX, "this.loadTool("),
+]
+
+
+@pytest.mark.parametrize("path,marker", FIRST_LOAD_PAGES,
+                         ids=["ListBook", "ListMeta", "admin-syslog", "toolbox-id"])
+def test_first_load_fetches_on_mount(path, marker):
+    """静态 SPA 产物里 asyncData 只在构建期执行；首屏直入/强刷必须由 mounted 补一次取数。
+
+    没有这个入口时，页面壳正常、Console 干净、Network 里没有任何取书请求。
+    """
+    text = path.read_text(encoding="utf-8")
+    assert re.search(r"\bmounted\s*\(\)\s*\{", text), f"{path.name} 缺少 mounted 钩子"
+    idx = text.index("mounted() {")
+    mounted = text[idx:idx + 600]
+    assert marker in mounted, f"{path.name} 的 mounted 没有触发 {marker}，首屏不会取数"
+
+
+@pytest.mark.parametrize("path,marker", FIRST_LOAD_PAGES,
+                         ids=["ListBook", "ListMeta", "admin-syslog", "toolbox-id"])
+def test_first_load_does_not_double_fetch(path, marker):
+    """服务端已取到数据（ssr_loaded）时 mounted 不应再次请求。"""
+    text = path.read_text(encoding="utf-8")
+    assert "ssr_loaded" in text, f"{path.name} 缺少 ssr_loaded 标记"
+    assert re.search(r"!\s*this\.ssr_loaded", text), \
+        f"{path.name} 的 mounted 没有用 ssr_loaded 去重"

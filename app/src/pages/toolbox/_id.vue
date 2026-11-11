@@ -47,6 +47,7 @@ export default {
     // iframe 塌成一条缝。之后随内容高度增长，交给宿主页面自己的滚动条，不再让工具页面在
     // 自己的 iframe 里出现内部滚动条。
     iframeHeight: 'calc(100vh - 64px)',
+    ssr_loaded: false,
   }),
   head() {
     return {
@@ -63,7 +64,13 @@ export default {
       const tool = tools.find((t) => t.id === params.id) || null;
       // status 由后端根据 InstalledTool.enabled 计算，禁用的外部工具在这里也拿不到
       // （见 3.3.1 节），和"根本不存在"是同一种展示——都提示"不存在或已禁用"
-      return { tool: tool && tool.status === 'enabled' ? tool : null };
+      const payload = { tool: tool && tool.status === 'enabled' ? tool : null };
+      // 只有服务端真取到工具列表才算已加载：静态产物里 asyncData 只在构建期跑，
+      // 否则直接进入会一直显示「不存在或已禁用」（见 mounted）
+      if (data && data.err === 'ok') {
+        payload.ssr_loaded = true;
+      }
+      return payload;
     } catch (e) {
       return { tool: null };
     }
@@ -85,6 +92,10 @@ export default {
         this.postToFrame('theme-change', { theme: dark ? 'dark' : 'light' });
       }
     );
+    // 直接进入/强刷：静态产物不会重跑 asyncData，补一次工具列表
+    if (!this.ssr_loaded) {
+      this.loadTool();
+    }
   },
   beforeDestroy() {
     window.removeEventListener('message', this.onBridgeMessage);
@@ -94,6 +105,13 @@ export default {
   methods: {
     goBack() {
       this.$router.push('/admin/toolbox');
+    },
+    async loadTool() {
+      const data = await this.$backend('/toolbox/list');
+      const tools = (data && data.tools) || [];
+      const tool = tools.find((t) => t.id === this.$route.params.id) || null;
+      this.tool = tool && tool.status === 'enabled' ? tool : null;
+      this.initIframeSrc();
     },
     initIframeSrc() {
       if (!this.tool) return;

@@ -205,6 +205,7 @@ export default {
     page_cnt: 0,
     inited: false,
     loaded: false,
+    ssr_loaded: false,
     load_error: "",
     isAudioPage: false,
     multiSelectMode: false,
@@ -222,7 +223,13 @@ export default {
     if (res !== undefined) {
       res.setHeader('Cache-Control', 'no-cache');
     }
-    return app.$backend(route.fullPath, { timeout: 20000 });
+    const rsp = await app.$backend(route.fullPath, { timeout: 20000 });
+    // 只有「服务端真的取到数据」才标记，避免把构建期的空结果当成已加载：
+    // 静态产物里的 asyncData 只在构建时跑一次，运行时首屏不会重跑（见 mounted）。
+    if (rsp && rsp.err === 'ok') {
+      return Object.assign({}, rsp, { ssr_loaded: true });
+    }
+    return rsp || {};
   },
   head() {
     return {
@@ -237,6 +244,15 @@ export default {
 
     this.loaded = true;
     this.checkIfAudioPage();
+  },
+  mounted() {
+    // 首屏直入 / 强刷：静态产物里 asyncData 只在构建期执行，运行时不会重跑，
+    // 没有这段就不会发出任何取书请求（页面壳正常、网格空白、Console 干净）。
+    // ssr_loaded 为真表示服务端已取到数据（nuxt dev / SSR 部署），不再重复请求；
+    // 同组件内切路由/翻页仍走 beforeRouteUpdate → init，由请求令牌去重。
+    if (!this.ssr_loaded && !this.inited) {
+      this.init(this.$route);
+    }
   },
 
   beforeRouteUpdate(to, from, next) {

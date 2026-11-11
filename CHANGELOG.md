@@ -39,7 +39,49 @@ Vue 插件用 `inject('alert')` 暴露的是 **`this.$alert`**，`this.alert` �
 | `app/src/components/BookCards.vue` | `render_books` 不再改写父级 `book` 对象（`{...b, href}`）；卡片加 `content-visibility: auto` + `contain-intrinsic-size`，降低长列表一次性渲染开销 |
 | `app/locales/{zh,zh-TW,en}.json`、`delivery/overlay/files/app/locales/*` | `listBook` 新增 `empty` / `loadFailed` / `retry` |
 | `app/scripts/check-vue-method-refs.js`（新增）+ `npm run lint:refs` | 静态扫描 `app/src/**/*.vue`（129 个）：脚本段比对 `this.NAME()` 是否真实存在（methods/computed/data/props/inject/运行时赋值），模板段只提示；`--strict` 有脚本级错误即退出 1 |
-| `tests/test_frontend_silent_failures.py`（新增） | 8 条：禁止 `this.alert(`、ListBook 必须用 `$alert` 且带 `load_error/errorText`、模板三 key 存在、store 空文案保护、三语与 overlay key 齐全、`lint:refs --strict` 退出 0 |
+| `tests/test_frontend_silent_failures.py`（新增） | 12 条：禁止 `this.alert(`、ListBook 必须用 `$alert` 且带 `load_error/errorText`、模板三 key 存在、store 空文案保护、三语与 overlay key 齐全、`lint:refs --strict` 退出 0、ListBook/ListMeta 的 `mounted` 必须触发 `init` 且用 `ssr_loaded` 去重 |
+
+### 修复：直接进入 / 强刷列表页不发请求（首屏永久空白）
+
+现场决定性证据：强刷 `/all` 后 Network 里**没有任何取书请求**，Console 无报错；
+而 `app/dist/all/index.html` 是构建期预渲染的壳，payload 为 `data:[{}]`。
+
+根因不在接口，而在**取数入口**：`ListBook.vue` 只在 `asyncData` 与 `beforeRouteUpdate` 里取数。
+静态产物（`nuxt generate --spa`）的 `asyncData` 只在构建期跑一次，运行时首屏不会重跑；
+`beforeRouteUpdate` 又只在**同组件**切路由/翻页时触发。于是：
+直接打开/强刷 → 两个入口都不触发 → 永远不发请求 → 空白；
+从侧栏其它列表页点进来 → 组件复用 → `beforeRouteUpdate` 触发 → 正常出书。
+
+| 文件 | 改动 |
+| --- | --- |
+| `app/src/pages/ListBook.vue` | 新增 `mounted()`：`!ssr_loaded && !inited` 时 `init($route)`，保证首屏必取一次；`asyncData` 仅在 `rsp.err === 'ok'` 时打 `ssr_loaded`，避免 dev/SSR 下重复请求；切路由/翻页仍走 `beforeRouteUpdate`，请求令牌去重 |
+| `app/src/pages/ListMeta.vue` | 同一问题（`created` 里的 `init` 被注释、只剩 `asyncData` + `beforeRouteUpdate`）；同样补 `mounted` 兜底与 `ssr_loaded` 去重，覆盖 /tag、/series、/rating、/author、/publisher、/language |
+
+其余同构页已核对：`search.vue`、`folder.vue`、`booklist/_id.vue` 在 `mounted` 里取数，
+`_bookid.vue`、`author.vue`、`tag.vue`、`series.vue` 在 `created` 里调用 `init`，首屏都会发请求，不受影响。
+
+### 全站首屏取数审计（6 类形态）
+
+`lint:refs` 增加「首屏取数审计」：`pages/**` 里若只有 `asyncData`，或只在 `$route` 的 `watch`
+里取数且缺 `immediate`、又没有生命周期兜底，`--strict` 直接失败。扫描 68 个自有页面
+（`all/audiobooks/favorites/reading/printbooks/soledbooks/visits/wants/read-done` 等是
+`export default ListBook` 的薄壳，自动继承修复；`tag/series/rating/author/publisher/language`
+同理继承 ListMeta）。
+
+| 页面 | 命中形态 | 直接进入的结果 | 处理 |
+| --- | --- | --- | --- |
+| `ListBook.vue`（+ 9 个薄壳） | 只有 `asyncData` + `beforeRouteUpdate` | 不发请求，空白 | 已修：`mounted` + `ssr_loaded` |
+| `ListMeta.vue`（+ tag/series/rating/author/publisher/language） | `created` 里的 `init` 被注释，只剩 `asyncData` | 不发请求，空列表 | 已修：`mounted` + `ssr_loaded` |
+| `admin/syslog.vue` | 只有 `asyncData` | 日志区永远「暂无日志」 | 已修：`mounted → fetchLog` |
+| `toolbox/_id.vue` | 只有 `asyncData` | 永远显示「工具不存在或已禁用」 | 已修：`mounted → loadTool` |
+| `welcome.vue` | 只有 `asyncData` | 安装引导页，无列表数据；`err` 缺失只是不跳转 | 不改，lint 白名单 |
+| `s/_token.vue` | `asyncData` + `mounted`（`err` 默认 `ok` 时会 `verify()` 重新取数） | 能自愈，不受影响 | 不改 |
+| `search/folder/booklist/_id/booklists/*/history/memos/expected/admin/*` | `created` 或 `mounted` 取数 | 正常 | 不改 |
+| `author/tag/series/_bookid/readtxt/index/audio/_id` | `created`/`mounted` 取数（`watch` 只做二次响应） | 正常 | 不改 |
+| `starting.vue` | `mounted → poll()` | 正常 | 不改 |
+
+误报控制：`watch` 规则只在「handler 里出现取数调用 + 没有 `immediate: true` + 没有生命周期取数」
+时命中；`starting.vue` 的 `poll()` 已计入取数，不再误报。薄壳页（`export default ListBook`）不做独立判定。
 
 ### 服务端：列表 `total` 与可见集合一致
 
@@ -49,11 +91,12 @@ Vue 插件用 `inject('alert')` 暴露的是 **`this.$alert`**，`this.alert` �
 
 ### 验证
 
-- `pytest tests/test_frontend_silent_failures.py -q` → **8 passed**
-- `node app/scripts/check-vue-method-refs.js --strict` → **0 处脚本级错误，0 处模板级待确认**（129 个 .vue）
+- `pytest tests/test_frontend_silent_failures.py -q` → **16 passed**（含首屏取数 8 条）
+- `node app/scripts/check-vue-method-refs.js --strict` → **0 处脚本级错误，0 处模板级待确认**，
+  首屏取数审计 **0 处隐患**（68 个页面）
 - 改动文件 `npx eslint` → 0 error；`python -m py_compile webserver/handlers/base.py` 通过
 - `npx nuxt generate` 后 `scripts/check-dist.sh` → **757 个文件**，pdfjs 369 / 字体 3 / 壁纸 4 / 图片 4 齐全
-- `app/dist/index.html` sha256 = `35e7560f091a97306e423f05e6bb960f20783827da44031e3948c4c90c7524f4`（23273 字节）
+- `app/dist/index.html` sha256 = `b7c49b20c2e9042538dcdd9038e0c43557a18d7449922e159569e8ee509a1ebc`（23273 字节）
 
 > `app/public` 是 `dir.static` 的真实来源（`srcDir: src/` + `../public`）。本轮重建前它在工作树里被删过，
 > generate 只会产出 301 个构建产物；重新从 HEAD 取回 456 个非构建资源后才恢复到 757。**重编前先确认 `app/public` 存在。**

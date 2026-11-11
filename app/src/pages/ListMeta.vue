@@ -39,12 +39,19 @@ export default {
         total: 0,
         show_all: false,
         page_size: 20,
+        ssr_loaded: false,
     }),
     async asyncData({ app, route, res }) {
         if (res !== undefined) {
             res.setHeader('Cache-Control', 'no-cache');
         }
-        return app.$backend(route.fullPath);
+        const rsp = await app.$backend(route.fullPath);
+        // 与 ListBook 一致：只有服务端真取到数据才标记，静态产物里构建期
+        // asyncData 的结果不能当成「运行时已加载」。
+        if (rsp && rsp.err === 'ok') {
+            return Object.assign({}, rsp, { ssr_loaded: true });
+        }
+        return rsp || {};
     },
     head() {
         var path = this.$route.path;
@@ -67,6 +74,13 @@ export default {
     },
     created() {
         //this.init(this.$route);
+    },
+    mounted() {
+        // 强刷/直接进入这些列表路由时，静态产物不会重跑 asyncData，必须补一次取数；
+        // 服务端已取到数据（ssr_loaded）则不重复请求。
+        if (!this.ssr_loaded) {
+            this.init(this.$route);
+        }
     },
     beforeRouteEnter(to, from, next) {
         next();
