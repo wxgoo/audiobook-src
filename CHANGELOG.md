@@ -16,6 +16,36 @@
 
 ---
 
+## 4.6.0-build.27-r25（2026-11-11，**服务端 + 构建期**，须重建镜像）
+
+### 构建期硬门禁：dist 缺 pdfjs viewer 直接中止
+
+`aa457b8`~`bc39f47` 那次重建暴露出「`nuxt generate` 先清空 dist」这个坑，靠人记没用，改成构建期断言：
+
+| 文件 | 改动 |
+| --- | --- |
+| `Dockerfile` | builder 阶段 `/app-static/dist` 生成之后、生产阶段 `COPY --from` 之前，断言 `static/pdfjs/web/viewer.html` 存在，否则 `exit 1` 并打印原因与校验方法；`mkdir -p logo/avatar` 兜底不变 |
+| `scripts/check-dist.sh` | 新增：关键路径存在性 + 各目录数量下限 + 整目录文件数必须等于基线 `757`（可用 `BASELINE` 覆盖） |
+| `scripts/pack.sh` | 出包前 `[1b/4]` 调 `check-dist.sh`；`--check` 验包时再查 viewer.html 与 757 |
+| `docs/开发指南.md`、`docs/部署包说明.md`、`docs/故障复盘-读者组转圈.md` | 写明「前端重编后必须整目录校验 dist，不能只数构建产物」，附三道防线与白名单 `comm` 清理法 |
+
+### 修复：元数据更新 500（`NameError: name 'douban' is not defined`）
+
+线上 `webserver/handlers/book.py` 第 1310 行 `if provider_key == douban.KEY:` 抛 `NameError`。
+豆瓣 v1 插件在 build.27-r12 已整体移除，但 `BookRefer.post` 里还留着 v1 分支；该比较表达式
+**对所有 provider 都会先求值**，所以任何 provider 的元数据更新都会 500，与是否用豆瓣无关。
+因为它是「更新元数据」这条较少使用的路径（不是页面加载），一直没被发现。
+
+| 文件 | 改动 |
+| --- | --- |
+| `webserver/handlers/book.py` | 抽出 `_resolve_refer_mi`，删掉 v1 分支；所有 provider 统一走「v2 占位注释修正 → 表单 metadata / 现有 mi → 补封面」 |
+| `tests/test_book_meta_provider_branch.py` | 新增 8 条：`douban`/`douban_v2`/`xhsd`/`bookbarn` 分支在无豆瓣模块时也返回；封面开关；AST 静态检查禁止未绑定的 `douban.` 引用；v1 模块确已删除 |
+
+> `delivery/overlay/files/webserver/handlers/book.py` 是 `opt/p0-p1` 分支的历史快照（冻结产物），
+> 不参与运行，也不改它——它的 MANIFEST/SHA256SUMS 依赖原始字节。
+
+> 本次含 Dockerfile 变更，**不能页内热更**，必须 `docker compose build mybooks` 重建镜像。
+
 ## 4.6.0-build.27-r24（2026-11-11，可页内热更，**只有前端产物**）
 
 ### 更正：r20 对「读者组一直转圈」的归因是错的
