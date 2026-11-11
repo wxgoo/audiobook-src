@@ -239,6 +239,15 @@ cd /volume1/docker && mv audiobook audiobook-backup-$(date +%m%d) && tar xzf aud
 容器内权限相关：`docker exec` 默认是 root（镜像 USER），服务进程是 gosu 降到 `PUID:PGID`
 （compose 默认 1026:100）；`/data` 下文件属主显示 1026 是正常的，别误判成权限问题。
 
+**补充（r16 教训，同一个坑丢了两遍）**：进 `PERSISTABLE_KEYS` 并不够。设置页 POST 会
+`args.clear()` 后只填前端提交的键，「只在 PERSISTABLE、不在 ADMIN_SETTING_KEYS」的键
+每次保存都被整份覆盖抹掉（`READER_GROUPS` / `READER_GROUP_STRICT` /
+`ENABLE_KOREADER_SERVICE` / `scan_hash_workers` / `site_theme` 五个）。
+r13 的断言只测了 `save_partial` 路径，所以「测试全绿、线上照丢」。
+现在 `save_extra_settings()` 入口统一补齐未提交的持久化键；测试要测 **POST 路径**
+（`TestSaveExtraSettingsCarryOver`），不是只测 `save_partial`。
+另外 `dumpfile()` 覆盖前会留一份 `auto.py.bak`，配置被误抹时从那里捞。
+
 ---
 
 ## ⑪ 列表拖拽排序：稳定 key 要「看得见但存不进去」

@@ -16,6 +16,51 @@
 
 ---
 
+## 4.6.0-build.27-r16（2026-11-11，可页内热更，**只改后端**）
+
+> 只改了 `webserver/*.py` 三个文件，`app/dist` 未动：`requires_dist=false`、
+> `hotfixable=true`，可直接在「版本与更新」点在线更新并重启服务。
+
+### 读者组分组「又没有了」的真正原因
+
+r13 把 `READER_GROUPS` 加进了 `PERSISTABLE_KEYS`，也加了断言，为什么还丢？因为那套白名单
+只在 `save_partial()` 里用来「播种」，而**设置页保存走的是另一条路**：
+
+`handlers/admin.py: AdminSettings.post` 自己 `SettingsLoader()` + `clear()`，然后只填入
+**前端提交的键**（还要再过一遍 `ADMIN_SETTING_KEYS`）。`dumpfile()` 是**整份覆盖**写
+`auto.py` ——args 里没有的键，文件里就不再有。
+
+于是「在 `PERSISTABLE_KEYS`、但不在 `ADMIN_SETTING_KEYS`」的键，每次点保存都会消失。
+实测受影响的有 5 个：
+
+| 键 | 丢了会怎样 |
+| --- | --- |
+| `READER_GROUPS` | 读者组分组全没了（本次报障） |
+| `READER_GROUP_STRICT` | 白名单空条件是否当作「什么都读不到」回退成默认 |
+| `ENABLE_KOREADER_SERVICE` | KOReader 服务被关掉 |
+| `scan_hash_workers` | 扫描并发数被打回默认 |
+| `site_theme` | 站点主题被打回默认 |
+
+r13 的断言之所以「全绿但线上照丢」：它在 `save_partial` 路径上验证，而丢数据的是 `POST` 路径。
+
+**修复**：在 `save_extra_settings()` 入口统一补齐——`CONF` 里有、`args` 里没有的持久化键
+原样带回，这样 `save_partial`、设置页 POST、在线更新后写版本号、自动检测开关五条调用路径
+一起覆盖。首次安装接口显式 `carry_over=False`（那里本来就该按默认值重建整份配置）。
+
+### 顺手补上：`auto.py.bak`
+
+`dumpfile()` 覆盖前先把上一版复制成 `auto.py.bak`（只留最近一份）。这次分组丢了没处捞，
+就是因为设置文件从来没有备份——以后再被误抹，至少能从 `.bak` 恢复上一次的内容。
+
+### 已经丢的分组怎么救
+
+数据层没丢：`Reader.extra["reader_group"]` 里存的还是组名字符串。打开「读者组」页面，
+顶部的**悬空引用告警会列出「哪些组名已经不存在、各挂了几个人」**——照着这些名字重建分组
+（同一个名字），组员归属立刻自动回来，只需要把白名单的标签/分类重填一遍。
+如果 NAS 开了快照（Btrfs Snapshot Replication），也可以从快照里取回上一版 `auto.py`。
+
+---
+
 ## 4.6.0-build.27-r15（2026-11-11，可页内热更）
 
 > 只动前端（`app/src/pages/admin/settings.vue` + 重建 `app/dist`），后端 `.py` 未改；
