@@ -303,3 +303,23 @@ r13 的断言只测了 `save_partial` 路径，所以「测试全绿、线上照
   核 sha256，全 200 才打 tag。`python3` 十行脚本即可，别省。
 - 失败提示要带路径：`_get()` 遇 4xx（除 408/429）立即失败，`_download_failure()`
   写明「发布侧问题、与本机网络无关」+ 整包部署兜底。
+
+---
+
+## ⑭ 永不 settle 的 Promise = 无限转圈且零提示
+
+服务启动期（含在线更新后重启、DB 升级）端口由临时服务占着，`/api/*` 一律回
+`{"err":"server_starting"}`。`$backend` 为「启动期间不弹错误框」直接
+`return new Promise(() => {})`，指望 `redirect("/starting")` 接管。
+
+但请求如果是在**导航结束之后**发出的（mounted 补拉、展开面板、点重试），
+`app.context.redirect()` 已经是空操作，页面不跳；调用方 `await` 永远挂起，
+`loading` 永远是 true —— 用户看到的是「一直转圈，不报错，刷新才好」。
+读者组面板就是这么卡住的（r20 修，`server_starting` 分支补齐 300ms 整页跳 `/starting`）。
+
+两条规矩：
+- 用 `new Promise(() => {})` 表达「此响应无须回调」时，必须同时给出可见出路；
+- 任何会显示 spinner 的 `await` 都要 `Promise.race` 超时兜底，超时后停转圈 + 报错 + 重试入口。
+
+排查口径：Network 里那条请求 pending 且无响应 = 服务在启动/重启；
+`200` 且 body 是 `server_starting` = 本节这个坑。

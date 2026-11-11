@@ -157,6 +157,12 @@
         </div>
       </v-alert>
       <div v-if="!loaded && loading" class="text-center py-4"><v-progress-circular indeterminate></v-progress-circular></div>
+      <!-- 请求迟迟不回时不能一直转圈：显式报错并给重试入口，否则用户只能干等 -->
+      <div v-else-if="loadError" class="text-caption error--text py-2">
+        <v-icon x-small color="error">mdi-alert-circle-outline</v-icon>
+        {{ loadError }}
+        <v-btn x-small text color="primary" class="ml-1" @click="reload">{{ $t("settings.reader_group_retry") }}</v-btn>
+      </div>
       <v-simple-table v-else-if="groupNames.length" dense>
         <thead>
           <tr>
@@ -228,6 +234,8 @@ export default {
     expanded: false,
     loaded: false,
     loading: false,
+    // 加载失败/超时的提示文案（空串表示没有错误）
+    loadError: "",
     saving: false,
     assigning: false,
     // 正在重建的悬空组名；'*' 表示「全部重建」。非空时按钮统一禁用，
@@ -434,17 +442,34 @@ export default {
     },
     async reload() {
       this.loading = true;
+      this.loadError = "";
+      // 请求可能落在服务启动/重启的窗口里：$backend 对 server_starting 会返回
+      // 一个永不 settle 的 Promise（上层另有整页跳 /starting 的兜底），这里再加
+      // 一道保险——超时就把转圈停掉，别让页面停在「什么都不说」的状态。
+      let timer = null;
       try {
-        const rsp = await this.$backend("/admin/reader_groups");
+        const rsp = await Promise.race([
+          this.$backend("/admin/reader_groups"),
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve({ err: "timeout" }), 20000);
+          }),
+        ]);
         if (rsp.err === "ok") {
           this.groups = rsp.groups || {};
           this.orphans = rsp.orphans || {};
           this.loaded = true;
+        } else if (rsp.err === "timeout") {
+          this.loadError = this.$t("settings.reader_group_load_timeout");
         } else {
           this.$alert("error", rsp.msg || rsp.err);
+          this.loadError = rsp.msg || rsp.err;
         }
       } catch (err) {
         this.$alert("error", String(err));
+        this.loadError = String(err);
+      }
+      if (timer) {
+        clearTimeout(timer);
       }
       this.loading = false;
     },

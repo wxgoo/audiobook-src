@@ -106,7 +106,21 @@ export default ({ app }, inject) => {
                 const { route, redirect, res } = app.context;
                 if (rsp.err === 'server_starting') {
                     goStarting();
-                    // 启动期间原请求不再回调，避免各页面把它当成错误弹框
+                    // 与 502 同款整页兜底：请求是在导航结束后发出的（比如设置页
+                    // 展开某个面板、mounted 里补拉数据），此时 redirect 已是空操作，
+                    // 只 return 一个永不 settle 的 Promise 会让调用方的 loading
+                    // 永远不结束——用户看到的不是「启动中」提示，而是无限转圈
+                    // 且无任何报错。300ms 后整页跳到 /starting，那里轮询启动进度，
+                    // 完成后带 next 跳回原页。
+                    if (process.client) {
+                        setTimeout(() => {
+                            if (!window.location.pathname.startsWith("/starting")) {
+                                window.location.assign(
+                                    "/starting?next=" + encodeURIComponent(app.context.route.fullPath)
+                                );
+                            }
+                        }, 300);
+                    }
                     return process.server ? rsp : new Promise(() => {});
                 }
                 if (rsp.err === 'not_installed') {

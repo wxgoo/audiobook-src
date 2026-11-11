@@ -989,6 +989,8 @@
         "reader_group_revive_one": "Rebuild",
         "reader_group_revive_all": "Rebuild all {n} groups",
         "reader_group_revive_hint": "Rebuilt groups are empty whitelists: members are re-attached right away, but you still need to add categories/tags or they see no books.",
+"reader_group_load_timeout": "The server is not responding (it may be starting or restarting). Try again in a moment; if it persists, check the server log mybooks.log.",
+        "reader_group_retry": "Retry",
         "reader_group_revived": "Rebuilt {n} group(s): {names}. Members are back in place — add categories/tags, an empty whitelist hides all books in strict mode.",
         "reader_group_revive_none": "Nothing to rebuild (maybe already done in another tab)",
         "reader_group_logic_tips": "Categories and tags are OR-ed: a book is visible if it matches either one. Filling only one side is enough.",

@@ -1279,6 +1279,8 @@
         "reader_group_revive_one": "重建此組",
         "reader_group_revive_all": "一鍵重建全部 {n} 個組",
         "reader_group_revive_hint": "重建出的是空規則白名單組：成員先歸位，需再補填分類/標籤，否則他們仍然看不到書。",
+"reader_group_load_timeout": "伺服器沒有回應（服務可能正在啟動或重新啟動），請稍後點「重試」；若一直如此，請查看伺服器日誌 mybooks.log。",
+        "reader_group_retry": "重試",
         "reader_group_revived": "已重建 {n} 個組：{names}。成員已自動歸位，請補填分類/標籤（留空會被嚴格模式擋住）。",
         "reader_group_revive_none": "沒有需要重建的分組（可能已在其他視窗完成）",
         "reader_group_logic_tips": "分類與標籤是「或」的關係：只需命中其中之一即可看到該書。只填一邊就夠，不必兩邊都選。",
