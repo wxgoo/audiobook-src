@@ -59,6 +59,36 @@ class TestSavePartial(unittest.TestCase):
             if key != "BOOKBARN_TOKEN":
                 self.assertEqual(saved[key], "marker", key)
 
+    def test_reader_group_keys_are_persistable(self):
+        """读者组三个键必须在白名单里。
+
+        漏掉 READER_GROUPS 的后果（实测踩过）：设置页任意一次保存都会整份覆盖
+        auto.py，把分组规则静默抹掉；叠加容器重建，表现为「分组权限每次重建后
+        全部消失」。这三个键不在 ADMIN_SETTING_KEYS（设置页不直接编辑它们），
+        只由 handlers/reader_group.py 通过 save_partial 写入，所以只断言
+        PERSISTABLE_KEYS。
+        """
+        for key in ("READER_GROUPS", "READER_GROUPS_ENABLED", "READER_GROUP_STRICT"):
+            self.assertIn(key, PERSISTABLE_KEYS, key)
+
+    def test_reader_groups_survive_settings_page_save(self):
+        """设置页保存无关键时，已建好的分组规则不能被抹掉。"""
+        groups = {
+            "儿童": {
+                "mode": "whitelist",
+                "categories": "文学,教育,社科",
+                "tags": "绘本,童书,儿童文学",
+            }
+        }
+        saved = self.run_partial(
+            {"READER_GROUPS": groups, "READER_GROUPS_ENABLED": True,
+             "READER_GROUP_STRICT": True},
+            {"BOOKBARN_TOKEN": "t"},
+        )
+        self.assertEqual(saved["READER_GROUPS"], groups)
+        self.assertTrue(saved["READER_GROUPS_ENABLED"])
+        self.assertTrue(saved["READER_GROUP_STRICT"])
+
 
 if __name__ == "__main__":
     unittest.main()

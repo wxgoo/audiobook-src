@@ -211,3 +211,22 @@ cd /volume1/docker && mv audiobook audiobook-backup-$(date +%m%d) && tar xzf aud
 - 交付物只要**完整部署包**；不要热修包、过程文档、归档
 - 包内 `docs/` 只保留使用说明与部署文档，删归档、排障记录、移植清单
 - 说话直接，别铺垫；错了就认，改到底
+
+---
+
+## ⑨ 新增「要持久化的设置」必须进 PERSISTABLE_KEYS，否则被静默抹掉
+
+`SettingsSaver.dumpfile()` 是**整份覆盖** `auto.py`，只写 `PERSISTABLE_KEYS` 白名单里的键
+（`save_partial` 也一样：先按白名单从 CONF 播种，再叠加本次改动的键）。
+
+**后果**：某个键不在白名单里时，设置页**任意一次无关保存**都会把它从 auto.py 里删掉，
+界面无任何提示。读者组分组规则就因此每次重建后全丢（r13 事故：`READER_GROUPS`
+后来才补进白名单）。
+
+自查清单（新增持久化设置时逐条过）：
+- 键加进 `webserver/base/setting_saver.py` 的 `PERSISTABLE_KEYS`（设置页能编辑的再加 `ADMIN_SETTING_KEYS`）
+- `tests/test_setting_saver.py` 里加两条断言：键在白名单内 + 设置页保存无关键后值不变
+- 反向验证：临时把键从白名单删掉，测试必须变红，否则断言是假的
+
+容器内权限相关：`docker exec` 默认是 root（镜像 USER），服务进程是 gosu 降到 `PUID:PGID`
+（compose 默认 1026:100）；`/data` 下文件属主显示 1026 是正常的，别误判成权限问题。
