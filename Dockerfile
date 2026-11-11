@@ -89,6 +89,23 @@ RUN if [ -f /build/dist/index.html ] && [ -f /build/dist/200.html ] \
         cp -r dist nuxt.config.js package* /app-static/; \
     fi
 
+# 【硬门禁】dist 里的这批资源不是 nuxt generate 的产物（generate 会先清空 dist），
+# 只能由 public/ 带出。缺了不会让 build 失败，但线上 PDF 阅读入口（settings.py 的
+# PDF_VIEWER 指向 /static/pdfjs/web/viewer.html）直接 404，字体/壁纸/图标静默丢失。
+# 所以在这里显式断言：宁可构建失败，也不要产出一个「装得上但缺文件」的镜像。
+RUN if [ ! -f /app-static/dist/static/pdfjs/web/viewer.html ]; then \
+        echo "=================================================================="; \
+        echo "!! 构建中止：dist 缺少非构建资源 /static/pdfjs/web/viewer.html"; \
+        echo "   原因：nuxt generate 会先清空 dist，pdfjs / 字体 / 壁纸 / 图标等"; \
+        echo "         不是构建产物，必须由 public/ 带出。"; \
+        echo "   检查：public/ 是否含 static/pdfjs、static/fonts、static/wallpaper、"; \
+        echo "         static/images、static/js、static/toolbox-bridge.js、icons/、robots.txt；"; \
+        echo "         且 app/nuxt.config.js 的 dir.static 指向 ../public。"; \
+        echo "   校验：sh scripts/check-dist.sh（app/dist 文件数应为 757）。"; \
+        echo "=================================================================="; \
+        exit 1; \
+    fi
+
 # 生产阶段有两条 COPY --from=builder /app-static/dist/{logo,avatar}/ /data/books/…。
 # buildkit 要求源路径必须存在，否则直接 failed to compute cache key，整个 build 中止。
 # 这两个目录在 dist 里是「默认品牌资源 + 运行期用户数据」的混合体，clean generate

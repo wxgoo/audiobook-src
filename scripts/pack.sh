@@ -85,6 +85,20 @@ if [ "${1:-}" = "--check" ]; then
             fi
         fi
 
+        # dist 整目录完整性（r24 事故）：非构建资源会被 generate 清掉。
+        # 只看「构建产物」数量会漏 395 个文件，必须按整目录基线校验。
+        if [ -d "$D/app/dist" ]; then
+            if [ ! -f "$D/app/dist/static/pdfjs/web/viewer.html" ]; then
+                echo "  !! app/dist 缺 static/pdfjs/web/viewer.html（PDF 入口会 404）"
+                fail=1
+            fi
+            dtotal=$(find "$D/app/dist" -type f 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$dtotal" -ne 757 ]; then
+                echo "  !! app/dist 文件数 $dtotal != 基线 757 —— 先跑 sh scripts/check-dist.sh 定位缺什么"
+                fail=1
+            fi
+        fi
+
         # __pycache__ / .pytest_cache：允许零星几个（比如解压后又跑过脚本），但不该整片带进来
         npc=$(find "$D" -name '__pycache__' -type d 2>/dev/null | wc -l)
         if [ "$npc" -gt 5 ]; then
@@ -239,6 +253,13 @@ for d in books book data audios library upload imports sync cache logs; do
     fi
 done
 echo "  OK：无数据污染"
+
+echo "==> [1b/4] 前端产物整目录校验（不是只数构建产物）"
+if [ -f scripts/check-dist.sh ]; then
+    sh scripts/check-dist.sh || { echo "  !! 前端产物不完整，禁止出包"; exit 1; }
+else
+    echo "  !! 缺 scripts/check-dist.sh（dist 完整性无法校验），禁止出包"; exit 1
+fi
 
 echo "==> [2/4] MyReader 产物自检（清单驱动，119 根逐根校验）"
 [ -d myreader-dist/node_modules ] || { echo "  !! 缺 myreader-dist/node_modules（产物不完整，见 .gitignore 例外区）"; exit 1; }
