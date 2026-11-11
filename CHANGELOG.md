@@ -16,9 +16,57 @@
 
 ---
 
+## 4.6.0-build.27-r24（2026-11-11，可页内热更，**只有前端产物**）
+
+### 更正：r20 对「读者组一直转圈」的归因是错的
+
+r20~r23 一直认定是「服务启动期 `server_starting` → `$backend` 返回永不 settle 的 Promise」，
+并据此加了整页跳转和 20s 超时兜底。**这个归因不成立**：用户抓包显示 `GET /api/admin/reader_groups`
+返回 `200`、正文 548 字节、两组数据完整；r21 部署后仍无限转圈。
+
+**真实原因**：`ReaderGroupEditor.vue` 把 `modeText(mode)` 写在了 `computed` 里，而模板写成
+`{{ modeText(groups[name].mode) }}` 按方法调用。
+
+- Vue 2 的 computed **按属性求值、不接收参数**：`modeText` 被无参执行一次，得到一个**字符串**；
+- 模板再对这个字符串加括号调用 → `TypeError: e.message / e.modeText is not a function`；
+- 异常发生在 `_render` 期间，整个组件渲染中断，DOM 停在初始 `v-if="!loaded && loading"` 的 spinner 上；
+- `reload()` 里 `loaded = true` 其实**执行了**，但组件已经渲染失败，状态无人消费；
+- 保存（POST）不走这条渲染路径，所以「保存能用、列表不显示」。
+
+结论：**接口 200 + 数据正常 + 页面转圈，不等于请求有问题**，也可能是渲染期抛异常把 DOM 冻在了 spinner。
+
+### 修法
+
+| 文件 | 改动 |
+| --- | --- |
+| `app/src/components/ReaderGroupEditor.vue` | `modeText` 从 `computed` 移到 `methods` 首位（逻辑不变） |
+| `tests/test_reader_group_frontend_contract.py` | 新增 3 条契约测试：computed 不得在模板里带参调用；`modeText` 必须在 methods；dist 必须含 src 独有文案 |
+| `app/dist/**` | 用 `app/src` 重编（`nuxt generate`），确认新 chunk 里 `modeText` 位于 `methods` |
+
+### 附带修复：重编把 dist 里的非构建资源清空了
+
+`nuxt generate` 会**先清空 dist**，而 dist 里除了构建产物，还有一批手工放入的静态资源。
+r22/r23 按「构建产物」口径清点（348 / 362 个文件），漏掉了 **395 个非构建资源**（15,346,411 B）：
+`static/pdfjs` 369 个（PDF 阅读器，后端 `PDF_VIEWER` 指到 `web/viewer.html`）、
+`static/fonts` 3、`static/wallpaper` 4、`static/images` 4、`static/js/jquery-1.11.1.min.js`、
+`static/toolbox-bridge.js`、`icons/*.svg` 11、`robots.txt`、`static/pdfjs/web/viewer.html`。
+
+对账基准：**r20（原始 build.27）dist 757 个文件，r23 只有 362 个**。这些资源不会让构建失败
+（Dockerfile 只强依赖 `dist/logo`、`dist/avatar`），线上表现是图标/字体/壁纸静默 404、PDF 打不开。
+
+处理：从 r20 包原样取回 395 个文件写入 `app/dist`，同一批写入 `public/`（`dir.static`），
+以后 `generate` 自动带出；`_nuxt` 仍以新产物为准，不与旧包混用。
+
+> 教训见《开发指南》踩坑 #18、#19；完整证据链见 `docs/故障复盘-读者组转圈.md`。
+> 本版仍**只换前端产物**，装后 `Ctrl+Shift+R` 强刷。
+
 ## 4.6.0-build.27-r20（2026-11-11，可页内热更，**只有前端产物**）
 
-### 「读者组分级权限一直转圈」的根本原因
+> ⚠️ **本节对根因的判断已被 r24 推翻**：真实原因是 `modeText` 误入 `computed` 导致渲染中断，
+> 与 `server_starting` / 永不 settle 的 Promise 无关。下面的兜底仍然有价值（它们是独立的防护），
+> 但**不要**再拿「服务启动期」解释「页面一直转圈」。详见上方 r24 一节。
+
+### 「读者组分级权限一直转圈」的根本原因（归因已被更正）
 
 现象：设置页展开「读者组分级权限」，组列表位置一个圈一直转，不报错、不超时、刷新才好。
 
