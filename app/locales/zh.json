@@ -1279,7 +1279,12 @@
             "白名单（只可读匹配项）组若一个条件都不填，成员将看不到任何书"
         ],
         "reader_group_orphan_title": "成员指向已删除的组（这些人当前读不到任何书）",
-        "reader_group_orphan_tips": "把这些人重新分配到现有组即可恢复；或删除他们的组归属。",
+        "reader_group_orphan_tips": "成员的组归属一直都还在（存的是组名），按原组名把组建回来就能自动归位，不用重新分配人。",
+        "reader_group_revive_one": "重建此组",
+        "reader_group_revive_all": "一键重建全部 {n} 个组",
+        "reader_group_revive_hint": "重建出的是空规则白名单组：成员先归位，需再补填分类/标签，否则他们仍然看不到书。",
+        "reader_group_revived": "已重建 {n} 个组：{names}。成员已自动归位，请补填分类/标签（留空会被严格模式挡住）。",
+        "reader_group_revive_none": "没有需要重建的分组（可能已在其他窗口完成）",
         "reader_group_logic_tips": "分类与标签是「或」的关系：只需命中其中之一即可看到该书。只填一边就够，不必两边都选。",
         "allow_read_range_setting_tips": "这是读者组的总开关。关闭时所有读者组规则一律不生效，包括下方按组配置的分类/标签限制、严格模式与默认范围——所有登录用户都能看到全库。只想临时放开权限做排查时关掉即可，不用改任何组配置。访客始终只能看到未设置分类和标签的书。",
         "default_read_range_heading": "新用户默认阅读范围",

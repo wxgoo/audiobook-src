@@ -8,6 +8,7 @@ from unittest import mock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from webserver import models
 from webserver.models import Reader
@@ -251,6 +252,104 @@ class TestReaderGroupOptionsEndpoint(unittest.TestCase):
         rsp = self._call_options(h)
         self.assertEqual(rsp["err"], "ok")
         self.assertEqual(rsp["categories"], [])
+
+
+class TestReviveOrphanGroups(unittest.TestCase):
+    """悬空组名一键重建空分组。
+
+    事故背景：设置页保存把 READER_GROUPS 整份抹掉，组定义没了，但成员的
+    Reader.extra["reader_group"] 还写着组名。旧实现在 GET 列表时顺手把这些
+    引用 clear 掉 —— 管理员还没看到提示，唯一能恢复归属的线索就没了，
+    重建同名组也找不回人。这里把「只报告不清除」和「重建后成员归位」都锁住。
+    """
+
+    GROUP = "儿童"
+
+    def setUp(self):
+        self.conf = FakeConf()
+        patcher = mock.patch.object(reader_group, "CONF", self.conf, create=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        persist = mock.patch.object(reader_group, "_persist", lambda groups: None)
+        persist.start()
+        self.addCleanup(persist.stop)
+        # StaticPool：内存库必须复用同一条连接，否则 collect_groups 里
+        # session.close() 之后就查不到刚才插的数据了
+        engine = create_engine("sqlite://", poolclass=StaticPool,
+                               connect_args={"check_same_thread": False})
+        self.session = scoped_session(
+            sessionmaker(bind=engine, autoflush=True, autocommit=False))
+        self.addCleanup(self.session.remove)
+        models.Base.metadata.create_all(engine)
+        for name in ("kid", "kid2"):
+            self.session.add(make_reader(name=name,
+                                         extra={reader_group.MEMBER_KEY: self.GROUP}))
+        self.session.commit()
+
+    def _names_in_group(self, name):
+        rows = self.session.query(Reader).all()
+        return sorted(r.username for r in rows
+                      if (r.extra or {}).get(reader_group.MEMBER_KEY) == name)
+
+    def test_orphan_groups_lists_members_of_missing_group(self):
+        orphan = ReaderGroupService.orphan_groups(self.session)
+        self.assertEqual(sorted(orphan[self.GROUP]), ["kid", "kid2"])
+        # 只读不写：查询本身不能改动成员归属
+        self.assertEqual(self._names_in_group(self.GROUP), ["kid", "kid2"])
+
+    def test_collect_groups_does_not_clear_orphans(self):
+        """GET/POST 共用入口只能报告悬空引用，绝不能顺手清掉（旧 bug）。"""
+        from webserver.handlers.reader_group import collect_groups
+
+        h = mock.Mock()
+        h.settings = {"ScopedSession": self.session}
+        groups, orphan = collect_groups(h)
+        self.assertEqual(sorted(orphan[self.GROUP]), ["kid", "kid2"])
+        self.assertNotIn(self.GROUP, groups)
+        # 查完之后数据还在 —— 这是「重建能找回人」的前提
+        self.assertEqual(self._names_in_group(self.GROUP), ["kid", "kid2"])
+
+    def test_revive_all_creates_empty_group_and_keeps_members(self):
+        n, revived = ReaderGroupService.revive_groups(None, self.session)
+        self.assertEqual((n, revived), (1, [self.GROUP]))
+        groups = ReaderGroupService.list_groups()
+        self.assertIn(self.GROUP, groups)
+        self.assertEqual(groups[self.GROUP]["mode"], "whitelist")
+        self.assertEqual(groups[self.GROUP]["categories"], "")
+        self.assertEqual(groups[self.GROUP]["tags"], "")
+        # 成员归属从来就没丢过，组一回来人自动归位
+        self.assertEqual(self._names_in_group(self.GROUP), ["kid", "kid2"])
+        # 重建后不再有悬空引用
+        self.assertEqual(ReaderGroupService.orphan_groups(self.session), {})
+
+    def test_revive_specific_name_only(self):
+        self.session.add(make_reader(name="guest1",
+                                     extra={reader_group.MEMBER_KEY: "访客"}))
+        self.session.commit()
+        n, revived = ReaderGroupService.revive_groups([self.GROUP], self.session)
+        self.assertEqual((n, revived), (1, [self.GROUP]))
+        self.assertNotIn("访客", ReaderGroupService.list_groups())
+        # 没点重建的那个组保持原样，人继续挂着等管理员处理
+        self.assertEqual(ReaderGroupService.orphan_groups(self.session), {"访客": ["guest1"]})
+
+    def test_revive_ignores_known_or_unknown_names(self):
+        """名字不在悬空集合里（已重建 / 打错字）时什么都不做，不能凭空建组。"""
+        n, revived = ReaderGroupService.revive_groups(["不存在的组"], self.session)
+        self.assertEqual((n, revived), (0, []))
+        self.assertEqual(ReaderGroupService.list_groups(), {})
+
+    def test_revive_without_session_is_noop(self):
+        self.assertEqual(ReaderGroupService.revive_groups(None, None), (0, []))
+        self.assertEqual(self._names_in_group(self.GROUP), ["kid", "kid2"])
+
+    def test_revived_empty_whitelist_still_blocks_books(self):
+        """重建出来的是空白名单：严格模式下组员仍读不到书，不能静默放行全库。"""
+        ReaderGroupService.revive_groups(None, self.session)
+        r = make_reader(extra={reader_group.MEMBER_KEY: self.GROUP})
+        eff = ReaderGroupService.effective_limits(r)
+        self.assertEqual(eff["read_limit"], 1)
+        self.assertEqual(eff["source"], "group-strict")
+        self.assertFalse(reader_group.book_matches_limits({"tags": ["童话"]}, eff))
 
 
 if __name__ == "__main__":

@@ -268,6 +268,58 @@ class ReaderGroupService:
                      name, removed)
         return True, "ok"
 
+    # ---------- 悬空引用 ----------
+
+    @staticmethod
+    def orphan_groups(session) -> dict:
+        """{组名: [用户名]}：成员 extra 里写着某组名，但该组定义已不存在。
+
+        这些人在权限判定里走 effective_limits 的 "group-missing" 分支
+        （读不到任何书），组列表里又找不到他们 —— 不显式报出来，管理员只会
+        觉得「这人怎么啥都看不见」。
+
+        注意：**只能报告，不能顺手清**。清掉 Reader.extra["reader_group"] 是
+        不可逆的；留着它，管理员重建同名组后成员归属立刻回位。
+        （旧实现在 GET 列表时直接 clear_members_of，等于把唯一能恢复的线索
+        当场删了，重建组也找不回人。）
+        """
+        members = ReaderGroupService.members_of(session)
+        known = ReaderGroupService.list_groups()
+        return {name: users for name, users in members.items() if name not in known}
+
+    @staticmethod
+    def revive_groups(names=None, session=None) -> tuple:
+        """按悬空组名重建空分组（白名单、无条件），返回 (重建数, 组名列表)。
+
+        成员归属存的是组名字符串，从来没丢过；组定义一回来，这些人自动归位，
+        管理员只需要补填白名单条件。新建的组是「白名单 + 没有条件」，严格模式
+        下等于读不到书 —— 这是有意的：宁可先挡住，也不能在管理员还没来得及
+        配规则时静默放行全库。
+
+        names 为空表示「重建全部悬空组」；传了名字但已不是悬空状态的会忽略。
+        """
+        if session is None:
+            return 0, []
+        orphan = ReaderGroupService.orphan_groups(session)
+        wanted = [str(n or "").strip() for n in (names or [])]
+        wanted = [n for n in wanted if n]
+        targets = [n for n in wanted if n in orphan] if wanted else list(orphan)
+        seen, ordered = set(), []
+        for n in targets:
+            if n not in seen:
+                seen.add(n)
+                ordered.append(n)
+        if not ordered:
+            return 0, []
+        groups = dict(_groups())
+        for n in ordered:
+            groups[n] = {"mode": "whitelist", "categories": "", "tags": ""}
+        CONF[GROUPS_KEY] = groups
+        _persist(groups)
+        logging.info("[reader-group] revived %d orphan groups: %s",
+                     len(ordered), ordered)
+        return len(ordered), ordered
+
     # ---------- 成员 ----------
 
     @staticmethod

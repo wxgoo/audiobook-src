@@ -96,10 +96,37 @@
         class="mb-3"
       >
         <div class="font-weight-medium mb-1">{{ $t("settings.reader_group_orphan_title") }}</div>
-        <div v-for="g in orphanNames" :key="g" class="text-caption">
-          「{{ g }}」→ {{ orphans[g].join("、") }}
+        <div
+          v-for="g in orphanNames"
+          :key="g"
+          class="d-flex align-center flex-wrap text-caption"
+        >
+          <span class="mr-2">「{{ g }}」→ {{ orphans[g].join("、") }}</span>
+          <v-btn
+            x-small
+            text
+            color="warning"
+            class="ml-1"
+            :loading="reviving === g"
+            :disabled="!!reviving"
+            @click="revive([g])"
+          >{{ $t("settings.reader_group_revive_one") }}</v-btn>
         </div>
         <div class="text-caption mt-1">{{ $t("settings.reader_group_orphan_tips") }}</div>
+        <div class="mt-2">
+          <v-btn
+            x-small
+            color="warning"
+            outlined
+            :loading="reviving === '*'"
+            :disabled="!!reviving"
+            @click="revive(null)"
+          >
+            <v-icon left x-small>mdi-auto-fix</v-icon>
+            {{ $t("settings.reader_group_revive_all", { n: orphanNames.length }) }}
+          </v-btn>
+          <span class="text-caption grey--text ml-2">{{ $t("settings.reader_group_revive_hint") }}</span>
+        </div>
       </v-alert>
       <div v-if="!loaded && loading" class="text-center py-4"><v-progress-circular indeterminate></v-progress-circular></div>
       <v-simple-table v-else-if="groupNames.length" dense>
@@ -175,6 +202,9 @@ export default {
     loading: false,
     saving: false,
     assigning: false,
+    // 正在重建的悬空组名；'*' 表示「全部重建」。非空时按钮统一禁用，
+    // 避免连点造成重复建组。
+    reviving: "",
     groups: {},
     // 悬空引用：{组名: [用户名]}，成员的组已被删/改名，导致这些人权限判定为
     // 「组不存在 → 读不到任何书」，需要在界面上显式提示重新分配。
@@ -383,6 +413,40 @@ export default {
       } catch (err) {
         this.$alert("error", String(err));
       }
+    },
+    // 按悬空组名重建空组：成员归属（Reader.extra.reader_group）一直都还在，
+    // 组定义一回来这些人立刻归位，管理员只需补填白名单条件。
+    // names 为 null 表示重建全部悬空组。
+    async revive(names) {
+      if (this.reviving) return;
+      this.reviving = names ? names[0] : "*";
+      try {
+        const rsp = await this.$backend("/admin/reader_groups/revive", {
+          method: "POST",
+          body: JSON.stringify(names ? { names } : {}),
+        });
+        if (rsp.err === "ok") {
+          this.groups = rsp.groups || {};
+          this.orphans = rsp.orphans || {};
+          this.$alert(
+            "success",
+            this.$t("settings.reader_group_revived", {
+              n: (rsp.revived || []).length,
+              names: (rsp.revived || []).join("、"),
+            })
+          );
+        } else if (rsp.err === "nothing") {
+          // 组已经重建过了（另一个标签页操作过 / 连点），刷新即可
+          this.groups = rsp.groups || {};
+          this.orphans = rsp.orphans || {};
+          this.$alert("info", this.$t("settings.reader_group_revive_none"));
+        } else {
+          this.$alert("error", rsp.msg || rsp.err);
+        }
+      } catch (err) {
+        this.$alert("error", String(err));
+      }
+      this.reviving = "";
     },
     async assign() {
       // chips 数组 + 手输残余项统一清洗：按逗号/分号/空白切分（手输 "alice bob"

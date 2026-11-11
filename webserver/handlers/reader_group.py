@@ -103,13 +103,43 @@ class ReaderGroupOptions(BaseHandler):
                 "usernames": usernames}
 
 
+def collect_groups(handler) -> tuple:
+    """组定义 + 成员名单 + 悬空引用，一次查完。返回 (groups, orphans)。
+
+    GET / POST / 重建三个接口共用，保证响应结构完全一致（前端拿整份 groups
+    覆盖本地状态，少一个字段就会把成员列清空）。
+
+    必须是函数而不是实例方法里的逻辑：ScopedSession 在 handler.settings 里，
+    全局 loader.get_settings() 拿不到它（会 KeyError）。
+
+    悬空引用（成员挂着已不存在的组名）**只统计、不清除**：
+    旧实现在这里顺手 clear_members_of 把 Reader.extra["reader_group"] 抹了，
+    等于在管理员看到提示之前就把唯一能恢复的线索删掉，重建同名组也找不回人。
+    留着它不是风险 —— effective_limits 对 group-missing 一律按「读不到书」
+    兜底，不会静默放行。
+    """
+    ScopedSession = handler.settings["ScopedSession"]
+    session = ScopedSession()
+    try:
+        members = ReaderGroupService.members_of(session)
+        orphan = ReaderGroupService.orphan_groups(session)
+    finally:
+        session.close()
+    groups = ReaderGroupService.list_groups()
+    for name, cfg in groups.items():
+        cfg["members"] = members.get(name, [])
+    if orphan:
+        logging.warning("[reader-group] orphan group refs: %s",
+                        {k: len(v) for k, v in orphan.items()})
+    return groups, orphan
+
+
 class ReaderGroupList(BaseHandler):
     @js
     @is_admin
     def get(self):
-        groups = self._groups_with_members()
-        return {"err": "ok", "groups": groups,
-                "orphans": getattr(self, "_orphan_groups", {})}
+        groups, orphan = collect_groups(self)
+        return {"err": "ok", "groups": groups, "orphans": orphan}
 
     @js
     @is_admin
@@ -134,45 +164,8 @@ class ReaderGroupList(BaseHandler):
             session.close()
         if not ok:
             return {"err": "params", "msg": msg}
-        return {"err": "ok", "groups": self._groups_with_members()}
-
-    def _groups_with_members(self) -> dict:
-        """组定义 + 成员名单合并返回（GET/POST 共用，保证结构一致）。
-
-        必须是实例方法：ScopedSession 在 self.settings 里，
-        全局 loader.get_settings() 拿不到它（会 KeyError）。
-        """
-        ScopedSession = self.settings["ScopedSession"]
-        session = ScopedSession()
-        try:
-            members = ReaderGroupService.members_of(session)
-            # 组已不存在但成员还挂着 → 修好数据，别留悬空引用。
-            # 不修的话：组被删了成员却仍被判定为「受限且读不到书」，
-            # 管理员在界面上看不到这些人，只能靠猜。
-            stale = [g for g in members if g not in ReaderGroupService.list_groups()]
-            if stale:
-                fixed = ReaderGroupService.clear_members_of(stale, session)
-                if fixed:
-                    logging.warning("[reader-group] dropped %d stale member refs: %s",
-                                    fixed, stale)
-                for g in stale:
-                    members.pop(g, None)
-        finally:
-            session.close()
-        groups = ReaderGroupService.list_groups()
-        for name, cfg in groups.items():
-            cfg["members"] = members.get(name, [])
-        # 悬空引用：成员的 extra 里写着某组名，但该组已不存在（删组/改名/导入
-        # 数据没带上设置）。这类用户在权限判定里是「读不到任何书」，
-        # 必须显式暴露出来，否则管理员只看到"这个人不在任何组里"，无从发现。
-        orphan = {}
-        for gname, users in members.items():
-            if gname not in groups:
-                orphan[gname] = users
-        if orphan:
-            logging.warning("[reader-group] orphan group refs: %s", orphan)
-        self._orphan_groups = orphan
-        return groups
+        groups, orphan = collect_groups(self)
+        return {"err": "ok", "groups": groups, "orphans": orphan}
 
 
 class ReaderGroupDelete(BaseHandler):
@@ -278,6 +271,42 @@ class ReaderGroupDebug(BaseHandler):
         return {"err": "ok", "readers": out}
 
 
+class ReaderGroupRevive(BaseHandler):
+    """按悬空组名一键重建空分组。
+
+    场景：组定义丢了（设置被误抹、导入旧配置、手工改了 auto.py），但成员的
+    Reader.extra["reader_group"] 还写着组名。以前只能靠管理员手抄组名一个个
+    新建，抄错一个字组员就回不来。
+
+    重建出来的组是「白名单 + 空条件」：严格模式下组员仍然读不到书，等管理员
+    补规则；这一点必须在界面上说清，否则「点了重建还是看不到书」会被当成 bug。
+    """
+
+    @js
+    @is_admin
+    def post(self):
+        try:
+            data = json.loads(self.request.body.decode("utf-8") or "{}")
+        except ValueError:
+            return {"err": "params", "msg": "请求体不是合法 JSON"}
+        names = data.get("names")
+        if names is not None and not isinstance(names, list):
+            return {"err": "params", "msg": "names 必须是数组"}
+        ScopedSession = self.settings["ScopedSession"]
+        session = ScopedSession()
+        try:
+            n, revived = ReaderGroupService.revive_groups(names, session)
+        finally:
+            session.close()
+        if not n:
+            groups, orphan = collect_groups(self)
+            return {"err": "nothing", "msg": "没有需要重建的分组",
+                    "revived": [], "groups": groups, "orphans": orphan}
+        groups, orphan = collect_groups(self)
+        return {"err": "ok", "revived": revived,
+                "groups": groups, "orphans": orphan}
+
+
 def routes():
     return [
         (r"/api/admin/reader_groups", ReaderGroupList),
@@ -285,5 +314,6 @@ def routes():
         (r"/api/admin/reader_groups/presets", ReaderGroupPresets),
         (r"/api/admin/reader_groups/delete", ReaderGroupDelete),
         (r"/api/admin/reader_groups/assign", ReaderGroupAssign),
+        (r"/api/admin/reader_groups/revive", ReaderGroupRevive),
         (r"/api/admin/reader_groups/debug", ReaderGroupDebug),
     ]
