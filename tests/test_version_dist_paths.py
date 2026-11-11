@@ -81,5 +81,67 @@ class TestDistConstants(unittest.TestCase):
             self.assertIn(suffix, VC.DIST_SUFFIX)
 
 
+class TestDownloadFailures(unittest.TestCase):
+    """下载失败要说清「哪个文件、为什么、怎么办」。
+
+    r18 那次线上报的是裸 `HTTP 451`：既没有路径，又重试三次共 90 秒，
+    管理员完全无从判断是网络问题还是发布侧问题。451 是 Gitee 内容审核，
+    重试无意义，必须立刻停手并给出可执行的替代路径。
+    """
+
+    class _Resp:
+        def __init__(self, code, text=""):
+            self.status_code = code
+            self.content = b"" if code != 200 else b"x"
+            self.text = text
+
+    class _Session:
+        def __init__(self, resp):
+            self.resp = resp
+            self.calls = 0
+
+        def get(self, url, timeout=0, allow_redirects=True):
+            self.calls += 1
+            return self.resp
+
+    def setUp(self):
+        self._orig = VC._session
+        self._orig_sleep = VC.time.sleep
+        VC.time.sleep = lambda *a, **k: None  # 别让测试真的等 0.8/1.6 秒
+
+    def tearDown(self):
+        VC._session = self._orig
+        VC.time.sleep = self._orig_sleep
+
+    def test_451_is_not_retried(self):
+        sess = self._Session(self._Resp(451, "The content may contain violation information"))
+        VC._session = sess
+        with self.assertRaises(VC.RawFetchError) as ctx:
+            VC._get("http://example.invalid/x")
+        self.assertEqual(sess.calls, 1)
+        self.assertEqual(ctx.exception.code, 451)
+        self.assertIn("451", str(ctx.exception))
+
+    def test_5xx_is_retried(self):
+        sess = self._Session(self._Resp(502))
+        VC._session = sess
+        with self.assertRaises(Exception):
+            VC._get("http://example.invalid/x", tries=3)
+        self.assertEqual(sess.calls, 3)
+
+    def test_451_message_has_path_and_way_out(self):
+        msg = VC._download_failure("webserver/services/reader_group.py",
+                                   VC.RawFetchError(451))
+        self.assertIn("webserver/services/reader_group.py", msg)
+        self.assertIn("451", msg)
+        self.assertIn("部署包", msg)          # 兜底办法必须写出来
+        self.assertIn("发布侧", msg)          # 明确不是本机网络问题
+
+    def test_generic_error_has_path(self):
+        msg = VC._download_failure("app/dist/index.html", Exception("HTTP 500"))
+        self.assertIn("app/dist/index.html", msg)
+        self.assertIn("500", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -89,15 +89,34 @@ def _raw_url(path):
                             p=quote(path.lstrip("/"), safe="/"))
 
 
+class RawFetchError(Exception):
+    """Gitee raw 下载失败。带状态码，便于把 451 和其他失败区分开。"""
+
+    def __init__(self, code, body=""):
+        self.code = code
+        self.body = (body or "").strip()[:120]
+        msg = "HTTP %s" % code if code else "网络异常"
+        if code == 451:
+            msg += "（Gitee 判定该文件含违规内容，拒绝分发）"
+        elif self.body and code in (403, 404):
+            msg += "（%s）" % self.body
+        super().__init__(msg)
+
+
 def _get(url, timeout=20, tries=3):
-    """Gitee raw 偶发 451/5xx，重试即可；返回 bytes 或抛最后一次异常。"""
+    """Gitee raw 偶发 5xx / 408 / 429，重试有意义；4xx 是确定性拒绝，
+    重试只是把 30 秒拖成 90 秒（451 尤其：内容审核拦了，试一百次也一样）。"""
     last = None
     for i in range(tries):
         try:
             r = _session.get(url, timeout=timeout, allow_redirects=True)
             if r.status_code == 200 and r.content:
                 return r.content
-            last = Exception("HTTP %s" % r.status_code)
+            last = RawFetchError(r.status_code, r.text)
+            if 400 <= r.status_code < 500 and r.status_code not in (408, 429):
+                raise last
+        except RawFetchError:
+            raise
         except Exception as e:  # noqa: BLE001 - 网络异常统一重试
             last = e
         if i < tries - 1:
@@ -314,6 +333,23 @@ def _backup(files, from_rev, to_rev):
     return dest
 
 
+def _download_failure(path, err):
+    """把下载异常翻译成管理员照着能做的提示。
+
+    451 是**发布侧**问题：Gitee 的内容审核拦了仓库里某个文件（源码里的敏感词组、
+    或者是被误判的正文），重试、换网络、等一会儿都无用，只能由发布者改掉那个文件；
+    本机这边只能整包部署绕过。r18 就栽在这里 —— 读者组模板里写了几个露骨标签
+    词，整份 `reader_group.py` 被判 451，在线更新下到第二个文件就断了。
+    """
+    code = getattr(err, "code", 0)
+    if code == 451:
+        return ("下载被 Gitee 拦截（451，内容审核）：%s\n"
+                "这是发布侧的文件内容问题，与本机网络无关，重试无效。\n"
+                "可选：① 用部署包整包替换；② 等发布者发一版修正后的清单再更新。"
+                % path)
+    return "下载失败：%s（%s）" % (path, err)
+
+
 def apply_update(revision):
     """按发布清单执行在线热更新。返回 dict；restart=True 时由 handler 触发进程重启。"""
     with _lock:
@@ -366,7 +402,10 @@ def _apply_locked(revision):
         payloads = {}
         for item in entries:
             p, expect, size = item["path"], item["sha256"], int(item["bytes"])
-            data = _get(_raw_url(p), timeout=30)
+            try:
+                data = _get(_raw_url(p), timeout=30)
+            except Exception as e:  # noqa: BLE001 - 统一转成「哪个文件 + 怎么办」
+                raise RuntimeError(_download_failure(p, e))
             if len(data) != size or hashlib.sha256(data).hexdigest() != expect:
                 raise RuntimeError("下载内容与发布清单不符（sha256 / 大小）：%s" % p)
             if p.endswith(".py"):

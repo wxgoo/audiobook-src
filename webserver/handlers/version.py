@@ -59,7 +59,13 @@ class VersionApply(BaseHandler):
         if not revision:
             return {"err": "params.missing", "msg": _("缺少修订号")}
         loop = tornado.ioloop.IOLoop.current()
-        rsp = await loop.run_in_executor(None, vc.apply_update, revision)
+        try:
+            rsp = await loop.run_in_executor(None, vc.apply_update, revision)
+        except Exception as e:  # noqa: BLE001 - 更新失败要能读，不能给管理员抛 traceback
+            # 失败时线上文件一个都没动（apply 是先全量校验再落盘），
+            # 所以这里只需要把「哪个文件、为什么、怎么办」讲清楚。
+            logging.warning("[VERSION] 在线更新失败: %s", e)
+            return {"err": "update.failed", "msg": str(e)}
         rsp = dict(rsp)
         rsp["msg"] = _("更新已应用，服务正在重启，请稍候刷新页面")
         _schedule_restart(self)
