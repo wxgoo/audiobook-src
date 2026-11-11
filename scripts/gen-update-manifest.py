@@ -48,6 +48,9 @@ DIST_PREFIX = "app/dist/"
 DIST_SUFFIX = (".js", ".css", ".html", ".json", ".map", ".txt",
                ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico",
                ".woff", ".woff2", ".ttf", ".eot")
+# dist 下少数没有扩展名的产物：webpack 生成的第三方许可证清单，纯文本，不影响运行。
+# 不认它的话每次构建都会多出一个 blocking 文件，把整次修订顶成「必须重新部署」。
+DIST_EXACT = {"app/dist/_nuxt/LICENSES"}
 # 在线更新 dist 的规模上限：超过就不走页内更新，退回重新部署。
 # Nuxt 每次构建都会重写全部路由 html（buildId 变），一个异步 chunk 改动还会连带重写引用
 # 它的 chunk——实测「只改一个设置页」= 210 个文件 / 3.4MB，所以 200 那个值每次都会误伤。
@@ -117,6 +120,8 @@ def classify(path):
     if path.startswith(HOTFIX_PREFIX) and path.endswith(".py") and "/__pycache__/" not in path:
         return "hotfix"
     # 前端产物：只认 app/dist/ 下的静态文件，其它 app/ 源码改动仍是 blocking
+    if path in DIST_EXACT:
+        return "dist"
     if path.startswith(DIST_PREFIX) and path.endswith(DIST_SUFFIX):
         return "dist"
     return "blocking"
@@ -243,7 +248,9 @@ def main():
             "本次改动包含镜像级文件（Dockerfile / conf / 依赖 / 工具链 / 删除的前端文件），"
             "在线替换无法生效，请重新执行 deploy.sh / upgrade.sh"
             if blocking else
-            "包含前端产物与后端代码，可在线替换并重启服务；完成后请 Ctrl+Shift+R 强制刷新"
+            "包含前端产物与后端 Python 代码，可在线替换并重启服务；完成后请 Ctrl+Shift+R 强制刷新"
+            if (dist_files or dist_deleted) and files else
+            "仅前端产物变更（后端代码未动），可在线替换；完成后请 Ctrl+Shift+R 强制刷新"
             if dist_files or dist_deleted else
             "仅后端 Python 代码变更，可在线替换并重启服务，无需重建镜像"
             if files else

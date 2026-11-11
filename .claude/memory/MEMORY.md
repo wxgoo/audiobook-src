@@ -238,3 +238,21 @@ cd /volume1/docker && mv audiobook audiobook-backup-$(date +%m%d) && tar xzf aud
 
 容器内权限相关：`docker exec` 默认是 root（镜像 USER），服务进程是 gosu 降到 `PUID:PGID`
 （compose 默认 1026:100）；`/data` 下文件属主显示 1026 是正常的，别误判成权限问题。
+
+---
+
+## ⑪ 列表拖拽排序：稳定 key 要「看得见但存不进去」
+
+设置页友情链接用 `vuedraggable` 拖动排序（`app/src/pages/admin/settings.vue`）。三条硬约束：
+
+1. `v-for` 的 key **不能用下标**——Sortable 先移动真实 DOM，Vue 按下标复用元素，
+   拖动后输入框里的文字会串到别的行。
+2. 稳定 id **不能进配置文件**。用 `Object.defineProperty(item, "_uid",
+   { value: ++seq, enumerable: false })`：`Object.keys` / `Object.assign` / `JSON.stringify`
+   都看不到它，落盘到 `auto.py` 时干干净净，也不影响「未保存修改」的 JSON 比对。
+3. 数组**不能整份替换**。`moveFriend` 早期用 `slice` + `$set` 换新数组去绕「Vue 2 侦测不到
+   下标赋值」，但 `:list` 绑的是引用，换新数组后拖拽组件还指着旧数据。改用
+   `splice` 摘出再插入：既响应式，又保持同一引用。
+
+验证：无头 Chromium 用 `locator.drag_to()` 能触发 HTML5 拖拽；拖完比对
+「数据顺序 / `_uid` / 输入框 value」三者是否一一对应，再跑一次删除 + 新增。
