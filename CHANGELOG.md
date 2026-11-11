@@ -9,6 +9,29 @@
 
 ---
 
+## 4.6.0-build.27-r13（2026-11-11，未随包）
+
+**含前端产物**：设置页字段清理随 `app/dist` 下发（`requires_dist=true`），已热更到
+r12 的实例也不能页内点更新，需随包或 `git pull && docker compose up -d --build` 重新部署。
+
+- **douban v1 尸体彻底清除**：r12 只做了「注销」，插件本体还留在树里。本条删除
+  `webserver/plugins/meta/douban/`（3 文件）、`tests/test_douban.py`、
+  `webserver/test/test_douban_search.py`、`TestReferDouban` 类与 `tests/run.py` 引用。
+- **修正 r12 误删 `douban_max_count`**：豆瓣V2 的每源返回条数也在读这个键
+  （`douban_v2/plugin.py`），删掉后 v2 丢配置入口；现恢复进默认值与保存白名单，
+  界面文案去掉「插件」二字（「豆瓣查询结果数量」）。
+- **公共函数迁移**：`str2date` / `has_proper_book` 迁至 `webserver/base/meta_helper.py`，
+  `baike` / `handlers/book.py` / `ai_fillinfo` 改引公共层——这是删插件目录的前提。
+- **前端源码清理**：设置页删 `douban_baseurl` / `douban_apikey` 两个字段与「豆瓣插件」
+  说明条；搜索索引 mapping 三语区共约 20 处引用清理；`app/dist` 已重建。
+- **三语 locale**：各删 `douban_baseurl` / `douban_api_key` / `douban_plugin_description` /
+  `meta_source_douban` 4 键；`douban_max_count` 文案同步去「插件」。
+- **文案与 i18n**：ISBN 查询失败提示去掉「配置插件地址」口径，中/英/繁同步。
+- **文档**：《在线更新说明》补 8.10 节——rsync 拷贝目录报 "not a git repository" 的
+  就地 `git init` + fetch + reset 处理（vDSM 排错现场补充）。
+
+---
+
 ## 4.6.0-build.27-r12（2026-11-10，未随包，可页内热更）
 
 - **检索索引（FTS5）修复（重点）**：`search_index._fill_index` 引用了 calibre
@@ -28,25 +51,6 @@
   ISBN 兜底链改为 douban_v2 → xhsd 两级。v2 直连源不受影响。
 - `gen-update-manifest.py` 分类修正：`tests/**` 与维护者侧工具自身的改动归为
   非阻塞（原来一个测试文件就会把纯后端修订顶成「必须重新部署」）。
-
-**r12 收尾（本次提交，一并归入 r12）**：上一条只做了「注销」，插件本体还留在
-树里、设置页字段要到下一版 dist 才消失；本条把尸体清干净，并修正一处误删。
-
-- **插件本体与测试删除**：`webserver/plugins/meta/douban/`（3 文件）、
-  `tests/test_douban.py`、`webserver/test/test_douban_search.py`、
-  `TestReferDouban` 类与 `tests/run.py` 引用——不再只是注销。
-- **`douban_max_count` 恢复**：豆瓣V2 的每源返回条数也在读这个键
-  （`douban_v2/plugin.py`），上条误删导致 v2 丢配置入口；现恢复进默认值与
-  保存白名单，界面文案去掉「插件」二字（「豆瓣查询结果数量」）。
-- **公共函数迁移**：`str2date` / `has_proper_book` 迁至
-  `webserver/base/meta_helper.py`，`baike` / `handlers/book.py` / `ai_fillinfo`
-  改引公共层——这是删插件目录的前提。
-- **前端源码清理**：设置页删 `douban_baseurl` / `douban_apikey` 两个字段与
-  「豆瓣插件」说明条；搜索索引 mapping 三语区共约 20 处引用清理；`app/dist`
-  已重建，本次修订**含前端产物**（`requires_dist=true`，需随包或热更 dist）。
-- **三语 locale**：各删 `douban_baseurl` / `douban_api_key` /
-  `douban_plugin_description` / `meta_source_douban` 4 键。
-- **文案与 i18n**：ISBN 查询失败提示去掉「配置插件地址」口径，中/英/繁同步。
 
 ---
 
