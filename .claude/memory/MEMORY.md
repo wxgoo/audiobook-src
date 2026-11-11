@@ -265,3 +265,24 @@ r13 的断言只测了 `save_partial` 路径，所以「测试全绿、线上照
 
 验证：无头 Chromium 用 `locator.drag_to()` 能触发 HTML5 拖拽；拖完比对
 「数据顺序 / `_uid` / 输入框 value」三者是否一一对应，再跑一次删除 + 新增。
+
+---
+
+## ⑫ 悬空引用：只报告，不要「顺手修」
+
+读者组的组名存在 `Reader.extra["reader_group"]`（用户侧），组定义存在
+`CONF["READER_GROUPS"]`（设置侧）。两边不同步 → 「组不存在 → 读不到任何书」，
+界面上又看不到这些人。
+
+踩过的错：在 `GET /api/admin/reader_groups` 里发现悬空就 `clear_members_of()`。
+自以为在修脏数据，实际是**在管理员看到告警之前把唯一能恢复的线索删了** ——
+组定义重建回来，人也回不去了，DB 里没有 `extra` 的历史。
+
+现在的做法：
+- `collect_groups()` 只算 `orphan_groups()`，不写 DB；
+- 悬空本身不危险，`effective_limits()` 对 `group-missing` 按「读不到书」兜底，不会静默放行；
+- 重建走显式接口 `POST /api/admin/reader_groups/revive`（`names` 缺省=全部），
+  建出来是「白名单 + 空条件」，人归位但规则仍挡着，等管理员补分类/标签。
+
+判断口径：清理动作若丢掉「别处算不出来」的信息，就不能放在读路径上；
+要么别做，要么改成显式操作 + 可回滚。
