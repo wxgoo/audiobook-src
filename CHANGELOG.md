@@ -9,6 +9,30 @@
 
 ---
 
+## 4.6.0-build.27-r15（2026-11-11，可页内热更）
+
+> 只动前端（`app/src/pages/admin/settings.vue` + 重建 `app/dist`），后端 `.py` 未改；
+> 清单 `requires_dist=true` 且 `dist_hotfixable=true`，已在 r14 的实例可直接点「立即更新」
+> （r14 之前的页面不认识 `dist_files`，需整包部署一次把后端换新）。
+
+- **友情链接支持拖动排序**：条目一多，「上移 / 下移」要点十几次。现在每行左侧多一个拖拽把手
+  （`mdi-drag-vertical`），按住拖到目标位置即可，落点处显示半透明占位行；触屏上长按 120ms
+  才起拖，避免滑动页面时误改顺序；上下箭头保留，用于 ±1 的精调。首列宽度 1→2，链接列
+  6→5，总宽仍是 12 栅格。
+- **拖拽的稳定 key 不能写进配置**：`v-for` 原来用下标当 key，拖动后 Vue 按下标复用元素，
+  输入框里正在编辑的文字会「跟着」跑到别的行。改为每条挂一个自增 `_uid`，并用
+  `Object.defineProperty` 定义成**非枚举**属性——`Object.assign` / `JSON.stringify` 都看不见它，
+  保存时不会被写进 `auto.py`，也不影响「未保存修改」的 JSON 比对。
+- **`moveFriend` 改回原地挪动**：上一节那条用 `slice` + `$set` 整体替换数组，绕开了「Vue 2
+  侦测不到下标赋值」，但拖拽组件的 `:list` 绑的就是这个数组引用，换成新数组会让它指向旧数据。
+  改用 `splice` 摘出再插入：既触发响应式，又保持同一个数组引用。
+- **新增 `addFriend()` / `removeFriend()`**：新增时顺带挂 `_uid`，删除走 `splice`。
+- **验证**：无头 Chromium 里用克隆页面跑了完整回归（拖首行到末行 / 反拖 / 拖动后改写输入框 /
+  上下按钮 / 删除 / 新增），顺序、`_uid`、输入框内容一一对应，无 JS 报错；
+  `JSON.stringify(FRIENDS)` 输出里没有 `_uid`。
+
+---
+
 ## 4.6.0-build.27-r13（2026-11-11，随包 `audiobook-deploy-4.6.0-build.27.tar.gz`）
 
 **含前端产物**：设置页字段清理随 `app/dist` 下发（`requires_dist=true`），已热更到

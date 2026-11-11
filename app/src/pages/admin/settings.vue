@@ -496,18 +496,34 @@
 
             <template v-if="s.special === 'friends'">
               <div id="f-FRIENDS" class="pl-6">
-              <div class="text-caption grey--text mb-2">{{ $t("settings.friend_type_hint") }}</div>
+              <div class="text-caption grey--text mb-2">
+                {{ $t("settings.friend_type_hint") }}
+                <span class="friend-drag-hint">· {{ $t("common.dragToReorder") }}</span>
+              </div>
+              <client-only>
+              <draggable
+                :list="settings.FRIENDS || []"
+                v-bind="friendDragOptions"
+                class="friend-list"
+              >
               <v-row
                 v-for="(friend, idx) in settings.FRIENDS"
-                :key="'friend-' + idx"
+                :key="friend._uid || 'friend-' + idx"
                 align="center"
+                class="friend-row"
               >
-                <v-col class="py-0" cols="1">
-                  <div class="d-flex flex-column align-center">
+                <v-col class="py-0" cols="2">
+                  <div class="d-flex align-center">
+                    <v-icon
+                      small
+                      class="friend-drag-handle mr-1"
+                      :title="$t('common.dragToReorder')"
+                      >mdi-drag-vertical</v-icon
+                    >
                     <v-btn x-small icon :disabled="idx <= 0"
-                           @click="moveFriend(idx, -1)"><v-icon>mdi-arrow-up</v-icon></v-btn>
+                           @click="moveFriend(idx, -1)"><v-icon small>mdi-arrow-up</v-icon></v-btn>
                     <v-btn x-small icon :disabled="idx >= settings.FRIENDS.length - 1"
-                           @click="moveFriend(idx, 1)"><v-icon>mdi-arrow-down</v-icon></v-btn>
+                           @click="moveFriend(idx, 1)"><v-icon small>mdi-arrow-down</v-icon></v-btn>
                   </div>
                 </v-col>
                 <v-col class="py-0" cols="3">
@@ -535,7 +551,7 @@
                     :label="$t('settings.friend_type')"
                   ></v-select>
                 </v-col>
-                <v-col class="py-0" cols="6">
+                <v-col class="py-0" cols="5">
                   <v-text-field
                     flat
                     small
@@ -545,15 +561,17 @@
                     :label="$t('settings.link')"
                     type="text"
                     append-outer-icon="mdi-delete"
-                    @click:append-outer="settings.FRIENDS.splice(idx, 1)"
+                    @click:append-outer="removeFriend(idx)"
                   ></v-text-field>
                 </v-col>
               </v-row>
+              </draggable>
+              </client-only>
               <v-row>
                 <v-col align="center">
                   <v-btn
                     color="primary"
-                    @click="settings.FRIENDS.push({ text: '', href: '', type: 'website' })"
+                    @click="addFriend()"
                     ><v-icon>mdi-plus</v-icon>{{ $t("settings.add") }}</v-btn
                   >
                 </v-col>
@@ -1270,10 +1288,28 @@ import BookNavEditor, { createCategory } from "~/components/BookNavEditor.vue";
 import ReaderDictEditor from "~/components/ReaderDictEditor.vue";
 import ReaderGroupEditor from "~/components/ReaderGroupEditor.vue";
 import HomepageCardsEditor from "~/components/HomepageCardsEditor.vue";
+import draggable from "vuedraggable";
 import { normalizeHomepageConfig } from "~/utils/homepage";
 import { normalizeFriendType } from "~/utils/friendMeta";
 import { languageOptions } from "~/utils/languageCodes";
 import { isHexColor, DEFAULT_ACCENT } from "~/utils/appearance";
+
+// 友链支持拖动排序，v-for 必须有稳定 key：继续用下标当 key 的话，拖动后 Vue 按下标
+// 复用元素，输入框里正在编辑的文字会「跟着」跑到别的行。这里给每条挂一个自增 _uid。
+// 关键点：用 defineProperty 定义成非枚举属性——Object.assign / JSON.stringify 都不会
+// 带上它，所以既不会被保存进 auto.py，也不影响「未保存修改」的 JSON 比对。
+let friendUidSeq = 0;
+function setFriendUid(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+  if (item._uid) return item;
+  Object.defineProperty(item, "_uid", {
+    value: ++friendUidSeq,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+  return item;
+}
 
 const LITE_GROUPS = [
   "LITE_GROUP_LISTING",
@@ -1841,6 +1877,7 @@ export default {
     "reader-dict-editor": ReaderDictEditor,
     "reader-group-editor": ReaderGroupEditor,
     "homepage-cards-editor": HomepageCardsEditor,
+    draggable,
   },
   created() {
     // 为body添加settings-page类名，应用背景图样式
@@ -2956,6 +2993,21 @@ export default {
         { value: "link", text: this.$t("settings.friend_type_link") },
       ];
     },
+    // 友链拖拽配置。只允许从左侧把手拖动：输入框里选中文字、点删除图标都不会
+    // 被当成拖拽；触屏上长按 120ms 才起拖，避免滑动页面时误改顺序。
+    friendDragOptions() {
+      const list = this.settings.FRIENDS;
+      return {
+        animation: 150,
+        handle: ".friend-drag-handle",
+        ghostClass: "friend-row-ghost",
+        chosenClass: "friend-row-chosen",
+        dragClass: "friend-row-drag",
+        delay: 120,
+        delayOnTouchOnly: true,
+        disabled: !Array.isArray(list) || list.length < 2,
+      };
+    },
     currentGroups() {
       return this.groups.filter((g) => g.id === this.activeGroup);
     },
@@ -3315,6 +3367,22 @@ export default {
     }
   },
   methods: {
+    // 新增一条空友链。_uid 决定拖拽时的元素复用，必须在这里就挂上
+    addFriend() {
+      if (!Array.isArray(this.settings.FRIENDS)) {
+        this.$set(this.settings, "FRIENDS", []);
+      }
+      this.settings.FRIENDS.push(
+        setFriendUid({ text: "", href: "", type: "website" })
+      );
+    },
+    removeFriend(idx) {
+      const arr = Array.isArray(this.settings.FRIENDS)
+        ? this.settings.FRIENDS
+        : [];
+      if (idx < 0 || idx >= arr.length) return;
+      arr.splice(idx, 1);
+    },
     normalizeFriendList(list) {
       if (!Array.isArray(list)) return [];
       const result = [];
@@ -3348,6 +3416,8 @@ export default {
           })
         );
       });
+      // 统一挂上拖拽用的稳定 key（非枚举，不参与保存）
+      result.forEach(setFriendUid);
       return result;
     },
     moveFriend(idx, dir) {
@@ -3356,11 +3426,11 @@ export default {
         : [];
       const t = idx + dir;
       if (t < 0 || t >= arr.length) return;
-      // 注意：Vue 2 无法侦测「按下标赋值」，原地交换后视图不会重排（点了没反应）。
-      // 必须换一份新数组再整体 $set 回去，让依赖追踪重新求值。
-      const order = arr.slice();
-      [order[idx], order[t]] = [order[t], order[idx]];
-      this.$set(this.settings, "FRIENDS", order);
+      // 注意：Vue 2 侦测不到「按下标赋值」，`[arr[i], arr[j]] = ...` 交换后视图不会重排
+      // （点了没反应）。改用 splice 挪动：既触发响应式，又保持同一个数组引用——
+      // 拖拽组件的 :list 绑的就是这个引用，换成新数组会让它指向旧数据。
+      const item = arr.splice(idx, 1)[0];
+      arr.splice(t, 0, item);
     },
     // 网站图标下拉的预览地址。favicon_0 表示「沿用当前图标」，要展示站点此刻真正
     // 生效的 /logo/favicon.ico（保存其它图标时它会被覆盖），因此带时间戳绕过缓存；
@@ -4453,5 +4523,41 @@ export default {
 }
 .theme--dark .device-item {
   border-color: rgba(255, 255, 255, 0.8);
+}
+
+/* ---------- 友情链接拖拽排序 ---------- */
+.friend-drag-hint {
+  margin-left: 4px;
+  opacity: 0.7;
+}
+.friend-drag-handle {
+  cursor: grab;
+  color: rgba(0, 0, 0, 0.35);
+  transition: color 0.15s ease;
+}
+.friend-drag-handle:hover {
+  color: rgba(0, 0, 0, 0.65);
+}
+.theme--dark .friend-drag-handle {
+  color: rgba(255, 255, 255, 0.4);
+}
+.theme--dark .friend-drag-handle:hover {
+  color: rgba(255, 255, 255, 0.75);
+}
+.friend-row-chosen .friend-drag-handle {
+  cursor: grabbing;
+}
+/* 拖动中的行浮起来，落点处留一个半透明占位——条目多时能看清要插到哪一行 */
+.friend-row-ghost {
+  opacity: 0.35;
+  background: rgba(0, 86, 146, 0.12);
+  border-radius: 6px;
+}
+.friend-row-chosen {
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.theme--dark .friend-row-chosen {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
 }
 </style>

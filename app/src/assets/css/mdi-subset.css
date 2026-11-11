@@ -574,6 +574,10 @@
   content: "\F01DB";
 }
 
+.mdi-drag-vertical::before {
+  content: "\F01DD";
+}
+
 .mdi-earth::before {
   content: "\F01E7";
 }
