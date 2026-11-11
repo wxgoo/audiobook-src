@@ -6,7 +6,9 @@
 #   sh upgrade-upstream.sh [上游tag]
 #   例：sh upgrade-upstream.sh 4.6.0
 #   不给 tag 则自动查上游最新 release
-#   （gitee 令牌已内置，令牌失效时改下面的 TOKEN 值即可）
+#   （推送/克隆 Gitee 需要的凭据只从环境变量 GITEE_TOKEN 读取：
+#     export GITEE_TOKEN=<私人令牌>
+#    未设置时退回无凭据地址，交互式输入或 ~/.netrc 提供凭据）
 #
 # 链路：clone → merge 上游 tag → 冲突处理(暂停等人工) →
 #       测试确认 → push → 出成品包 → upgrade.sh 生效
@@ -20,7 +22,7 @@
 
 set -e
 
-TOKEN="df1901c0825241bcc94aa54e6608fc2b"      # gitee 私人令牌（失效时改这里）
+TOKEN="${GITEE_TOKEN:-}"                      # gitee 私人令牌只从环境变量读取，不写入脚本
 TAG="$2"
 WORK=/tmp/up-upgrade
 REPO=$WORK/audiobook          # 目录名直接叫 audiobook，打包顶层即正确
@@ -34,7 +36,13 @@ warn() { printf '\033[1;33m  ! %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31m  ✗ %s\033[0m\n' "$*"; exit 1; }
 pause(){ printf '\n  回车继续，Ctrl+C 退出 ...'; read dummy; }
 
-[ -n "$TOKEN" ] || die "令牌为空，请编辑本脚本填入 TOKEN"
+if [ -n "$TOKEN" ]; then
+    GITEE_URL="https://wxgoo:${TOKEN}@${GITEE}"
+else
+    GITEE_URL="https://${GITEE}"
+    warn "未设置 GITEE_TOKEN，使用无凭据地址 https://${GITEE}"
+    warn "免交互推送可任选其一：export GITEE_TOKEN=<私人令牌>，或写入 ~/.netrc（chmod 600）"
+fi
 mkdir -p "$WORK"
 
 # ---------- 步骤 1：准备本地仓库 ----------
@@ -48,7 +56,7 @@ if [ -d "$REPO/.git" ]; then
     fi
 else
     rm -rf "$REPO" && mkdir -p "$REPO"
-    git clone "https://wxgoo:${TOKEN}@${GITEE}" "$REPO" 2>/dev/null || die "clone 失败：检查令牌"
+    git clone "$GITEE_URL" "$REPO" 2>/dev/null || die "clone 失败：检查网络与 Gitee 凭据（GITEE_TOKEN 或 ~/.netrc）"
     cd "$REPO"
 fi
 git checkout master -q
@@ -165,7 +173,7 @@ pause
 
 # ---------- 步骤 5：push ----------
 step "5/7 推送 Gitee"
-git push "https://wxgoo:${TOKEN}@${GITEE}" master 2>&1 | sed 's/^/    /'
+git push "$GITEE_URL" master 2>&1 | sed 's/^/    /'
 ok "已推送 master"
 
 # ---------- 步骤 6：出成品包 ----------
