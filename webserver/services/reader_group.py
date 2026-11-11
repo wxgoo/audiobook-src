@@ -30,8 +30,25 @@ MEMBER_KEY = "reader_group"
 #
 # 所以模板一律以 tags 为载体：BOOK_NAV 里那些标签名是真实会出现在书上的，
 # 而 #category 列在多数书库里是空的，拿它做模板会静默失效。
+# 模板分两类，界面上分栏展示（PRESET_GROUP_* 是栏目标题，改文案只改这三行）：
+#   家庭与账号 —— 「这个账号给谁用」，按人的身份挑；
+#   兴趣主题   —— 「这个账号读什么」，按内容方向挑。
+PRESET_GROUP_FAMILY = "家庭与账号"
+PRESET_GROUP_TOPIC = "兴趣主题"
+
 PRESET_GROUPS = [
+    # ---------- 家庭与账号 ----------
     {
+        "group": PRESET_GROUP_FAMILY,
+        "name": "婴幼儿亲子",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("绘本,图画书,低幼,亲子,亲子共读,睡前故事,儿歌,童谣,童话,"
+                 "认知,启蒙,益智,幼儿,宝宝,儿童文学"),
+        "desc": "白名单：绘本、睡前故事、儿歌童谣。给学龄前孩子，或家长陪读时用。",
+    },
+    {
+        "group": PRESET_GROUP_FAMILY,
         "name": "儿童",
         "mode": "whitelist",
         "categories": "",
@@ -40,6 +57,26 @@ PRESET_GROUPS = [
         "desc": "白名单：绘本童书、少儿科幻、国学诗词。刻意不含「文学」「小说」大类，避免恐怖悬疑混入。",
     },
     {
+        "group": PRESET_GROUP_FAMILY,
+        "name": "青少年",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("小学书单,初中书单,高中书单,小学语文阅读推荐,国学,唐诗,宋词,"
+                 "名著,世界名著,经典,科幻小说,中国科幻,硬科幻,科普,科学,"
+                 "自然科学,历史,中国历史,世界史,传记,人物传记"),
+        "desc": "白名单：中小学必读、科普、历史与名著。比「儿童」宽、比「访客」窄，适合中学生自己用。",
+    },
+    {
+        "group": PRESET_GROUP_FAMILY,
+        "name": "长辈听书",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("戏曲,评书,相声,养生,中医,饮食,健康,历史,中国历史,历史文化,"
+                 "传记,回忆录,散文,诗词,唐诗,宋词,国学"),
+        "desc": "白名单：戏曲评书、养生健康、历史散文。适合只听书/看戏的长辈账号。",
+    },
+    {
+        "group": PRESET_GROUP_FAMILY,
         "name": "访客",
         "mode": "whitelist",
         "categories": "",
@@ -50,13 +87,16 @@ PRESET_GROUPS = [
         "desc": "白名单：人文与科普为主，屏蔽经济金融、心理励志、医学养生等私密向内容。",
     },
     {
-        "name": "成人家属",
-        "mode": "whitelist",
+        "group": PRESET_GROUP_FAMILY,
+        "name": "家庭共用",
+        "mode": "blacklist",
         "categories": "",
-        "tags": "",
-        "desc": "不限：留空即不限权，等于全库可读。用于家庭成员账号。",
+        "tags": ("成人,成人向,情色,两性,性爱,色情,恐怖,惊悚,灵异,悬疑惊悚,"
+                 "血腥,暴力,重口,暗黑,猎奇"),
+        "desc": "黑名单：全库可读，只挡成人向与恐怖血腥。多人共用一个账号、又懒得逐个配白名单时的折中。",
     },
     {
+        "group": PRESET_GROUP_FAMILY,
         "name": "会员",
         "mode": "blacklist",
         "categories": "",
@@ -69,6 +109,98 @@ PRESET_GROUPS = [
                  "癌症,生命"),
         "desc": "黑名单：全库可读，仅屏蔽心理励志与医学养生相关标签。适合对外订阅用户。",
     },
+    {
+        "group": PRESET_GROUP_FAMILY,
+        "name": "成人家属",
+        "mode": "open",
+        "categories": "",
+        "tags": "",
+        "desc": "不限：全库可读。给不想被限制的家庭成员账号。必须选「不限」模式——白名单留空在严格模式下等于一本书都看不到。",
+    },
+    # ---------- 兴趣主题 ----------
+    {
+        "group": PRESET_GROUP_TOPIC,
+        "name": "公版经典",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("名著,世界名著,经典,中国文学,外国文学,散文,诗歌,诗词,唐诗,宋词,"
+                 "国学,历史,哲学"),
+        "desc": "白名单：公版名著与人文经典。适合对外展示的「公开书架」，也是版权风险最低的一套。",
+    },
+    {
+        "group": PRESET_GROUP_TOPIC,
+        "name": "人文社科",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("哲学,社会学,政治学,法律,法学,人类学,文化,文化研究,宗教,伦理学,"
+                 "美学,思想史,学术,历史,历史学,社会,经济学,心理学"),
+        "desc": "白名单：哲学、社会学、法律、思想史。给读社科理论的人；也含心理学（要排除请用「会员」那套黑名单）。",
+    },
+    {
+        "group": PRESET_GROUP_TOPIC,
+        "name": "经管职场",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("经济,经济学,金融,投资,理财,股票,基金,管理,企业管理,商业,"
+                 "市场营销,创业,职场,领导力,会计,财务,商业模式,运营,组织管理,"
+                 "宏观经济,货币,贸易,产业"),
+        "desc": "白名单：经济金融、管理投资、职场成长。适合只看经管的账号。",
+    },
+    {
+        "group": PRESET_GROUP_TOPIC,
+        "name": "理工科普",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("科普,科学,自然科学,数学,物理,化学,生物,天文,地理,地质,"
+                 "宇宙,量子,进化,生命科学,医学,工程,技术,科技,博物"),
+        "desc": "白名单：数理化生、天文地理与科普。给爱看科学读物的账号。",
+    },
+    {
+        "group": PRESET_GROUP_TOPIC,
+        "name": "技术编程",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("计算机,编程,程序设计,算法,数据结构,人工智能,机器学习,深度学习,"
+                 "软件工程,数据库,操作系统,计算机网络,网络,Linux,Python,Java,"
+                 "前端,后端,架构,运维,安全,云计算,数学"),
+        "desc": "白名单：编程语言、算法、AI 与系统工程。给程序员账号，比「理工科普」更偏实践。",
+    },
+    {
+        "group": PRESET_GROUP_TOPIC,
+        "name": "历史爱好者",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("历史,中国历史,世界史,历史学,历史人物,历史文化,古代史,近代史,"
+                 "现代史,断代史,史学理论,考古,军事,军事史,战争,传记,回忆录"),
+        "desc": "白名单：中外通史、断代史、人物传记与军事史。",
+    },
+    {
+        "group": PRESET_GROUP_TOPIC,
+        "name": "科幻迷",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("科幻,科幻小说,中国科幻,外国科幻,硬科幻,软科幻,太空歌剧,"
+                 "赛博朋克,时间旅行,末日,星际,科幻奇幻"),
+        "desc": "白名单：科幻各子类型。注意「硬科幻」同时出现在「儿童」模板里，两组可以共存。",
+    },
+    {
+        "group": PRESET_GROUP_TOPIC,
+        "name": "悬疑推理",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("推理,推理小说,悬疑,悬疑小说,侦探,侦探小说,犯罪小说,本格推理,"
+                 "社会派,日本推理,欧美推理,间谍,谍战"),
+        "desc": "白名单：推理悬疑各流派。刻意不含「惊悚」「恐怖」，要连恐怖一起看就把这两个标签加上。",
+    },
+    {
+        "group": PRESET_GROUP_TOPIC,
+        "name": "武侠奇幻",
+        "mode": "whitelist",
+        "categories": "",
+        "tags": ("武侠,武侠小说,仙侠,玄幻,奇幻,修真,网络小说,东方玄幻,"
+                 "仙侠修真,江湖,武侠仙侠,轻小说"),
+        "desc": "白名单：武侠、仙侠、玄幻与网络文学。",
+    },
 ]
 
 
@@ -76,6 +208,7 @@ def get_presets() -> list:
     """返回预置模板列表（深拷贝，调用方随便改都不会污染常量）"""
     return [
         {
+            "group": p.get("group") or PRESET_GROUP_FAMILY,
             "name": p["name"],
             "mode": p["mode"],
             "categories": p["categories"],
@@ -160,9 +293,11 @@ def book_matches_limits(book, eff) -> bool:
         return True
     limit_categories = set(filter(None, (eff.get("limit_categories") or "").split(",")))
     limit_tags = set(filter(None, (eff.get("limit_tags") or "").split(",")))
-    # 白名单一个条件都没填：严格模式下谁都不给看（哨兵条件也走这里）。
+    # 一个条件都没填：两种名单的语义正好相反，不能一起返回 False。
+    #   白名单空 → 什么都匹配不上（严格模式的哨兵条件也走这里）；
+    #   黑名单空 → 什么都不屏蔽，等于全库可读。
     if not limit_categories and not limit_tags:
-        return False
+        return read_limit != 1
 
     from webserver.constants import CALIBRE_COLUMN_CATEGORY
 
@@ -198,7 +333,8 @@ class ReaderGroupService:
     def save_group(name: str, mode: str = "whitelist",
                    categories="", tags="", old_name: str = "",
                    session=None) -> tuple:
-        """创建/更新组。mode: whitelist（只可读匹配项）/ blacklist（禁读匹配项）。
+        """创建/更新组。mode: whitelist（只可读匹配项）/ blacklist（禁读匹配项）/
+        open（不限，全库可读）。
 
         old_name 非空且与 name 不同时视为「改名」：删除旧组定义，并把原组成员
         的归属引用迁移到新组名（否则成员还挂在旧名上，看起来像被清空了）。
@@ -206,8 +342,8 @@ class ReaderGroupService:
         name = (name or "").strip()
         if not name:
             return False, "组名不能为空"
-        if mode not in ("whitelist", "blacklist"):
-            return False, "mode 必须是 whitelist 或 blacklist"
+        if mode not in ("whitelist", "blacklist", "open"):
+            return False, "mode 必须是 whitelist、blacklist 或 open"
         groups = dict(_groups())
         old_name = (old_name or "").strip()
         # 改名撞上已存在的组名：一旦继续，目标组的定义会被覆盖，两组组员还会
@@ -217,8 +353,10 @@ class ReaderGroupService:
             return False, "已存在同名组，请换一个组名，或先删除该组"
         groups[name] = {
             "mode": mode,
-            "categories": _normalize_tags(categories),
-            "tags": _normalize_tags(tags),
+            # 「不限」组没有匹配条件可言：存进来只会让语义含糊（写了标签却不生效），
+            # 一律清空。想改成限制型，先切模式再填条件。
+            "categories": "" if mode == "open" else _normalize_tags(categories),
+            "tags": "" if mode == "open" else _normalize_tags(tags),
         }
         renamed = bool(old_name) and old_name != name and old_name in groups
         if renamed:
@@ -439,6 +577,12 @@ class ReaderGroupService:
         mode = cfg.get("mode", "whitelist")
         cats = (cfg.get("categories", "") or "").strip()
         tags = (cfg.get("tags", "") or "").strip()
+        # 「不限」组：显式标记「全库可读」。
+        # 必须单独有这个模式，因为「白名单 + 空条件」不能兼任此职——严格模式下
+        # 那等于「一本书都看不到」（见下面分支）。想让某个组不受限，只能明说。
+        if mode == "open":
+            return {"read_limit": 0, "limit_categories": "", "limit_tags": "",
+                    "source": "group-open", "group": name}
         # 白名单里一个条件都没填：按「严格模式」处理（默认开启）。
         # 注意这里和 mybooks 原生意图相反——原版认为空条件=不限权，
         # 但读者组是管理员手工建的规则，只写了组名没填条件时，

@@ -858,6 +858,10 @@
   content: "\F0340";
 }
 
+.mdi-lock-open-variant::before {
+  content: "\F0FC6";
+}
+
 .mdi-lock-open-variant-outline::before {
   content: "\F0FC7";
 }

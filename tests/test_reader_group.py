@@ -106,6 +106,38 @@ class TestReaderGroupService(unittest.TestCase):
 
     # ---------- 与 BaseHandler 过滤逻辑的联动 ----------
 
+    def test_open_group_is_unrestricted(self):
+        """「不限」组（成人家属模板）：全库可读，且不保留匹配条件。"""
+        ok, _ = ReaderGroupService.save_group("成人家属", "open", "绘本", "童话")
+        self.assertTrue(ok)
+        g = ReaderGroupService.list_groups()["成人家属"]
+        self.assertEqual(g["mode"], "open")
+        # 不限组留着条件只会让人误判（写了却不生效），一律清空
+        self.assertEqual(g["categories"], "")
+        self.assertEqual(g["tags"], "")
+        r = make_reader(extra={"reader_group": "成人家属"})
+        eff = ReaderGroupService.effective_limits(r)
+        self.assertEqual(eff["read_limit"], 0)
+        self.assertEqual(eff["source"], "group-open")
+        self.assertTrue(reader_group.book_matches_limits({"tags": ["恐怖"]}, eff))
+
+    def test_blacklist_without_conditions_allows_everything(self):
+        """黑名单空条件 = 什么都不屏蔽，不能和白名单空条件一起判成「读不到书」。"""
+        ReaderGroupService.save_group("全放行", "blacklist", "", "")
+        r = make_reader(extra={"reader_group": "全放行"})
+        eff = ReaderGroupService.effective_limits(r)
+        self.assertEqual(eff["read_limit"], 2)
+        self.assertTrue(reader_group.book_matches_limits({"tags": ["恐怖"]}, eff))
+        self.assertTrue(reader_group.book_matches_limits({}, eff))
+
+    def test_whitelist_without_conditions_still_blocks(self):
+        """反向保护：白名单空条件在严格模式下必须仍然看不到书。"""
+        ReaderGroupService.save_group("待配置", "whitelist", "", "")
+        r = make_reader(extra={"reader_group": "待配置"})
+        eff = ReaderGroupService.effective_limits(r)
+        self.assertEqual(eff["read_limit"], 1)
+        self.assertFalse(reader_group.book_matches_limits({"tags": ["童话"]}, eff))
+
     def _handler_with(self, user):
         """构造只暴露 is_book_in_reading_range 的最小 handler"""
         from webserver.handlers.base import BaseHandler
@@ -350,6 +382,78 @@ class TestReviveOrphanGroups(unittest.TestCase):
         self.assertEqual(eff["read_limit"], 1)
         self.assertEqual(eff["source"], "group-strict")
         self.assertFalse(reader_group.book_matches_limits({"tags": ["童话"]}, eff))
+
+
+class TestPresets(unittest.TestCase):
+    """预置模板：只是表单初值，但 mode 写错会让整组静默失效。"""
+
+    def test_preset_modes_are_valid(self):
+        valid = {"whitelist", "blacklist", "open"}
+        for p in reader_group.get_presets():
+            self.assertIn(p["mode"], valid, p["name"])
+
+    def test_preset_names_and_desc_present(self):
+        presets = reader_group.get_presets()
+        names = [p["name"] for p in presets]
+        self.assertEqual(len(names), len(set(names)))
+        for p in presets:
+            self.assertTrue(p["desc"].strip(), p["name"])
+
+    def test_family_preset_is_open_mode(self):
+        """成人家属必须是 open：白名单留空在严格模式下等于一本书都看不到。"""
+        presets = {p["name"]: p for p in reader_group.get_presets()}
+        self.assertEqual(presets["成人家属"]["mode"], "open")
+
+    def test_open_preset_has_no_conditions(self):
+        for p in reader_group.get_presets():
+            if p["mode"] == "open":
+                self.assertEqual(p["categories"], "", p["name"])
+                self.assertEqual(p["tags"], "", p["name"])
+
+    def test_preset_tags_normalized(self):
+        """模板里的标签串必须是「去空白、去重、逗号分隔」，否则保存后既难比对也难排查。"""
+        for p in reader_group.get_presets():
+            tags = [t for t in p["tags"].split(",") if t]
+            self.assertEqual(len(tags), len(set(tags)), p["name"])
+            self.assertEqual(p["tags"], ",".join(tags), p["name"])
+
+    def test_presets_cover_common_scenes(self):
+        names = {p["name"] for p in reader_group.get_presets()}
+        for expected in ("儿童", "青少年", "访客", "长辈听书",
+                         "公版经典", "成人家属", "会员"):
+            self.assertIn(expected, names)
+
+    def test_preset_count_is_enough(self):
+        """模板太少等于没有：管理员还是得从头手填。"""
+        self.assertGreaterEqual(len(reader_group.get_presets()), 14)
+
+    def test_presets_have_known_group(self):
+        """分栏标题必须是后端定义的常量，写错字会让那一条单独成一栏。"""
+        allowed = {reader_group.PRESET_GROUP_FAMILY, reader_group.PRESET_GROUP_TOPIC}
+        for p in reader_group.get_presets():
+            self.assertIn(p["group"], allowed, p["name"])
+
+    def test_preset_groups_are_contiguous(self):
+        """同栏模板必须连在一起：前端按首次出现的顺序分栏，
+        中间插一条别栏的，界面上就会被拆成两个同名小标题。"""
+        seen, current = set(), None
+        for p in reader_group.get_presets():
+            if p["group"] != current:
+                self.assertNotIn(p["group"], seen, p["name"])
+                seen.add(p["group"])
+                current = p["group"]
+
+    def test_non_open_presets_have_tags(self):
+        """除了「不限」，模板必须有条件 —— 空白名单在严格模式下读不到书。"""
+        for p in reader_group.get_presets():
+            if p["mode"] == "open":
+                continue
+            self.assertTrue(p["tags"].strip(), p["name"])
+
+    def test_presets_never_use_categories(self):
+        """#category 列在多数书库是空的，拿它做模板会静默失效（见 PRESET_GROUPS 注释）。"""
+        for p in reader_group.get_presets():
+            self.assertEqual(p["categories"], "", p["name"])
 
 
 if __name__ == "__main__":

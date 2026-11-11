@@ -1248,6 +1248,8 @@
         "reader_group_mode": "限制方式",
         "reader_group_mode_whitelist": "白名单（只可读匹配项）",
         "reader_group_mode_blacklist": "黑名单（禁读匹配项）",
+        "reader_group_mode_open": "不限（全库可读）",
+        "reader_group_open_tips": "「不限」组不参与任何限制，成员可读全库。分类/标签对它无效（填了也会被清空）——想让某个组不限制，只能用这个模式，白名单留空在严格模式下等于一本书都看不到。",
         "reader_group_categories": "分类",
         "reader_group_tags": "标签",
         "reader_group_members": "成员",
@@ -1272,6 +1274,9 @@
         "audio_link_to_existing_book_tips": "开启后：导入有声书时若发现同名电子书（library 里已有），会把音频放进同一本书的目录 audios/<book_id>/，书库里不会多出一条重复记录。关闭则恢复旧行为（同名但没音频就新建一本书，容易出现「同一本书两条记录」）。",
         "reader_group_from_preset": "从模板创建",
         "reader_group_preset_tips": "选一套模板填入表单，可修改后再保存",
+        "reader_group_preset_miss": "本库当前没有这些标签/分类：{list}（{n}/{total} 项）。留着无害，等导入相关书后自动生效。",
+        "reader_group_preset_drop": "剔除这 {n} 项",
+        "reader_group_preset_mismatch": "过半对不上：这套模板可能不适合你的书库，建议按库里真实存在的标签自己填，或先用「不限」模式。",
         "reader_group_strict_tips": "提示：白名单组若分类和标签都为空，成员将看不到任何书。请先填好条件再分组。",
         "reader_group_strict": "严格模式：白名单空条件 = 读不到书",
         "reader_group_strict_hint": [

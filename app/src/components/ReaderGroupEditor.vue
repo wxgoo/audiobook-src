@@ -16,13 +16,18 @@
               <v-icon left small>mdi-file-star-outline</v-icon>{{ $t("settings.reader_group_from_preset") }}
             </v-btn>
           </template>
-          <v-list dense>
-            <v-list-item v-for="p in presets" :key="p.name" @click="applyPreset(p)">
-              <v-list-item-content>
-                <v-list-item-title>{{ p.name }}</v-list-item-title>
-                <v-list-item-subtitle class="text-caption">{{ p.desc }}</v-list-item-subtitle>
-              </v-list-item-content>
-            </v-list-item>
+          <v-list dense class="reader-group-preset-list">
+            <template v-for="(sec, si) in presetSections">
+              <v-subheader :key="'sh-' + si" class="text-caption font-weight-bold">
+                {{ sec.group }}
+              </v-subheader>
+              <v-list-item v-for="p in sec.items" :key="p.name" @click="applyPreset(p)">
+                <v-list-item-content>
+                  <v-list-item-title>{{ p.name }}</v-list-item-title>
+                  <v-list-item-subtitle class="text-caption">{{ p.desc }}</v-list-item-subtitle>
+                </v-list-item-content>
+              </v-list-item>
+            </template>
           </v-list>
         </v-menu>
         <span class="text-caption grey--text ml-3">{{ $t("settings.reader_group_preset_tips") }}</span>
@@ -42,6 +47,7 @@
             :items="categoryOptions"
             :label="$t('settings.reader_group_categories')"
             :hint="$t('settings.reader_group_pick_hint')"
+            :disabled="form.mode === 'open'"
             persistent-hint
             multiple
             chips
@@ -59,6 +65,7 @@
             :items="tagOptions"
             :label="$t('settings.reader_group_tags')"
             :hint="$t('settings.reader_group_pick_hint')"
+            :disabled="form.mode === 'open'"
             persistent-hint
             multiple
             chips
@@ -73,10 +80,31 @@
       </v-row>
       <div class="text-caption grey--text">{{ $t("settings.reader_group_rule_tips") }}</div>
       <div class="text-caption grey--text">{{ $t("settings.reader_group_logic_tips") }}</div>
+      <!-- 模板与本库标签对不上：白名单组「填了也看不到书」的头号原因 -->
+      <div v-if="presetMiss && presetMiss.missing" class="text-caption mt-1">
+        <span :class="presetMiss.mismatch ? 'orange--text' : 'grey--text'">
+          <v-icon x-small :color="presetMiss.mismatch ? 'orange' : 'grey'">mdi-magnify</v-icon>
+          {{ $t("settings.reader_group_preset_miss", {
+            n: presetMiss.missing, total: presetMiss.total,
+            list: presetMiss.list.slice(0, 12).join("、") + (presetMiss.list.length > 12 ? "…" : ""),
+          }) }}
+        </span>
+        <v-btn x-small text color="primary" class="ml-1" @click="dropMissingFromPreset">
+          {{ $t("settings.reader_group_preset_drop", { n: presetMiss.missing }) }}
+        </v-btn>
+        <div v-if="presetMiss.mismatch" class="orange--text">
+          {{ $t("settings.reader_group_preset_mismatch") }}
+        </div>
+      </div>
       <!-- 白名单+空条件会「一本书都看不到」，这是最容易踩的坑，动态提醒一下 -->
       <div v-if="isEmptyWhitelist" class="text-caption orange--text mt-1">
         <v-icon x-small color="orange">mdi-alert-outline</v-icon>
         {{ $t("settings.reader_group_strict_tips") }}
+      </div>
+      <!-- 「不限」是唯一能表达「这组不受限制」的模式，条件输入已禁用，这里说明原因 -->
+      <div v-if="form.mode === 'open'" class="text-caption success--text mt-1">
+        <v-icon x-small color="success">mdi-lock-open-variant</v-icon>
+        {{ $t("settings.reader_group_open_tips") }}
       </div>
       <v-btn color="primary" class="mt-2" :loading="saving" @click="saveGroup">
         <v-icon left>mdi-content-save</v-icon>{{ editing ? $t("settings.update") : $t("settings.add") }}
@@ -143,7 +171,7 @@
         <tbody>
           <tr v-for="name in groupNames" :key="name">
             <td>{{ name }}</td>
-            <td>{{ $t(groups[name].mode === "whitelist" ? "settings.reader_group_mode_whitelist" : "settings.reader_group_mode_blacklist") }}</td>
+            <td>{{ modeText(groups[name].mode) }}</td>
             <td>{{ groups[name].categories || "-" }}</td>
             <td>{{ groups[name].tags || "-" }}</td>
             <td>{{ (groups[name].members || []).join(", ") || "-" }}</td>
@@ -236,7 +264,17 @@ export default {
       return [
         { text: this.$t("settings.reader_group_mode_whitelist"), value: "whitelist" },
         { text: this.$t("settings.reader_group_mode_blacklist"), value: "blacklist" },
+        { text: this.$t("settings.reader_group_mode_open"), value: "open" },
       ];
+    },
+    // 组列表里的模式列：三态映射，别再写成二元三元表达式
+    modeText(mode) {
+      if (mode === "open") return this.$t("settings.reader_group_mode_open");
+      return this.$t(
+        mode === "blacklist"
+          ? "settings.reader_group_mode_blacklist"
+          : "settings.reader_group_mode_whitelist"
+      );
     },
     groupNames() {
       return Object.keys(this.groups).sort();
@@ -262,6 +300,45 @@ export default {
       set(val) {
         this.form.tags = this.joinList(val);
       },
+    },
+    // 模板与当前书库的匹配度：模板里的标签/分类有多少在本库真实存在。
+    // 模板照着一套通用书库写，换个库很可能大半对不上——白名单组只认真实存在
+    // 的标签，对不上就等于「填了也看不到书」，界面上必须说清。
+    // options 还没拉到时返回 null，免得把「没加载完」误报成「全部未命中」。
+    presetMiss() {
+      if (!this.optionsLoaded) return null;
+      const tags = this.splitList(this.form.tags);
+      const cats = this.splitList(this.form.categories);
+      const total = tags.length + cats.length;
+      if (!total) return null;
+      const tset = new Set(this.tagOptions);
+      const cset = new Set(this.categoryOptions);
+      const missTags = tags.filter((t) => !tset.has(t));
+      const missCats = cats.filter((c) => !cset.has(c));
+      const missing = missTags.length + missCats.length;
+      return {
+        tags: missTags,
+        cats: missCats,
+        total,
+        missing,
+        mismatch: missing / total >= 0.5,
+        list: missCats.concat(missTags),
+      };
+    },
+    // 模板按「给谁用 / 读什么」分栏：十几套平铺一列找起来费劲。
+    // 分栏顺序按后端返回的先后，不在前端硬编码名单——加模板只改后端。
+    presetSections() {
+      const out = [];
+      const idx = {};
+      for (const p of this.presets) {
+        const g = p.group || "";
+        if (idx[g] === undefined) {
+          idx[g] = out.length;
+          out.push({ group: g, items: [] });
+        }
+        out[idx[g]].items.push(p);
+      }
+      return out;
     },
   },
   methods: {
@@ -323,7 +400,7 @@ export default {
     },
     // 模板只填表单，不直接落库 —— 管理员可以先改再保存，
     // 避免点一下就在后台凭空多出一个组。
-    applyPreset(p) {
+    async applyPreset(p) {
       this.form = {
         name: p.name || "",
         mode: p.mode || "whitelist",
@@ -332,6 +409,20 @@ export default {
         old_name: "",
       };
       this.editing = false;
+      // 载入模板后要立刻算「本库命中多少」，候选值没拉到就先拉一次
+      await this.loadOptions();
+    },
+    // 去掉模板里本库不存在的标签/分类：白名单组看不到书时，第一个要排查的
+    // 就是「标签名对不上」，与其让管理员逐条比对，不如一键清掉再按需补。
+    dropMissingFromPreset() {
+      const miss = this.presetMiss;
+      if (!miss) return;
+      const tset = new Set(miss.tags);
+      const cset = new Set(miss.cats);
+      this.form.categories = this.splitList(this.form.categories)
+        .filter((c) => !cset.has(c)).join(",");
+      this.form.tags = this.splitList(this.form.tags)
+        .filter((t) => !tset.has(t)).join(",");
     },
     toggle() {
       this.expanded = !this.expanded;
@@ -493,5 +584,16 @@ export default {
 .reader-group-header {
   cursor: pointer;
   user-select: none;
+}
+/* 模板十几套，菜单限高滚动，别撑出屏幕 */
+.reader-group-preset-list {
+  max-height: 70vh;
+  max-width: 460px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.reader-group-preset-list .v-list__tile__sub-title {
+  white-space: normal;
+  line-height: 1.3;
 }
 </style>

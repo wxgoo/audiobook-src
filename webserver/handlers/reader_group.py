@@ -20,9 +20,11 @@ CONF = loader.get_settings()
 class ReaderGroupPresets(BaseHandler):
     """预置模板列表。管理员点「从模板创建」时前端拿这份数据填表。
 
-    模板里的 categories 用的是 BOOK_NAV 的分类名（如「教育」「文学」），
-    不是标签名 —— 后端会按分类名展开成标签集合。所以即便书库还没入库、
-    tags 表是空的，模板依然可用，不会出现「填了等于没填」的空转。
+    每条带 group 字段（家庭与账号 / 兴趣主题），前端按它分栏渲染，
+    顺序取后端返回的先后。模板以 tags 为载体、categories 一律留空：
+    #category 自定义列在多数书库是空的，拿它做模板会静默失效。
+    标签名照通用书库写，换库后很可能大半对不上 —— 前端会比对
+    /reader_groups/options 的真实标签做提示，并支持一键剔除未命中项。
     """
 
     @js
