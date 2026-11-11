@@ -1,11 +1,11 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # ============================================================
 # pack.sh —— 从仓库打部署包
 #
 # 用法（仓库根目录）：
-#   sh scripts/pack.sh                 # 用 CHANGELOG 里的当前版本号
-#   sh scripts/pack.sh 4.6.0-11        # 指定版本号
-#   sh scripts/pack.sh --check xxx.tar.gz   # 只验一个已有包，不打包
+#   bash scripts/pack.sh                 # 用 CHANGELOG 里的当前版本号
+#   bash scripts/pack.sh 4.6.0-11        # 指定版本号
+#   bash scripts/pack.sh --check xxx.tar.gz   # 只验一个已有包，不打包
 #
 # 产物：/workspace/audiobook-deploy-<版本>.tar.gz（或在当前目录）
 #
@@ -369,7 +369,7 @@ echo "  产物: $OUT"
 
 # ---------- 验包 ----------
 echo "==> [4/4] 验包"
-sh "$SELF_DIR/pack.sh" --check "$OUT"
+bash "$SELF_DIR/pack.sh" --check "$OUT"
 
 ls -lh "$OUT"
 echo "md5: $(md5sum "$OUT" | cut -d' ' -f1)"
