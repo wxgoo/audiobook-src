@@ -90,6 +90,21 @@ docker exec audiobook-mybooks-1 ls /var/www/mybooks/app/dist/_nuxt/ | grep <chun
 
 ---
 
+## ②b dist 必须完整入库：`app/.gitignore` 的 dist 忽略规则已删除（r13 事故）
+
+`app/.gitignore` 里有两条模板自带的 dist 忽略规则（Node 模板的第 7 行 `/dist` + Nuxt 模板的第 81 行 `dist`）。
+**后果**：「dist 重新部署」提交时 `_nuxt/*.js` 全部被 git 挡在门外，只有 html/css/fonts 被迫 `-f` 进来——
+仓库里的 dist 是「有页面、没 JS」的残骸，`index.html` 引用的 chunk 全 404。
+NAS 走 git 路径 `reset --hard + docker compose up -d --build`，怎么重建镜像都没用（r13 前端 404 事故根因）。
+
+- 已修复（`9d4cdef`）：删掉两条规则并留注释；app/dist 现在 744 个文件完整入库
+- **验证口径与 ② 相同**：`git ls-files app/dist | wc -l` 应 ≈744，且 `_nuxt` 下 .js ≥130
+- 改了前端之后提交前自查：`git status app/dist` 里必须能看到新增/变更的 `.js` chunk，
+  如果看不到说明又被哪条 ignore 规则拦了——`git check-ignore -v <文件>` 一查便知
+- 注意 ② 的 `docker cp` 类型冲突与这里无关：那条管「往运行中的容器拷文件」，这条管「文件进不进仓库」
+
+---
+
 ## ③ 命令逐条贴，别一次粘多行
 
 NAS 终端（SSH + 中文输入法）粘贴多行时 `\` 续行会被吃掉，命令被截断、报错看不懂。
