@@ -571,6 +571,7 @@
     ],
     "blocking": [],
     "docs": [
+      ".claude/memory/MEMORY.md",
       "CHANGELOG.md",
       "docs/开发指南.md",
       "docs/部署包说明.md",
