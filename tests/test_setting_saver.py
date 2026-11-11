@@ -90,5 +90,114 @@ class TestSavePartial(unittest.TestCase):
         self.assertTrue(saved["READER_GROUP_STRICT"])
 
 
+class TestSaveExtraSettingsCarryOver(unittest.TestCase):
+    """设置页 POST 的路径：args 里只有前端提交的键。
+
+    这是「分组又没有了」的真正现场——save_partial 会自己播种，所以
+    TestSavePartial 全绿；但设置页保存走的是 admin.py 自己 new 的 loader，
+    clear() 之后只填前端键，dumpfile() 整份覆盖就把其余持久化键全删了。
+    """
+
+    def save_with_only(self, conf, submitted):
+        captured = {}
+
+        def fake_dump(self):
+            captured.update(dict(self))
+
+        def fake_noop(*_a, **_kw):
+            return None
+
+        args = setting_saver.loader.SettingsLoader()
+        args.clear()
+        args.update(submitted)
+
+        with mock.patch.dict(setting_saver.CONF, conf, clear=False), \
+                mock.patch.object(setting_saver.loader.SettingsLoader, "dumpfile", fake_dump), \
+                mock.patch.object(SettingsSaver, "update_nuxtjs_env", fake_noop), \
+                mock.patch.object(SettingsSaver, "_check_restart_needed", lambda self, a: False), \
+                mock.patch.object(SettingsSaver, "_apply_dynamic_settings", fake_noop), \
+                mock.patch("webserver.base.modules.apply_module_switch_effects", fake_noop):
+            SettingsSaver().save_extra_settings(args)
+        return captured
+
+    def test_reader_groups_survive_settings_page_post(self):
+        groups = {
+            "儿童": {"mode": "whitelist", "categories": "", "tags": "绘本,童书"},
+            "访客": {"mode": "whitelist", "categories": "", "tags": "小说,文学"},
+        }
+        saved = self.save_with_only(
+            {"READER_GROUPS": groups, "READER_GROUPS_ENABLED": True,
+             "READER_GROUP_STRICT": True},
+            {"BOOKBARN_TOKEN": "t"},
+        )
+        self.assertEqual(saved.get("READER_GROUPS"), groups)
+        self.assertIs(saved.get("READER_GROUPS_ENABLED"), True)
+        self.assertIs(saved.get("READER_GROUP_STRICT"), True)
+        self.assertEqual(saved.get("BOOKBARN_TOKEN"), "t")
+
+    def test_all_persistable_keys_survive_settings_page_post(self):
+        """所有「只在 PERSISTABLE_KEYS」的键都要活下来，不能只修 READER_GROUPS。
+
+        历史上这类键有 5 个（READER_GROUPS / READER_GROUP_STRICT /
+        ENABLE_KOREADER_SERVICE / scan_hash_workers / site_theme），
+        全部一保存设置就消失。
+        """
+        conf = {key: "marker" for key in PERSISTABLE_KEYS}
+        conf["READER_GROUPS"] = {"儿童": {"mode": "whitelist", "tags": "绘本"}}
+        saved = self.save_with_only(conf, {"BOOKBARN_TOKEN": "t"})
+        missing = [k for k in PERSISTABLE_KEYS if k not in saved]
+        self.assertEqual(missing, [], "这些持久化键被整份覆盖抹掉了: %s" % missing)
+
+    def test_non_persistable_keys_are_not_carried_over(self):
+        """别把运行期临时值（路径、安装标记）也写进 auto.py。"""
+        saved = self.save_with_only(
+            {"html_path": "/x", "installed_version": "v", "site_url": "https://a.b"},
+            {"BOOKBARN_TOKEN": "t"},
+        )
+        self.assertNotIn("html_path", saved)
+        self.assertNotIn("site_url", saved)
+
+    def test_submitted_value_wins_over_conf(self):
+        """前端这次真的提交了，就用新的（否则改设置永远不生效）。"""
+        saved = self.save_with_only(
+            {"READER_GROUPS": {"旧": {"mode": "whitelist"}}, "site_theme": "light"},
+            {"site_theme": "dark"},
+        )
+        self.assertEqual(saved["site_theme"], "dark")
+        self.assertEqual(saved["READER_GROUPS"], {"旧": {"mode": "whitelist"}})
+
+
+class TestDumpfileBackup(unittest.TestCase):
+    """覆盖 auto.py 前要留一份上一版，否则误抹就是永久损失。"""
+
+    def test_previous_auto_py_is_kept_as_bak(self):
+        import os
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        try:
+            s = setting_saver.loader.SettingsLoader()
+            s.clear()
+            s["MARKER"] = "v1"
+            with mock.patch.object(
+                setting_saver.loader.SettingsLoader, "set_store_path", lambda self: d
+            ):
+                s.dumpfile()
+                s["MARKER"] = "v2"
+                s.dumpfile()
+
+            bak = os.path.join(d, "auto.py.bak")
+            cur = os.path.join(d, "auto.py")
+            self.assertTrue(os.path.exists(bak), "没生成 auto.py.bak")
+            with open(bak, encoding="utf-8") as f:
+                self.assertIn("'v1'", f.read())
+            with open(cur, encoding="utf-8") as f:
+                self.assertIn("'v2'", f.read())
+            self.assertNotIn("'v1'", open(cur, encoding="utf-8").read())
+        finally:
+            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

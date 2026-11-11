@@ -772,7 +772,8 @@ class AdminInstall(BaseHandler):
 
         apply_localized_default_settings(args, args["site_language"])
 
-        return SettingsSaver().save_extra_settings(args)
+        # 首次安装：args 是按默认值重建的整份配置，不要从旧 CONF 里搬键过来
+        return SettingsSaver().save_extra_settings(args, carry_over=False)
 
 
 class SSLHandlerLogic:

@@ -301,7 +301,27 @@ TITLE_TEMPLATE="%%s | %(site_title)s"
         args.update(overrides)
         return self.save_extra_settings(args)
 
-    def save_extra_settings(self, args):
+    def save_extra_settings(self, args, carry_over=True):
+        # dumpfile() 是**整份覆盖**：args 里没有的键，auto.py 里就不再有。
+        #
+        # 设置页的 POST（handlers/admin.py:AdminSettings）自己 new 一个 loader、clear()
+        # 之后只填入前端提交的键（还要再过一遍 ADMIN_SETTING_KEYS），所以「只在
+        # PERSISTABLE_KEYS、不在 ADMIN_SETTING_KEYS」的键每次保存都会从 auto.py 消失。
+        # 读者组分组 READER_GROUPS 就是这么丢的：分组本身由 reader_group._persist 走
+        # save_partial 写得好好的，管理员之后随便保存一下别的设置，它就被整份覆盖抹掉，
+        # 表现为「分组又没有了」。
+        #
+        # 统一在这个总入口补一次：CONF 里有、args 里没有的持久化键原样带回。
+        # 放在 save_extra_settings 而不是 POST 里，是为了覆盖所有调用方（save_partial、
+        # 设置页、以及以后新加的谁）。
+        # carry_over=False 留给「首次安装」——那时本来就要按默认值重建整份配置。
+        if carry_over:
+            for key, val in CONF.items():
+                if key not in args and (
+                    key in PERSISTABLE_KEYS or key.startswith("SOCIAL_AUTH")
+                ):
+                    args[key] = val
+
         # 模块开关的连带效果要在「写入之前、拿得到旧值之时」算好：关掉某个模块
         # 必须把它的主开关一起写进 args（ORDER: 先算出效果，再做 CONF.update，
         # 否则 old_settings 和新值就一样了，判断不出「旧开→新关」）。
