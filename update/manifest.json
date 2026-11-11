@@ -433,8 +433,8 @@
     },
     {
       "path": "webserver/services/reader_group.py",
-      "sha256": "6e51a09fb17623b72d6790df6c3477f0f43f2702d78dd835a9e28778eb4ebfff",
-      "bytes": 21608
+      "sha256": "3984a664c876958bb9b4b50bf7f47e5810b3eb09ed52a76ec8b4b28af9c966e1",
+      "bytes": 21781
     }
   ],
   "changed": {
@@ -538,7 +538,10 @@
     ],
     "blocking": [],
     "docs": [
+      ".claude/memory/MEMORY.md",
       "CHANGELOG.md",
+      "docs/开发指南.md",
+      "docs/部署包说明.md",
       "tests/test_reader_group.py"
     ]
   },
