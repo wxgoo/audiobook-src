@@ -287,7 +287,70 @@ for (const file of files) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 首屏取数审计：静态产物（nuxt generate --spa）里 asyncData 只在构建期执行，
+// 运行时直接进入路由不会重跑。若页面只有 asyncData，或只在 $route 的 watch 里取数
+// （缺 immediate 且没有生命周期兜底），首屏就永远不会发请求——ListBook 就是这么空白的。
+// ---------------------------------------------------------------------------
+const PAGES = path.join(ROOT, 'pages');
+const FETCH_RE = /this\.init\s*\(|this\.fetch[A-Za-z_$]*\s*\(|this\.load[A-Za-z_$]*\s*\(|this\.get[A-Za-z_$]*\s*\(|this\.query[A-Za-z_$]*\s*\(|this\.poll\s*\(|this\.refresh\s*\(|this\.check[A-Za-z_$]*\s*\(|this\.verify\s*\(|\$backend/;
+// 安装引导页：本身没有列表数据，asyncData 只用于判断跳转，允许只有服务端取数。
+const FETCH_ALLOW = new Set(['pages/welcome.vue']);
+
+function hookBodies(script) {
+  const out = [];
+  const re = /\b(created|mounted|activated)\s*\([^)]*\)\s*\{/g;
+  let m;
+  while ((m = re.exec(script)) !== null) {
+    const brace = script.indexOf('{', m.index + m[0].length - 1);
+    out.push(script.slice(brace + 1, matchBrace(script, brace)));
+  }
+  return out;
+}
+
+function routeWatchEntries(script) {
+  const out = [];
+  const re = /["']?\$route(?:\.[A-Za-z_$]+)*["']?\s*:\s*\{/g;
+  let m;
+  while ((m = re.exec(script)) !== null) {
+    const brace = script.indexOf('{', m.index + m[0].length - 1);
+    const end = matchBrace(script, brace);
+    out.push(script.slice(brace + 1, end));
+  }
+  return out;
+}
+
+let fetchIssues = 0;
+let pageCount = 0;
+for (const file of files) {
+  if (!file.startsWith(PAGES + path.sep)) continue;
+  const rel = path.relative(ROOT, file).replace(/\\/g, '/');
+  const raw = fs.readFileSync(file, 'utf8');
+  const sm = /<script[^>]*>([\s\S]*?)<\/script>/.exec(raw);
+  if (!sm) continue;
+  // 仅 re-export 的薄壳（all.vue 等）继承被导出页面的行为，不单独判定
+  if (!/\bexport\s+default\s*\{/.test(sm[1])) continue;
+  pageCount += 1;
+
+  const script = sm[1];
+  const hasAsyncData = /\basyncData\s*\(/.test(script);
+  const lifecycleFetch = hookBodies(script).some((body) => FETCH_RE.test(body));
+  const badWatch = routeWatchEntries(script).filter(
+    (entry) => FETCH_RE.test(entry) && !/immediate\s*:\s*true/.test(entry)
+  );
+
+  if (hasAsyncData && !lifecycleFetch && !FETCH_ALLOW.has(rel)) {
+    fetchIssues += 1;
+    console.log(`ERROR ${rel}  只有 asyncData 取数：静态产物下直接进入/强刷不会发请求（需 mounted/created 兜底）`);
+  }
+  if (badWatch.length) {
+    fetchIssues += 1;
+    console.log(`ERROR ${rel}  只在 $route watch 里取数且缺 immediate：首屏直入不会触发（需生命周期兜底）`);
+  }
+}
+
+console.log(`\n首屏取数审计（pages，${pageCount} 个自有页面）：${fetchIssues} 处隐患。`);
 console.log(`\n扫描 ${files.length} 个 .vue：${errorCount} 处脚本级错误，${warningCount} 处模板级待确认。`);
-if (strict && errorCount > 0) {
+if (strict && (errorCount > 0 || fetchIssues > 0)) {
   process.exit(1);
 }
