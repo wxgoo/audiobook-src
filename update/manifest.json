@@ -1,15 +1,18 @@
 {
   "schema": 1,
-  "revision": "4.6.0-build.27-r18",
+  "revision": "4.6.0-build.27-r19",
   "base_revision": "4.6.0-build.27-r17",
   "version": "4.6.0-build.27",
   "date": "2026-11-11",
-  "summary": "读者组模板扩到 17 套（分两栏），修「成人家属」模板不可用",
+  "summary": "读者组模板扩到 17 套（分两栏）；修在线更新 451：不再重试且报出具体文件",
   "notes": [
-    "1. 模板从 4 套扩到 17 套，按「家庭与账号/兴趣主题」两栏展示；菜单限高滚动，加模板只改后端 PRESET_GROUPS。",
-    "2. 「成人家属」原来用白名单+空条件，严格模式下等于一本书都看不到；现改为「不限」模式。老数据里已建坏的组不会自动变，打开该组把限制方式改成「不限」再保存。",
-    "3. 黑名单空条件不再被判成读不到书（按 read_limit 区分，白名单空条件仍挡书）。",
-    "4. 载入模板后自动比对本库真实标签：未命中的列出来并可一键剔除，未命中过半转橙色提示。"
+    "1. 跳过 r18：那版清单里的 reader_group.py 被 Gitee 内容审核判 451（模板里写了几个露骨标签词），在线更新下到第二个文件就断。本版已换中性标签词，四个 py 文件均已实测可下载。",
+    "2. 本补丁的 base 是 r17，r17 实例可直接页内更新；r18 未被任何实例成功装上（装不上的原因就是它自己）。",
+    "3. 模板从 4 套扩到 17 套，按「家庭与账号 / 兴趣主题」两栏展示，菜单限高滚动；加模板只改后端 PRESET_GROUPS。",
+    "4. 「成人家属」原来用白名单+空条件，严格模式下等于一本书都看不到；现改为「不限」模式。老数据里已建坏的组不会自动变，打开该组把限制方式改成「不限」再保存。",
+    "5. 黑名单空条件不再被判成读不到书（按 read_limit 区分，白名单空条件仍挡书）。",
+    "6. 载入模板后自动比对本库真实标签：未命中的列出来并可一键剔除，未命中过半转橙色提示。",
+    "7. 在线更新失败时：报错带具体文件路径，451 明确写「发布侧问题、与本机网络无关」并给出整包部署的兜底路径；4xx 不再无谓重试（原来要空等 90 秒）。"
   ],
   "requires_dist": true,
   "hotfixable": true,
@@ -444,15 +447,27 @@
       "bytes": 14010
     },
     {
+      "path": "webserver/handlers/version.py",
+      "sha256": "9ea6e34a7aa89022f1caeb49672687a32e03815ceb48d85c32f81144a2fd45d1",
+      "bytes": 3835
+    },
+    {
       "path": "webserver/services/reader_group.py",
-      "sha256": "569dd78c419e2aa991261d0ec34e5d27f1428a24ab0888eb4cd06a754e584e99",
-      "bytes": 29396
+      "sha256": "2b5117212445dd7c1705187c321571b562745786f37493bf82a38fdf5339ebbb",
+      "bytes": 29729
+    },
+    {
+      "path": "webserver/services/version_check.py",
+      "sha256": "4faeac7ad5b4e1c78d377db9337c1a83cc826a73027ced855c4a0e38bcc45b4a",
+      "bytes": 24125
     }
   ],
   "changed": {
     "hotfix": [
       "webserver/handlers/reader_group.py",
-      "webserver/services/reader_group.py"
+      "webserver/handlers/version.py",
+      "webserver/services/reader_group.py",
+      "webserver/services/version_check.py"
     ],
     "dist": [
       "app/dist/200.html",
@@ -559,15 +574,16 @@
       "CHANGELOG.md",
       "docs/开发指南.md",
       "docs/部署包说明.md",
-      "tests/test_reader_group.py"
+      "tests/test_reader_group.py",
+      "tests/test_version_dist_paths.py"
     ]
   },
   "deploy_commands": [
     "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.6.0-build.27-r18.tar.gz.sha256",
+    "sha256sum -c audiobook-deploy-4.6.0-build.27-r19.tar.gz.sha256",
     "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
     "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.6.0-build.27-r18.tar.gz",
+    "tar -xzf audiobook-deploy-4.6.0-build.27-r19.tar.gz",
     "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }
