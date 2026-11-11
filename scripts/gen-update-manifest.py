@@ -16,11 +16,18 @@
 判定规则（决定「点一下就能更新」还是「必须重新部署」）：
 
   hotfix    server.py、webserver/**/*.py —— 纯 Python，容器内替换 + 重启进程即生效
-  blocking  前端 / 镜像配置 / myreader / tools / scripts 等 —— 必须重新 deploy 或 upgrade
+  dist      app/dist/** —— 前端产物，可在线替换「本次变化的文件」，但客户端要强刷
+  blocking  镜像配置 / myreader / tools / 系统级改动 —— 必须重新 deploy 或 upgrade
   docs      *.md、docs/**、delivery/overlay/files/docs/** —— 只影响说明，不触发更新操作
 
-只要存在 blocking 改动，requires_dist 就为 true，页面只给重新部署指引，不提供在线更新按钮。
-hotfix.files 里的 sha256 取自工作区当前文件，在线更新时会逐个复核，防篡改/防下载不全。
+dist 变更是否允许在线更新，看规模：文件数与总字节在阈值内（默认 200 个 / 20MB）
+则写进 dist_files，页面可一键更新；超过阈值（例如整包重建 757 个文件）或含
+非静态资源，仍退回「重新部署」——逐个 raw 下载几百个文件既慢又容易被限流。
+
+⚠️ requires_dist 的语义保持不变（含前端产物即为 true），老版本页面看到 true 仍然
+只显示重新部署指引；新版本额外读 dist_hotfixable 才放开在线更新按钮。这样新旧
+两种前端都不会出现「只更了 py 没更 dist」的半新半旧状态。
+hotfix.files / dist_files 里的 sha256 取自 git blob，在线更新时逐个复核，防篡改/防下载不全。
 """
 import argparse
 import hashlib
@@ -36,6 +43,16 @@ OUT = os.path.join(ROOT, "update", "manifest.json")
 # 能在线热替换的路径：镜像里 COPY 进来的纯 Python 代码，且容器运行用户有写权限。
 HOTFIX_EXACT = {"server.py"}
 HOTFIX_PREFIX = ("webserver/",)
+# 前端产物：静态文件，nginx 直接读，替换文件即刻生效（客户端强刷即可）。
+DIST_PREFIX = "app/dist/"
+DIST_SUFFIX = (".js", ".css", ".html", ".json", ".map", ".txt",
+               ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico",
+               ".woff", ".woff2", ".ttf", ".eot")
+# 在线更新 dist 的规模上限：超过就不走页内更新，退回重新部署。
+# Nuxt 每次构建都会重写全部路由 html（buildId 变），一个页面小改也会动 ~80 个文件，
+# 阈值按「一次小改能覆盖、整包重建覆盖不了」来定。
+DIST_HOTFIX_MAX_FILES = 200
+DIST_HOTFIX_MAX_BYTES = 20 * 1024 * 1024
 # 文档类：改动不需要用户执行任何操作（但仍会体现在 changed 里，方便核对）。
 DOCS_PREFIX = ("docs/", "document/", "delivery/overlay/files/docs/",
                "delivery/overlay/files/document/", "delivery/overlay/files/CHANGELOG.md")
@@ -43,6 +60,8 @@ DOCS_EXACT = {"CHANGELOG.md", "README.md", "INSTALL_GUIDE.md", "SECURITY.md",
               # §维护者侧工具§（build.27-r12）：只在出清单的开发机/git 上跑，
               # NAS 运行态不执行——它的改动不阻塞在线热更，随下次整包部署落地。
               "scripts/gen-update-manifest.py"}
+# 前端源码：本身不投递，改了必须重建成 dist 才算数（见主流程的 dist 联动校验）。
+APP_SRC_PREFIX = ("app/src/", "app/locales/")
 
 
 def git(*args):
@@ -85,10 +104,20 @@ def classify(path):
     # 整次纯后端修订顶成「必须重新部署」（build.27-r12 现场教训）。
     if path == "tests" or path.startswith("tests/"):
         return "docs"
+    # scripts/ 只在开发机与宿主机跑（build 期的 check-myreader-links.sh 是 COPY 到
+    # /tmp 用完即弃），容器运行态不读，改动不阻塞在线热更。
+    if path.startswith("scripts/"):
+        return "docs"
+    # 前端源码 / 语言包：不是投递单元，真正的投递物是重建后的 app/dist
+    if path.startswith(APP_SRC_PREFIX):
+        return "appsrc"
     if path in HOTFIX_EXACT:
         return "hotfix"
     if path.startswith(HOTFIX_PREFIX) and path.endswith(".py") and "/__pycache__/" not in path:
         return "hotfix"
+    # 前端产物：只认 app/dist/ 下的静态文件，其它 app/ 源码改动仍是 blocking
+    if path.startswith(DIST_PREFIX) and path.endswith(DIST_SUFFIX):
+        return "dist"
     return "blocking"
 
 
@@ -126,14 +155,14 @@ def main():
     args = ap.parse_args()
 
     changes = changed_files(args.base_commit)
-    hotfix, blocking, docs = [], [], []
+    hotfix, blocking, docs, dist, appsrc = [], [], [], [], []
     for path, status in sorted(changes.items()):
         if path.startswith("update/") and path.endswith("manifest.json"):
             continue  # 清单本身不参与分类
         kind = classify(path)
-        (hotfix if kind == "hotfix" else blocking if kind == "blocking" else docs).append(
-            {"path": path, "status": status}
-        )
+        target = {"hotfix": hotfix, "blocking": blocking, "docs": docs,
+                  "dist": dist, "appsrc": appsrc}[kind]
+        target.append({"path": path, "status": status})
 
     files = []
     for item in hotfix:
@@ -158,7 +187,44 @@ def main():
         except OSError:
             pass
 
-    requires_dist = bool(blocking)
+    # 前端源码改了但没有任何 dist 变更：多半忘了构建，或构建产物没提交。
+    # 这种修订不能在线更新（页面按清单投递 dist，源码不在投递范围内）。
+    if appsrc and not dist:
+        blocking.extend(appsrc)
+        print("  ! app/src 或 app/locales 有改动，但 app/dist 无对应变更——"
+              "先 `cd app && bash build.sh` 并提交 dist，再重新出清单")
+
+    # 前端产物：新增/修改逐个登记 sha256，删除的单独记（apply 时删除、回滚时还原）
+    dist_files, dist_deleted, dist_oversize = [], [], ""
+    for item in dist:
+        rel = item["path"]
+        if item["status"] == "D":
+            dist_deleted.append(rel)
+            continue
+        blob = git_blob_bytes(rel)
+        dist_files.append({
+            "path": rel,
+            "sha256": hashlib.sha256(blob).hexdigest(),
+            "bytes": len(blob),
+        })
+    dist_bytes = sum(f["bytes"] for f in dist_files)
+    dist_hotfixable = bool(dist_files or dist_deleted)
+    if dist_hotfixable and len(dist_files) > DIST_HOTFIX_MAX_FILES:
+        dist_oversize = "前端文件 %d 个，超过在线更新上限 %d 个" % (
+            len(dist_files), DIST_HOTFIX_MAX_FILES)
+    elif dist_hotfixable and dist_bytes > DIST_HOTFIX_MAX_BYTES:
+        dist_oversize = "前端产物 %.1fMB，超过在线更新上限 %.0fMB" % (
+            dist_bytes / 1048576.0, DIST_HOTFIX_MAX_BYTES / 1048576.0)
+    if dist_oversize:
+        # 规模太大（整包重建）：整批退回 blocking，页面只给重新部署指引
+        blocking.extend(dist)
+        dist_files, dist_deleted = [], []
+        dist_hotfixable = False
+        print("  ! 前端产物改为必须重新部署：%s" % dist_oversize)
+
+    # requires_dist 保持「含前端产物即 true」的老语义：老版本页面看到 true 只显示
+    # 重新部署指引，不会出现「只更 py 没更 dist」的半新半旧；新版本另看 dist_hotfixable。
+    requires_dist = bool(blocking) or bool(dist_files or dist_deleted)
     manifest = {
         "schema": 1,
         "revision": args.revision,
@@ -168,10 +234,16 @@ def main():
         "summary": args.summary or "功能与修复更新",
         "notes": args.notes,
         "requires_dist": requires_dist,
-        "hotfixable": (not requires_dist) and bool(files),
+        "hotfixable": (not blocking) and bool(files or dist_files or dist_deleted),
+        "dist_hotfixable": dist_hotfixable,
+        "dist_files": dist_files,
+        "dist_deleted": dist_deleted,
         "reason": (
-            "本次改动包含前端产物或镜像级文件，在线替换无法生效，请重新执行 deploy.sh / upgrade.sh"
-            if requires_dist else
+            "本次改动包含镜像级文件（Dockerfile / conf / 依赖 / 工具链 / 删除的前端文件），"
+            "在线替换无法生效，请重新执行 deploy.sh / upgrade.sh"
+            if blocking else
+            "包含前端产物与后端代码，可在线替换并重启服务；完成后请 Ctrl+Shift+R 强制刷新"
+            if dist_files or dist_deleted else
             "仅后端 Python 代码变更，可在线替换并重启服务，无需重建镜像"
             if files else
             "仅文档或无需运行态变更的内容"
@@ -179,6 +251,8 @@ def main():
         "files": files,
         "changed": {
             "hotfix": [i["path"] for i in hotfix],
+            "dist": [i["path"] for i in dist],
+            "appsrc": [i["path"] for i in appsrc],
             "blocking": [i["path"] for i in blocking],
             "docs": [i["path"] for i in docs],
         },
@@ -200,8 +274,11 @@ def main():
         f.write("\n")
     print("已生成", args.out)
     print("  revision      :", args.revision, "(base:", args.base_revision + ")")
-    print("  requires_dist :", requires_dist, " hotfixable:", manifest["hotfixable"])
-    print("  hotfix files  :", len(files), " blocking:", len(blocking), " docs:", len(docs))
+    print("  requires_dist :", requires_dist, " hotfixable:", manifest["hotfixable"],
+          " dist_hotfixable:", dist_hotfixable)
+    print("  hotfix files  :", len(files), " dist:", len(dist_files),
+          "(%.1fMB, %d deleted)" % (dist_bytes / 1048576.0, len(dist_deleted)),
+          " blocking:", len(blocking), " docs:", len(docs))
     for i in blocking[:8]:
         print("    ! ", i["path"])
     return 0

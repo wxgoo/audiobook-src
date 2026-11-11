@@ -112,8 +112,14 @@
           <div class="text-caption mb-1">
             {{ $t('versionCheck.hotfixFiles', { n: st.latest.files.length }) }}
           </div>
+          <div v-if="st.latest.dist_files && st.latest.dist_files.length" class="text-caption mb-1">
+            {{ $t('versionCheck.hotfixDistFiles', {
+              n: st.latest.dist_files.length,
+              mb: ((st.latest.dist_bytes || 0) / 1048576).toFixed(1)
+            }) }}
+          </div>
           <div class="text-caption grey--text mb-3" style="word-break: break-all">
-            {{ st.latest.files.map(f => f.path).join('，') }}
+            {{ [...st.latest.files, ...(st.latest.dist_files || [])].map(f => f.path).join('，') }}
           </div>
           <v-btn color="success" :loading="busy" :disabled="busy || restarting" @click="confirmApply = true">
             <v-icon small left>mdi-download</v-icon>{{ $t('versionCheck.applyNow') }}

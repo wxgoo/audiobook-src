@@ -49,6 +49,33 @@ r12 的实例也不能页内点更新，需随包或 `git pull && docker compose
 - **文档同步**：本文件、《部署包说明》（当前包名 / md5 / dist 自检）、《在线更新说明》8.11
   （chunk 404 排查）、《开发指南》踩坑 9~11、`.claude/memory/MEMORY.md` ②b 与 ⑨。
 
+### 同日追加（r13 包内更新，未升修订号）
+
+- **分类页每个分类带图标**：分类是 calibre 自定义列的纯文本，本身没有图标来源。
+  新增 `webserver/base/category_icons.py`，用「关键词 → 图标」规则表映射常见命名
+  （演播 / 有声 / 电台 → `mdi-radio-tower`，科幻 → 火箭，文学 → 摊开的书，历史 → 古典建筑……），
+  未命中的按分类名 crc32 从备选池稳定取一个（同名不跳变、不同分类不撞脸）。
+  `/api/categories` 每项多返回 `icon` / `color`，前端 `pages/categories.vue` 在 tab 名前渲染图标，
+  选中态转白适配深蓝底。`tests/test_category_icons.py` 8 条断言锁住规则优先级与兜底稳定性。
+- **友情链接上下移动修好**：`moveFriend` 原来用「按下标原地交换」，Vue 2 侦测不到下标赋值，
+  点了没反应（保存后顺序也不变）。改为 `slice` 新数组 + `$set` 整体替换。
+- **新增 `scripts/hot-update.sh`（热更新，不重建镜像）**：只改了 `app/src`（已出 dist）或
+  `webserver/` 下 `.py` 时，用它覆盖运行中容器的 dist 与代码、`compileall` 预检、
+  `supervisorctl restart tornado`（nginx 不动），默认把旧文件备份到
+  `../audiobook-hotfix-backup/`。用法与回滚见《在线更新说明》8.12。
+- **打包脚本清垃圾**：`app/build.sh` 的 `.build-trash` 归档目录与 `app/.nuxt` 构建缓存
+  会被当成工作区文件打进部署包（上一版包 246M，多出 4.4 万条无用户）。`pack.sh` 跳过
+  `.build-trash`、暂存后删 `app/.nuxt`，验包阶段对这两项直接报错防复发。
+- **「版本与更新」页现在也能在线更新前端产物**：以前只要本次含 `app/dist` 变更，
+  `requires_dist=true` 就一律只给「请重新部署」指引——因为旧逻辑只替换
+  `webserver/**/*.py`，硬更会出现「新 py + 旧 dist」的半新半旧。现在发布清单额外给出
+  `dist_hotfixable` / `dist_files`（逐文件 sha256）/ `dist_deleted`，
+  后端放开 `app/dist/**` 静态文件（后缀白名单、拒绝 `..` 与绝对路径），
+  全部下载校验通过才动线上，`index.html` 最后替换（中途失败也不会白屏），
+  删除项走备份可回滚；超过 200 个文件 / 20MB（整包重建）仍退回重新部署。
+  `requires_dist` 语义保持不变，老版本页面照旧只显示部署指引，不会半更。
+  页面会显示前端产物数量与体积，并提示更新后 `Ctrl+Shift+R`。
+
 ---
 
 ## 4.6.0-build.27-r12（2026-11-10，未随包，可页内热更）

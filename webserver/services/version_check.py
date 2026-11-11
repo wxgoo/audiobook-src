@@ -71,6 +71,12 @@ STATE_FILE = os.path.join(DATA_ROOT, "update-state.json")
 
 HOTFIX_EXACT = {"server.py"}
 HOTFIX_PREFIX = ("webserver/",)
+# 前端产物：静态文件，nginx 直接读 /var/www/mybooks/app/dist，换文件即生效（客户端强刷）。
+# 只认这些后缀，避免清单里被塞进可执行脚本/配置；python 代码仍然只走 webserver/ 白名单。
+DIST_PREFIX = "app/dist/"
+DIST_SUFFIX = (".js", ".css", ".html", ".json", ".map", ".txt",
+               ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico",
+               ".woff", ".woff2", ".ttf", ".eot")
 MANIFEST_TTL = 300  # 秒，页面重复打开不必每次打 Gitee
 _lock = threading.Lock()
 _cache = {"manifest": None, "ts": 0.0, "error": ""}
@@ -175,9 +181,10 @@ def is_allowed(path):
     p = (path or "").lstrip("/")
     if "\\" in p or p.startswith("..") or "/../" in p or p.startswith("/"):
         return False
-    if not (p.endswith(".py") or p in HOTFIX_EXACT):
-        return False
-    return p in HOTFIX_EXACT or p.startswith(HOTFIX_PREFIX)
+    if p in HOTFIX_EXACT or (p.startswith(HOTFIX_PREFIX) and p.endswith(".py")):
+        return True
+    # 前端产物：只允许 app/dist/ 下的静态文件（后缀白名单），其它一律拒绝
+    return p.startswith(DIST_PREFIX) and p.endswith(DIST_SUFFIX)
 
 
 def list_backups():
@@ -216,13 +223,21 @@ def status(force=False):
                and _rev_num(latest["revision"]) >= _rev_num(cur))
 
     mode = "none"
+    dist_files = latest.get("dist_files") or []
+    dist_deleted = latest.get("dist_deleted") or []
+    py_files = latest.get("files") or []
+    # 前端产物能否随这次在线更新一起替换：清单显式标了 dist_hotfixable，
+    # 且确实带了文件（新增/修改）或删除项。老清单没这个字段 → 一律按需重新部署处理。
+    dist_ok = bool(latest.get("dist_hotfixable")) and bool(dist_files or dist_deleted)
     if has:
-        if latest.get("requires_dist"):
+        if latest.get("requires_dist") and not dist_ok:
             mode = "redeploy"
-        elif not latest.get("hotfixable") or not latest.get("files"):
+        elif not (py_files or dist_files or dist_deleted):
             mode = "docs_only"
         elif latest.get("base_revision") and latest["base_revision"] != cur:
             mode = "redeploy"  # 跨版本，增量补丁不能直接用
+        elif not latest.get("hotfixable"):
+            mode = "redeploy"
         else:
             mode = "hotfix"
 
@@ -248,6 +263,11 @@ def status(force=False):
             "changed": latest.get("changed", {}),
             "files": [{"path": f.get("path"), "bytes": f.get("bytes")}
                       for f in latest.get("files", [])],
+            "dist_files": [{"path": f.get("path"), "bytes": f.get("bytes")}
+                           for f in dist_files],
+            "dist_deleted": dist_deleted,
+            "dist_hotfixable": dist_ok,
+            "dist_bytes": sum(int(f.get("bytes") or 0) for f in dist_files),
             "deploy_commands": latest.get("deploy_commands", []),
         } if latest else None,
         "has_update": has,
@@ -306,8 +326,11 @@ def _apply_locked(revision):
         raise RuntimeError("无法读取 Gitee 发布清单：%s" % err)
     if remote.get("revision") != revision:
         raise RuntimeError("发布清单已变化（%s），请刷新页面重新检测" % remote.get("revision"))
-    if remote.get("requires_dist") or not remote.get("hotfixable"):
-        raise RuntimeError("本次更新包含前端产物或镜像级文件，请重新执行 deploy.sh / upgrade.sh")
+    # 前端产物可随本次更新一起替换（清单标了 dist_hotfixable 才允许）；
+    # 其余 blocking（Dockerfile / conf / 依赖 / myreader）仍然只能重新部署。
+    dist_ok = bool(remote.get("dist_hotfixable"))
+    if (remote.get("requires_dist") and not dist_ok) or not remote.get("hotfixable"):
+        raise RuntimeError("本次更新包含镜像级文件，请重新执行 deploy.sh / upgrade.sh")
 
     local = read_local_manifest()
     if not local.get("revision"):
@@ -317,8 +340,12 @@ def _apply_locked(revision):
     if base and base != cur:
         raise RuntimeError("本地修订是 %s，本补丁要求 %s，跨版本请重新部署" % (cur, base))
 
-    entries = remote.get("files") or []
-    if not entries:
+    entries = list(remote.get("files") or [])
+    deleted = []
+    if dist_ok:
+        entries += list(remote.get("dist_files") or [])
+        deleted = list(remote.get("dist_deleted") or [])
+    if not entries and not deleted:
         raise RuntimeError("发布清单没有可更新的文件")
 
     paths = []
@@ -329,6 +356,9 @@ def _apply_locked(revision):
         if not item.get("sha256") or not item.get("bytes"):
             raise RuntimeError("发布清单缺少校验值：%s" % p)
         paths.append(p)
+    for p in deleted:
+        if not is_allowed(p):
+            raise RuntimeError("发布清单含不允许删除的路径：%s" % p)
 
     # 1) 全部下载并校验，任何一个失败都不动线上文件
     tmp = tempfile.mkdtemp(prefix="mybooks-update-")
@@ -347,21 +377,31 @@ def _apply_locked(revision):
             payloads[p] = data
             logging.info("[VERSION] 已校验 %s (%d bytes)", p, size)
 
-        # 2) 备份旧文件到持久化卷
+        # 2) 备份旧文件到持久化卷（含本次要删除的前端文件，回滚时能还原）
         if not os.path.isdir(DATA_ROOT):
             raise RuntimeError("数据卷 /data 不可用，拒绝在线更新")
-        backup = _backup(paths, cur, revision)
+        backup = _backup(paths + deleted, cur, revision)
 
-        # 3) 原子替换
-        for p, data in payloads.items():
+        # 3) 原子替换。index.html 放最后：万一中途失败，旧首页仍指向旧 chunk，
+        #    不会出现「新首页 + 半套新 chunk」的白屏。
+        ordered = sorted(payloads.items(), key=lambda kv: (kv[0].endswith("app/dist/index.html"), kv[0]))
+        for p, data in ordered:
             dst = os.path.join(CODE_ROOT, p)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             new = dst + ".update-new"
             with open(new, "wb") as f:
                 f.write(data)
             os.replace(new, dst)
+        # 本次删除的前端文件（如旧 chunk）：直接删，回滚时按备份还原
+        for rel in deleted:
+            dst = os.path.join(CODE_ROOT, rel)
+            if os.path.isfile(dst):
+                try:
+                    os.remove(dst)
+                except OSError:
+                    logging.warning("[VERSION] 删除旧前端文件失败：%s", rel)
         # 清掉旧字节码，避免 .pyc 抢先加载
-        for rel in set(os.path.dirname(p) for p in paths):
+        for rel in set(os.path.dirname(p) for p in paths if p.endswith(".py")):
             cache = os.path.join(CODE_ROOT, rel, "__pycache__")
             if os.path.isdir(cache):
                 shutil.rmtree(cache, ignore_errors=True)
@@ -384,6 +424,10 @@ def _apply_locked(revision):
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 with open(dst, "wb") as f:
                     f.write(data)
+            for rel in deleted:
+                stale = os.path.join(SYNC_ROOT, rel)
+                if os.path.isfile(stale):
+                    os.remove(stale)
         except Exception:
             logging.warning("[VERSION] 写同步区失败（不影响本次生效）:\n%s", traceback.format_exc())
 
@@ -391,15 +435,17 @@ def _apply_locked(revision):
         state["current_revision"] = revision
         state.setdefault("history", []).insert(0, {
             "revision": revision, "date": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "files": paths, "backup": backup,
+            "files": paths + deleted, "backup": backup,
         })
         state["history"] = state["history"][:10]
         write_state(state)
 
         _cache.update(manifest=remote, ts=time.time(), error="")
-        return {"err": "ok", "revision": revision, "files": len(paths),
+        return {"err": "ok", "revision": revision,
+                "files": len(paths) + len(deleted),
+                "dist_files": len([p for p in paths if p.startswith(DIST_PREFIX)]),
                 "backup": backup, "restart": True,
-                "msg": "已更新 %d 个文件，服务正在重启" % len(paths)}
+                "msg": "已更新 %d 个文件，服务正在重启" % (len(paths) + len(deleted))}
     except Exception:
         # 下载/校验阶段失败：线上文件一个都没动
         raise
