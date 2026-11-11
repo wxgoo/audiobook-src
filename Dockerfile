@@ -89,6 +89,13 @@ RUN if [ -f /build/dist/index.html ] && [ -f /build/dist/200.html ] \
         cp -r dist nuxt.config.js package* /app-static/; \
     fi
 
+# 生产阶段有两条 COPY --from=builder /app-static/dist/{logo,avatar}/ /data/books/…。
+# buildkit 要求源路径必须存在，否则直接 failed to compute cache key，整个 build 中止。
+# 这两个目录在 dist 里是「默认品牌资源 + 运行期用户数据」的混合体，clean generate
+# 之后不一定有（generate 会先清空 dist），所以这里无条件补建空目录兜底：
+# 有文件时不受影响，没有时也能让 COPY 通过并只创建目标目录。
+RUN mkdir -p /app-static/dist/logo /app-static/dist/avatar
+
 # ----------------------------------------
 # 第二阶段，构建环境（基于预构建的基础镜像，含系统包、python依赖及calibre补丁）
 # 基础镜像构建：make build-base-multiarch
