@@ -333,3 +333,34 @@ if __name__ == "__main__":
 
     print(f"\n{'=' * 60}")
     print(f"共 {len(tag_tests)} 个测试，{'全部通过 ✓' if all_pass else '存在失败 ✗'}")
+
+
+# ===== 从已下线的豆瓣（插件）源迁来的公共函数 =====
+# 原住 webserver/plugins/meta/douban/，baike 与 handlers/book.py 还在用，搬进公共层。
+import datetime  # noqa: E402
+
+from webserver.constants import DEFAULT_ISBN  # noqa: E402
+from webserver.i18n import _  # noqa: E402
+
+
+def str2date(s):
+    """把豆瓣风格的中文/数字日期串解析成 aware datetime，解析不了返回 None"""
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m", _("%Y年"), _("%Y年%m月"), _("%Y年%m月%d日"), "%Y"):
+        try:
+            return datetime.datetime.strptime(s, fmt).replace(tzinfo=datetime.timezone.utc)
+        except Exception:
+            continue
+    return None
+
+
+def has_proper_book(books, title, isbn, publisher=None):
+    """检查搜索结果中是否包含合适的图书（ISBN 精确命中，或题名+出版社双匹配）"""
+    if not books or not isbn or isbn == DEFAULT_ISBN:
+        return False
+
+    for b in books:
+        if isbn == b.get("isbn13", "xxx"):
+            return True
+        if publisher and title == b.get("title") and publisher == b.get("publisher"):
+            return True
+    return False

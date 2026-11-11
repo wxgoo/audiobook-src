@@ -315,7 +315,7 @@
   "本站为私人图书馆，需输入密码才可进行访问": "This is a private library. Please enter an invite code to access",
   "权限参数不对": "Invalid permission parameter",
   "条形码识别失败: %s": "Barcode recognition failed: %s",
-  "查询ISBN失败，请在系统设置中配置互联网信息源中插件地址。如http://douban-rs-api:80/。": "ISBN query failed. Configure plugin endpoint in System Settings, e.g. http://douban-rs-api:80/",
+  "查询ISBN失败，请在系统设置中勾选可用的互联网信息源（如豆瓣V2、百度百科）。": "ISBN query failed. Select available internet book sources in System Settings (e.g. Douban V2, Baidu Baike).",
   "查询失败，请稍后重试": "Query failed, please try again later",
   "查询超时，请稍后重试": "Query timed out, please try again later",
   "标签已是最新，无需更新": "Tags are already up to date",

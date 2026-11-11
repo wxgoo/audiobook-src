@@ -1362,8 +1362,8 @@ const SEARCH_ALIASES = {
     主页: ["INDEX_PAGE_TYPE", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"], 默认页: ["INDEX_PAGE_TYPE"], 首页类型: ["INDEX_PAGE_TYPE"],
     首页卡片: ["HOMEPAGE_CONFIG"], 自定义卡片: ["HOMEPAGE_CONFIG"], 卡片: ["HOMEPAGE_CONFIG"], 作者卡片: ["HOMEPAGE_CONFIG"], 标签卡片: ["HOMEPAGE_CONFIG"], 丛书卡片: ["HOMEPAGE_CONFIG"], 语言卡片: ["HOMEPAGE_CONFIG"], 评分卡片: ["HOMEPAGE_CONFIG"],
     项目链接: ["HIDE_PROJECT_LINKS"], 隐藏链接: ["HIDE_PROJECT_LINKS"], 开源链接: ["HIDE_PROJECT_LINKS"],
-    友情链接: ["FRIENDS"], 友链: ["FRIENDS"], 链接: ["FRIENDS", "HIDE_PROJECT_LINKS", "douban_baseurl", "AI_API_URL", "static_host", "SITE_URL"],
-    网址: ["douban_baseurl", "AI_API_URL", "static_host", "SITE_URL"], 地址: ["douban_baseurl", "AI_API_URL", "static_host", "smtp_server", "SITE_URL"],
+    友情链接: ["FRIENDS"], 友链: ["FRIENDS"], 链接: ["FRIENDS", "HIDE_PROJECT_LINKS", "AI_API_URL", "static_host", "SITE_URL"],
+    网址: ["AI_API_URL", "static_host", "SITE_URL"], 地址: ["AI_API_URL", "static_host", "smtp_server", "SITE_URL"],
     // 站点与外观 · 首页与列表
     随机: ["MAIN_PAGE_RANDOM_COUNT"], 推荐: ["RECOMMEND_ENABLE", "RECOMMEND_USE_CROWD", "ENABLE_BOOK_RECOMMEND_TO_OTHERS", "MAIN_PAGE_RANDOM_COUNT"], 智能: ["RECOMMEND_ENABLE"],
     协同: ["RECOMMEND_USE_CROWD"], 协同过滤: ["RECOMMEND_USE_CROWD"], 参考他人: ["RECOMMEND_USE_CROWD"],
@@ -1438,7 +1438,7 @@ const SEARCH_ALIASES = {
     大小: ["MAX_UPLOAD_SIZE", "CACHE_MAX_MB"], 文件大小: ["MAX_UPLOAD_SIZE"], 上传限制: ["MAX_UPLOAD_SIZE", "CHUNK_UPLOAD_SIZE"],
     上限: ["MAX_UPLOAD_SIZE", "CHUNK_UPLOAD_SIZE", "ENABLE_DOWNLOAD_QUOTA", "GLOBAL_DOWNLOAD_QUOTA", "CACHE_MAX_MB"],
     分片: ["CHUNK_UPLOAD_SIZE"], 大文件: ["CHUNK_UPLOAD_SIZE"], 续传: ["CHUNK_UPLOAD_SIZE"],
-    元数据: ["auto_fill_meta", "META_SELECTED_SOURCES", "DEFAULT_LANGUAGE"], 书籍信息: ["auto_fill_meta", "META_SELECTED_SOURCES"], 信息源: ["META_SELECTED_SOURCES", "douban_baseurl"],
+    元数据: ["auto_fill_meta", "META_SELECTED_SOURCES", "DEFAULT_LANGUAGE"], 书籍信息: ["auto_fill_meta", "META_SELECTED_SOURCES"], 信息源: ["META_SELECTED_SOURCES"],
     源文件: ["KEEP_UPLOAD_SOURCE_FILE", "REMOVE_IMPORTED_FILE"], 保留: ["KEEP_UPLOAD_SOURCE_FILE"], 临时文件: ["KEEP_UPLOAD_SOURCE_FILE", "REMOVE_IMPORTED_FILE"], 暂存文件: ["KEEP_UPLOAD_SOURCE_FILE"],
     删除源文件: ["REMOVE_IMPORTED_FILE"], 导入后删除: ["REMOVE_IMPORTED_FILE"],
     // 导入与存储 · 导入规则
@@ -1467,16 +1467,16 @@ const SEARCH_ALIASES = {
     // 外部服务 · 信息源
     信息: ["auto_fill_meta"], 刮削: ["auto_fill_meta", "META_SELECTED_SOURCES"], 抓取: ["auto_fill_meta", "META_SELECTED_SOURCES"],
     频率: ["auto_fill_qpm"], 每分钟: ["auto_fill_qpm"], 填充频率: ["auto_fill_qpm"], 刮削频率: ["auto_fill_qpm"],
-    豆瓣: ["auto_fill_meta", "META_SELECTED_SOURCES", "douban_baseurl", "douban_apikey", "douban_max_count", "douban_v2_max_per_hour"], 书源: ["META_SELECTED_SOURCES", "auto_fill_meta"], 来源: ["META_SELECTED_SOURCES"], 选择来源: ["META_SELECTED_SOURCES"],
+    豆瓣: ["auto_fill_meta", "META_SELECTED_SOURCES", "douban_max_count", "douban_v2_max_per_hour"], 书源: ["META_SELECTED_SOURCES", "auto_fill_meta"], 来源: ["META_SELECTED_SOURCES"], 选择来源: ["META_SELECTED_SOURCES"],
     每小时: ["douban_v2_max_per_hour"], 每小时上限: ["douban_v2_max_per_hour"], 豆瓣频率: ["douban_v2_max_per_hour"],
-    镜像: ["douban_baseurl"], api: ["AI_API_URL", "AI_DEEPSEEK_API_KEY", "douban_apikey", "douban_baseurl"],
-    密钥: ["douban_apikey", "AI_DEEPSEEK_API_KEY", "cookie_secret", "AI_MCP_TOKEN", "BOOKBARN_TOKEN"],
+    镜像: [], api: ["AI_API_URL", "AI_DEEPSEEK_API_KEY"],
+    密钥: ["AI_DEEPSEEK_API_KEY", "cookie_secret", "AI_MCP_TOKEN", "BOOKBARN_TOKEN"],
     数量: ["douban_max_count", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"],
     // 外部服务 · 书栈 / AI
     书栈: ["ENABLE_BOOKBARN", "BOOKBARN_TOKEN"], barn: ["ENABLE_BOOKBARN"], token: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"], 令牌: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"], 授权: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"],
     ai: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_API_URL", "AI_MODEL", "AI_MCP_TOKEN", "AI_ALLOW_SET_CATEGORY"],
     人工智能: ["AI_ENABLED"], 助手: ["AI_ENABLED"], deepseek: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_MODEL"],
-    模型: ["AI_MODEL"], 接口: ["AI_API_URL"], url: ["AI_API_URL", "douban_baseurl"],
+    模型: ["AI_MODEL"], 接口: ["AI_API_URL"], url: ["AI_API_URL"],
     mcp: ["AI_MCP_TOKEN"], 自动分类: ["AI_ALLOW_SET_CATEGORY"], 生成分类: ["AI_ALLOW_SET_CATEGORY"],
     // 服务与协议
     webdav: ["ENABLE_WEBDAV_SERVICE", "WEBDAV_SYNC_FOLDER"], 挂载: ["ENABLE_WEBDAV_SERVICE"], 可写: ["WEBDAV_SYNC_FOLDER"], 可写目录: ["WEBDAV_SYNC_FOLDER"], 读写: ["ENABLE_WEBDAV_SERVICE", "WEBDAV_SYNC_FOLDER"],
@@ -1516,8 +1516,8 @@ const SEARCH_ALIASES = {
     首頁: ["INDEX_PAGE_TYPE", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"], 首頁類型: ["INDEX_PAGE_TYPE"],
     首頁卡片: ["HOMEPAGE_CONFIG"], 自訂卡片: ["HOMEPAGE_CONFIG"], 卡片: ["HOMEPAGE_CONFIG"], 作者卡片: ["HOMEPAGE_CONFIG"], 標籤卡片: ["HOMEPAGE_CONFIG"], 叢書卡片: ["HOMEPAGE_CONFIG"], 語言卡片: ["HOMEPAGE_CONFIG"], 評分卡片: ["HOMEPAGE_CONFIG"], 主頁: ["INDEX_PAGE_TYPE"],
     項目連結: ["HIDE_PROJECT_LINKS"], 隱藏連結: ["HIDE_PROJECT_LINKS"], 開源連結: ["HIDE_PROJECT_LINKS"],
-    友情連結: ["FRIENDS"], 友鏈: ["FRIENDS"], 連結: ["FRIENDS", "HIDE_PROJECT_LINKS", "douban_baseurl", "AI_API_URL", "static_host", "SITE_URL"],
-    網址: ["douban_baseurl", "AI_API_URL", "static_host", "SITE_URL"], 位址: ["douban_baseurl", "AI_API_URL", "static_host", "smtp_server", "SITE_URL"],
+    友情連結: ["FRIENDS"], 友鏈: ["FRIENDS"], 連結: ["FRIENDS", "HIDE_PROJECT_LINKS", "AI_API_URL", "static_host", "SITE_URL"],
+    網址: ["AI_API_URL", "static_host", "SITE_URL"], 位址: ["AI_API_URL", "static_host", "smtp_server", "SITE_URL"],
     // 網站與外觀 · 首頁與列表
     隨機: ["MAIN_PAGE_RANDOM_COUNT"], 推薦: ["RECOMMEND_ENABLE", "RECOMMEND_USE_CROWD", "ENABLE_BOOK_RECOMMEND_TO_OTHERS", "MAIN_PAGE_RANDOM_COUNT"], 智慧: ["RECOMMEND_ENABLE"], 智慧推薦: ["RECOMMEND_ENABLE"],
     協同: ["RECOMMEND_USE_CROWD"], 協同過濾: ["RECOMMEND_USE_CROWD"], 參考他人: ["RECOMMEND_USE_CROWD"],
@@ -1588,7 +1588,7 @@ const SEARCH_ALIASES = {
     大小: ["MAX_UPLOAD_SIZE", "CACHE_MAX_MB"], 檔案大小: ["MAX_UPLOAD_SIZE"], 上傳限制: ["MAX_UPLOAD_SIZE", "CHUNK_UPLOAD_SIZE"],
     上限: ["MAX_UPLOAD_SIZE", "CHUNK_UPLOAD_SIZE", "ENABLE_DOWNLOAD_QUOTA", "GLOBAL_DOWNLOAD_QUOTA", "CACHE_MAX_MB"],
     分片: ["CHUNK_UPLOAD_SIZE"], 大檔案: ["CHUNK_UPLOAD_SIZE"], 續傳: ["CHUNK_UPLOAD_SIZE"],
-    詮釋資料: ["auto_fill_meta", "META_SELECTED_SOURCES", "DEFAULT_LANGUAGE"], 中介資料: ["auto_fill_meta", "META_SELECTED_SOURCES", "DEFAULT_LANGUAGE"], 書籍資訊: ["auto_fill_meta", "META_SELECTED_SOURCES"], 資訊來源: ["META_SELECTED_SOURCES", "douban_baseurl"],
+    詮釋資料: ["auto_fill_meta", "META_SELECTED_SOURCES", "DEFAULT_LANGUAGE"], 中介資料: ["auto_fill_meta", "META_SELECTED_SOURCES", "DEFAULT_LANGUAGE"], 書籍資訊: ["auto_fill_meta", "META_SELECTED_SOURCES"], 資訊來源: ["META_SELECTED_SOURCES"],
     來源檔案: ["KEEP_UPLOAD_SOURCE_FILE", "REMOVE_IMPORTED_FILE"], 保留: ["KEEP_UPLOAD_SOURCE_FILE"], 暫存檔案: ["KEEP_UPLOAD_SOURCE_FILE"], 原始檔: ["KEEP_UPLOAD_SOURCE_FILE", "REMOVE_IMPORTED_FILE"],
     刪除原始檔: ["REMOVE_IMPORTED_FILE"], 匯入後刪除: ["REMOVE_IMPORTED_FILE"],
     // 匯入與儲存 · 匯入規則
@@ -1617,16 +1617,16 @@ const SEARCH_ALIASES = {
     // 外部服務 · 資訊來源
     資訊: ["auto_fill_meta"], 擷取: ["auto_fill_meta", "META_SELECTED_SOURCES"], 網路擷取: ["auto_fill_meta"],
     頻率: ["auto_fill_qpm"], 每分鐘: ["auto_fill_qpm"], 填充頻率: ["auto_fill_qpm"], 擷取頻率: ["auto_fill_qpm"],
-    豆瓣: ["auto_fill_meta", "META_SELECTED_SOURCES", "douban_baseurl", "douban_apikey", "douban_max_count", "douban_v2_max_per_hour"], 書源: ["META_SELECTED_SOURCES", "auto_fill_meta"], 來源: ["META_SELECTED_SOURCES"], 選擇來源: ["META_SELECTED_SOURCES"],
+    豆瓣: ["auto_fill_meta", "META_SELECTED_SOURCES", "douban_max_count", "douban_v2_max_per_hour"], 書源: ["META_SELECTED_SOURCES", "auto_fill_meta"], 來源: ["META_SELECTED_SOURCES"], 選擇來源: ["META_SELECTED_SOURCES"],
     每小時: ["douban_v2_max_per_hour"], 每小時上限: ["douban_v2_max_per_hour"], 豆瓣頻率: ["douban_v2_max_per_hour"],
-    鏡像: ["douban_baseurl"], api: ["AI_API_URL", "AI_DEEPSEEK_API_KEY", "douban_apikey", "douban_baseurl"],
-    金鑰: ["douban_apikey", "AI_DEEPSEEK_API_KEY", "cookie_secret", "AI_MCP_TOKEN", "BOOKBARN_TOKEN"],
+    鏡像: [], api: ["AI_API_URL", "AI_DEEPSEEK_API_KEY"],
+    金鑰: ["AI_DEEPSEEK_API_KEY", "cookie_secret", "AI_MCP_TOKEN", "BOOKBARN_TOKEN"],
     數量: ["douban_max_count", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"],
     // 外部服務 · 書棧 / AI
     書棧: ["ENABLE_BOOKBARN", "BOOKBARN_TOKEN"], barn: ["ENABLE_BOOKBARN"], token: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"], 權杖: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"], 授權: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"],
     ai: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_API_URL", "AI_MODEL", "AI_MCP_TOKEN", "AI_ALLOW_SET_CATEGORY"],
     人工智慧: ["AI_ENABLED"], 助手: ["AI_ENABLED"], deepseek: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_MODEL"],
-    模型: ["AI_MODEL"], 介面: ["AI_API_URL"], url: ["AI_API_URL", "douban_baseurl"], 鏈接: ["AI_API_URL", "douban_baseurl", "static_host", "FRIENDS"],
+    模型: ["AI_MODEL"], 介面: ["AI_API_URL"], url: ["AI_API_URL"], 鏈接: ["AI_API_URL", "static_host", "FRIENDS"],
     mcp: ["AI_MCP_TOKEN"], 自動分類: ["AI_ALLOW_SET_CATEGORY"], 產生分類: ["AI_ALLOW_SET_CATEGORY"],
     // 服務與協議
     webdav: ["ENABLE_WEBDAV_SERVICE", "WEBDAV_SYNC_FOLDER"], 掛載: ["ENABLE_WEBDAV_SERVICE"], 可寫: ["WEBDAV_SYNC_FOLDER"], 可寫目錄: ["WEBDAV_SYNC_FOLDER"], 讀寫: ["ENABLE_WEBDAV_SERVICE", "WEBDAV_SYNC_FOLDER"],
@@ -1663,8 +1663,8 @@ const SEARCH_ALIASES = {
     timezone: ["site_timezone"], "time zone": ["site_timezone"], tz: ["site_timezone"], utc: ["site_timezone"], gmt: ["site_timezone"], offset: ["site_timezone"], "day boundary": ["site_timezone"], streak: ["site_timezone", "HOMEPAGE_CONFIG"],
     homepage: ["INDEX_PAGE_TYPE", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT", "HOMEPAGE_CONFIG"], "index page": ["INDEX_PAGE_TYPE"], "page type": ["INDEX_PAGE_TYPE"], landing: ["INDEX_PAGE_TYPE"],
     "homepage cards": ["HOMEPAGE_CONFIG"], "custom cards": ["HOMEPAGE_CONFIG"], "home cards": ["HOMEPAGE_CONFIG"], "author card": ["HOMEPAGE_CONFIG"], "tag card": ["HOMEPAGE_CONFIG"], "series card": ["HOMEPAGE_CONFIG"], "language card": ["HOMEPAGE_CONFIG"], "rating card": ["HOMEPAGE_CONFIG"],
-    links: ["FRIENDS", "HIDE_PROJECT_LINKS", "douban_baseurl", "AI_API_URL", "static_host"], link: ["FRIENDS", "HIDE_PROJECT_LINKS", "douban_baseurl", "AI_API_URL", "static_host", "SITE_URL"], "friend links": ["FRIENDS"], friends: ["FRIENDS"], "project links": ["HIDE_PROJECT_LINKS"], "hide links": ["HIDE_PROJECT_LINKS"],
-    url: ["AI_API_URL", "douban_baseurl", "static_host", "SITE_URL"], address: ["douban_baseurl", "AI_API_URL", "static_host", "smtp_server", "SITE_URL"], endpoint: ["AI_API_URL", "douban_baseurl"],
+    links: ["FRIENDS", "HIDE_PROJECT_LINKS", "AI_API_URL", "static_host"], link: ["FRIENDS", "HIDE_PROJECT_LINKS", "AI_API_URL", "static_host", "SITE_URL"], "friend links": ["FRIENDS"], friends: ["FRIENDS"], "project links": ["HIDE_PROJECT_LINKS"], "hide links": ["HIDE_PROJECT_LINKS"],
+    url: ["AI_API_URL", "static_host", "SITE_URL"], address: ["AI_API_URL", "static_host", "smtp_server", "SITE_URL"], endpoint: ["AI_API_URL"],
     // Site & Appearance · home & listing
     random: ["MAIN_PAGE_RANDOM_COUNT"], shuffle: ["MAIN_PAGE_RANDOM_COUNT"],
     recommend: ["RECOMMEND_ENABLE", "RECOMMEND_USE_CROWD", "ENABLE_BOOK_RECOMMEND_TO_OTHERS", "MAIN_PAGE_RANDOM_COUNT", "HOMEPAGE_CONFIG"], recommendation: ["RECOMMEND_ENABLE"], recommendations: ["RECOMMEND_ENABLE"], smart: ["RECOMMEND_ENABLE"], recommender: ["RECOMMEND_ENABLE"],
@@ -1750,10 +1750,10 @@ const SEARCH_ALIASES = {
     // Push & Email · devices
     device: ["DEVICES"], devices: ["DEVICES"], ereader: ["DEVICES"], "e-reader": ["DEVICES"], boox: ["DEVICES"], koreader: ["DEVICES"], duokan: ["DEVICES"], ireader: ["DEVICES"], hanwang: ["DEVICES"], dangdang: ["DEVICES"], purelibro: ["DEVICES"], ftp: ["DEVICES"],
     // External Services · book info sources
-    source: ["META_SELECTED_SOURCES", "auto_fill_meta"], sources: ["META_SELECTED_SOURCES", "auto_fill_meta"], scrape: ["auto_fill_meta", "META_SELECTED_SOURCES"], scraping: ["auto_fill_meta", "META_SELECTED_SOURCES"], douban: ["auto_fill_meta", "META_SELECTED_SOURCES", "douban_baseurl", "douban_apikey", "douban_max_count", "douban_v2_max_per_hour"], mirror: ["douban_baseurl"],
+    source: ["META_SELECTED_SOURCES", "auto_fill_meta"], sources: ["META_SELECTED_SOURCES", "auto_fill_meta"], scrape: ["auto_fill_meta", "META_SELECTED_SOURCES"], scraping: ["auto_fill_meta", "META_SELECTED_SOURCES"], douban: ["auto_fill_meta", "META_SELECTED_SOURCES", "douban_max_count", "douban_v2_max_per_hour"], mirror: [],
     frequency: ["auto_fill_qpm"], "per minute": ["auto_fill_qpm"], qpm: ["auto_fill_qpm"], pace: ["auto_fill_qpm"],
     "per hour": ["douban_v2_max_per_hour"], hourly: ["douban_v2_max_per_hour"], "hourly limit": ["douban_v2_max_per_hour"],
-    api: ["AI_API_URL", "AI_DEEPSEEK_API_KEY", "douban_apikey", "douban_baseurl"], "api key": ["douban_apikey", "AI_DEEPSEEK_API_KEY", "AI_MCP_TOKEN", "BOOKBARN_TOKEN"], key: ["douban_apikey", "AI_DEEPSEEK_API_KEY", "cookie_secret", "AI_MCP_TOKEN", "BOOKBARN_TOKEN"], count: ["douban_max_count", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"], results: ["douban_max_count"],
+    api: ["AI_API_URL", "AI_DEEPSEEK_API_KEY"], "api key": ["AI_DEEPSEEK_API_KEY", "AI_MCP_TOKEN", "BOOKBARN_TOKEN"], key: ["AI_DEEPSEEK_API_KEY", "cookie_secret", "AI_MCP_TOKEN", "BOOKBARN_TOKEN"], count: ["douban_max_count", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"], results: ["douban_max_count"],
     // External Services · bookbarn & AI
     bookbarn: ["ENABLE_BOOKBARN", "BOOKBARN_TOKEN"], token: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"], "auth token": ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"],
     ai: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_API_URL", "AI_MODEL", "AI_MCP_TOKEN", "AI_ALLOW_SET_CATEGORY"], assistant: ["AI_ENABLED"], "artificial intelligence": ["AI_ENABLED"], deepseek: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_MODEL"], model: ["AI_MODEL"], mcp: ["AI_MCP_TOKEN"], "auto category": ["AI_ALLOW_SET_CATEGORY"], generate: ["AI_ALLOW_SET_CATEGORY"],
@@ -2502,11 +2502,7 @@ export default {
             id: "svc-meta",
             icon: "mdi-web-sync",
             title: "settings.internet_book_sources",
-            tips: [
-              {
-                text: "settings.douban_plugin_description",
-              },
-            ],
+            tips: [],
             fields: [
               {
                 icon: "mdi-web-sync",
@@ -2531,16 +2527,6 @@ export default {
                 label: "settings.meta_selected_source",
                 type: "meta_sources",
                 al: ["豆瓣", "书源"],
-              },
-              {
-                icon: "mdi-information",
-                key: "douban_baseurl",
-                label: "settings.douban_baseurl",
-              },
-              {
-                icon: "mdi-information",
-                key: "douban_apikey",
-                label: "settings.douban_api_key",
               },
               {
                 icon: "mdi-information",
@@ -2854,7 +2840,6 @@ export default {
             "META_SELECTED_SOURCES",
             (
               this.settings["META_ALL_SOURCES"] || [
-                "douban",
                 "baidu",
                 "google",
                 "amazon",
@@ -3210,7 +3195,6 @@ export default {
     },
     metaSourceItems() {
       const allSources = this.settings["META_ALL_SOURCES"] || [
-        "douban",
         "baidu",
         "google",
         "amazon",

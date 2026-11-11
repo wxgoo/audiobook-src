@@ -51,6 +51,7 @@ ADMIN_SETTING_KEYS = (
     "cookie_secret",
     "scan_upload_path",
     "convert_timeout",
+    "douban_max_count",           # 豆瓣V2 沿用（每源返回条数）
     "douban_v2_max_per_hour",
     "ujxsw_max_count",
     "auto_fill_meta",

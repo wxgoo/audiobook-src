@@ -50,7 +50,8 @@ from webserver.services.scan_service import ScanService, SCAN_EXT, ImportOptions
 from webserver.services.download_quota_service import DownloadQuotaService
 from webserver.services.book_review_service import BookReviewService
 from webserver.recommend import RecommendConfig, RecommendContext, home_seed, utc_now
-from webserver.plugins.meta import douban, douban_v2
+from webserver.plugins.meta import douban_v2
+from webserver.base.meta_helper import str2date
 from webserver.plugins.meta.bookbarn_tags import BookBarnTags
 from webserver.plugins.parser.txt import get_content_encoding
 from webserver.handlers.audio import AudioUtils
@@ -2260,7 +2261,7 @@ class BookEdit(BaseHandler):
             lock_author(self.calibre_db, bid)
 
         if data.get("pubdate", None):
-            content = douban.str2date(data["pubdate"])
+            content = str2date(data["pubdate"])
             if content is None:
                 return {"err": "params.pudate.invalid", "msg": _("出版日期参数错误，格式应为 2026-05-10或2026-05或2026年或2026")}
             mi.set("pubdate", content)
@@ -3124,7 +3125,7 @@ class BookAddByISBN(BaseHandler):
             return {"err": "ok", "msg": _("图书添加成功"), "book_id": book_id}
         except Exception as e:
             logging.error("Failed to add book by ISBN: %s", e)
-            return {"err": "internal", "msg": _("查询ISBN失败，请在系统设置中配置互联网信息源的插件地址（仅部署 douban-rs-api 镜像时才需要；未部署请取消勾选 douban 源）。")}
+            return {"err": "internal", "msg": _("查询ISBN失败，请在系统设置中勾选可用的互联网信息源（如豆瓣V2、百度百科）。")}
 
 
 # 直接录入书名/作者/ISBN添加实体图书（ISBN、作者可选），添加后强制刮削

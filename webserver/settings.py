@@ -306,8 +306,9 @@ settings = {
     'smtp_encryption'   : "TLS",
     'smtp_username'     : "sender@126.com",
     'smtp_password'     : "password",
-    # §douban v1 配置已随源下线§（build.27-r12）：douban_apikey / douban_baseurl /
-    # douban_max_count 三键移除；douban_v2 直连不受影响。
+    # §douban v1 配置已随源下线§（build.27-r12）：douban_apikey / douban_baseurl 移除。
+    # douban_max_count 保留：豆瓣V2 的每源返回条数也在读它（douban_v2/plugin.py），删了配置入口就没了。
+    'douban_max_count'  : 2,
     'douban_v2_max_per_hour': 180,
     'ujxsw_max_count'   : 2,
     'auto_fill_meta'    : True,

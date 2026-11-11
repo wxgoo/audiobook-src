@@ -9,7 +9,7 @@ from webserver.assistant.book_ai_client import AIBookInfo, BookAIClient
 from webserver.constants import CALIBRE_COLUMN_CATEGORY
 from webserver.services import AsyncService
 from webserver.services.background_service import BackgroundService, BackgroundTask
-from webserver.plugins.meta.douban import str2date
+from webserver.base.meta_helper import str2date
 
 CONF = loader.get_settings()
 

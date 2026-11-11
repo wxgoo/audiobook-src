@@ -6,7 +6,7 @@ import requests
 from webserver.i18n import _
 from webserver.base.meta_helper import guess_authors  # 4.6.0-9 作者清洗
 
-from webserver.plugins.meta.douban import str2date
+from webserver.base.meta_helper import str2date
 from webserver.constants import CHROME_MOBILE_HEADERS, DEFAULT_ISBN
 from webserver.plugins.meta.baike.baidubaike.baidubaike import Page
 

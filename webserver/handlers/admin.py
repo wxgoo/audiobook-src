@@ -63,7 +63,7 @@ CONF = loader.get_settings()
 USER_UPDATE_TS_MAP = {}
 ENABLE_VIP_QUOTA_KEY = "ENABLE_VIP_QUOTA"
 IMPORT_BY_INOTIFY = "IMPORT_BY_INOTIFY"
-DEFAULT_META_SOURCES = ["douban", "baidu", "xinhua"]
+DEFAULT_META_SOURCES = ["baidu", "xinhua"]  # douban v1 已下线（build.27-r12），v2 不走这个兜底
 LOG_PATH = "/data/log/mybooks.log"
 
 
