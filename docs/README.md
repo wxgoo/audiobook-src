@@ -109,3 +109,4 @@
 4. **`delivery/overlay/files/docs/` 只放"在用"文档**，与根 `docs/` 同名文件保持内容一致；
    `archive/` 与 `交付/` 属于历史，不复制到 overlay。
 5. overlay 的 `MANIFEST.tsv` / `SHA256SUMS` 由出包流程重算；手工改完文档后，出包前需重新生成。
+6. **代码层硬约束正文只在 [`../CLAUDE.md`](../CLAUDE.md) 的「维护约定（硬约束）」**：同步 IO 不进 ioloop、会转圈的 await 必须带超时与可见失败出口、Vue 2 模板带参调用的方法必须留在 `methods`。本节只留入口，不复制正文。

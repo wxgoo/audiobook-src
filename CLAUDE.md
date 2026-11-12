@@ -142,6 +142,14 @@ Refer to [Toolbox Design](document/toolbox_design.md) for details to add new too
 ## metadata plugin
 Refer to [Metadata Plugin](document/meta_plugins.md) for details to add new meta data plugin.
 
+## 维护约定（硬约束）
+
+以下三条是 r28→r29 复盘后定下的硬约束，动手改代码前先对照，违反任何一条都按回归处理。
+
+1. **同步 IO 不进 ioloop。** 本项目是 Tornado 单进程单 IOLoop，`@js` 直接在主线程跑同步 handler，sqlite 查询、calibre 子进程、文件读写、jieba 分词等阻塞调用会卡住整个 loop，表现为页面偶发转圈；改法：这类调用放进 `run_in_threadpool` / `run_sqlite_async` 一类工作线程（历史案例：读者组接口卡顿）。
+2. **任何会转圈的 await 必须有超时 + 可见错误出口。** 只给 loading 不给失败路径，用户只能一直等、也看不到原因；超时必须落到具体文案和可重试的出口（历史案例：`server_starting` / `modeText` / `this.alert` 那组三连）。
+3. **Vue 2 里模板带参调用的方法只能留在 `methods`。** 挪到 computed / setup 会丢掉 `this` 绑定或拿不到参数，页面直接报错；`tests/test_reader_group_frontend_contract.py` 会拦住，改完先单独跑一遍。
+
 ## Code style
 
 - Python: flake8-checked (config in `.style.yapf` and `.flake8`; `E501` line-length ignored), formatted with yapf using a Google-based style (`column_limit=240`). Pylint config disables several docstring/logging warnings.
