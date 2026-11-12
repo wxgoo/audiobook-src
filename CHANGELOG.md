@@ -16,6 +16,47 @@
 
 ---
 
+## 4.6.0-build.27-r27（2026-11-12，**安全修复 + 文档**，可页内热更）
+
+> 本版**没有前端/后端运行期代码变更**，只改运维脚本与文档；已重出 deploy 与 src-full 两张整包。
+
+### 安全修复：跟随上游脚本不再内置 Gitee 令牌
+
+`scripts/upgrade-upstream.sh` 原先在第 23 行把私人令牌写成默认值（`TOKEN="..."`），
+等于让凭据随仓库和部署包一起分发。现在脚本里不留任何令牌：
+
+| 文件 | 改动 |
+| --- | --- |
+| `scripts/upgrade-upstream.sh` | 删除硬编码 `TOKEN`，改为 `TOKEN="${GITEE_TOKEN:-}"`；有值时仍拼 `https://wxgoo:${TOKEN}@…`（无人值守行为不变），无值时退回无凭据地址 `https://gitee.com/wxgoo/audiobook-src.git` 并打印一行提示（`export GITEE_TOKEN=...` 或 `~/.netrc`，600 权限），**不再直接报错退出**；clone 与 push 统一走同一个 `GITEE_URL` 变量 |
+
+> 令牌失效时改环境变量或 `~/.netrc` 即可，**不要写回脚本、URL 或文档**。
+> 全仓复扫 `https://<user>:<32位十六进制>@gitee.com` 与历史令牌字面量：工作树 0 命中。
+
+### 文档：凭据口径统一为「环境变量或 `~/.netrc`」
+
+| 文件 | 改动 |
+| --- | --- |
+| `delivery/overlay/files/docs/操作总纲.md` | 推送示例里的 `<令牌>` 占位符改为无凭据地址；令牌说明与报错表（`could not read Username` / `403`）统一为「用 `GITEE_TOKEN` 或 `~/.netrc` 提供，不要写进文档或提交」 |
+| `docs/开发指南.md` | 「发布一个修订」小节补同一口径 |
+| `docs/部署包说明.md` | 脚本清单后补同一口径，并写明未读到 `GITEE_TOKEN` 时脚本退回无凭据地址 |
+
+### 归档：首屏空白那轮的规格与任务清单
+
+`docs/archive/` 新增 `spec-所有书籍首屏空白.md`（274 行）与 `tasks-所有书籍首屏空白.md`（55 行），
+按原样归档，与 r26 的 [`docs/故障复盘-所有书籍首屏空白.md`](docs/故障复盘-所有书籍首屏空白.md) 配套查阅。
+`docs/README.md` 本就没有 docs/archive 的索引表，本次不新建索引。
+
+### 发布物
+
+| 包 | 说明 |
+| --- | --- |
+| `audiobook-deploy-4.6.0-build.27-r27.tar.gz` | 部署整包（不切片），附 `.md5` / `.sha256` |
+| `audiobook-src-4.6.0-build.27-r27-full.tar.gz` | 源码整包（含 dist / node_modules），附 `.md5` / `.sha256` |
+
+> 出包后按流式方式（`tar -tzf` / 逐成员读取，未把整包解压到磁盘）复核包内
+> `delivery/overlay/files/docs/操作总纲.md` 与 `scripts/upgrade-upstream.sh`：32 位十六进制令牌明文 0 处；
+> 包内 `SHA256SUMS` 全量重算 0 不符、0 缺成员。
+
 ## 4.6.0-build.27-r26（2026-11-12，**前端 + 服务端**，须重建镜像）
 
 > 完整复盘：[`docs/故障复盘-所有书籍首屏空白.md`](docs/故障复盘-所有书籍首屏空白.md)
