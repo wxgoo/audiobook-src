@@ -77,10 +77,10 @@ audiobook-src/
 
 ```sh
 cd /volume1/docker
-sha256sum -c audiobook-deploy-4.6.0-build.27-r8.tar.gz.sha256
+sha256sum -c audiobook-deploy-4.6.0-build.27-r27.tar.gz.sha256
 docker compose -f audiobook/docker-compose.yml down 2>/dev/null
 mv audiobook audiobook.old-$(date +%m%d-%H%M)
-tar -xzf audiobook-deploy-4.6.0-build.27-r8.tar.gz
+tar -xzf audiobook-deploy-4.6.0-build.27-r27.tar.gz
 cd /volume1/docker/audiobook && sh scripts/deploy.sh
 ```
 
@@ -135,7 +135,7 @@ cd app && npm run build-spa
 
 版本一律从上游**已发布 tag** 起算，与本项目无关的历史号段和 `4.6.0-build.N`
 没有版本先后关系，不参与任何比较或升级门控。当前本地修订用 `-rN` 区分
-（如 `4.6.0-build.27-r8`），由 Gitee 发布清单 `update/manifest.json` 比对；
+（如 `4.6.0-build.27-r27`），由 Gitee 发布清单 `update/manifest.json` 比对；
 对照表见 [CHANGELOG 开头的「号段重置说明」](CHANGELOG.md)。
 
 ### 四条不要搞错的事

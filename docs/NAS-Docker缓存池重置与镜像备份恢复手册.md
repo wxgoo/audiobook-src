@@ -353,14 +353,14 @@ synopkg start ContainerManager
 
 任一下载项校验不符会直接中止，**线上文件一个字节都不会动**。
 
-### 含前端产物的重新部署（本次 r7 上线用的就是这条）
+### 含前端产物的重新部署（本次 r27 上线用的就是这条）
 
 ```bash
 cd /volume1/docker
-sha256sum -c audiobook-deploy-4.6.0-build.27-r7.tar.gz.sha256
+sha256sum -c audiobook-deploy-4.6.0-build.27-r27.tar.gz.sha256
 docker compose -f audiobook/docker-compose.yml down 2>/dev/null
 mv audiobook audiobook.old-$(date +%m%d-%H%M)
-tar -xzf audiobook-deploy-4.6.0-build.27-r7.tar.gz
+tar -xzf audiobook-deploy-4.6.0-build.27-r27.tar.gz
 cd /volume1/docker/audiobook && sh scripts/deploy.sh
 ```
 
@@ -398,7 +398,7 @@ cd /volume1/docker/audiobook && sh scripts/deploy.sh
 | `update/README.md` | 发布清单字段、生成命令 |
 | `docs/备份与恢复演练.md` | 备份范围、恢复演练、RPO/RTO（构建口径已同步） |
 | `docs/NAS备份演练清单.md` | NAS 上可直接照抄的备份命令与判定 |
-| `交付说明-4.6.0-build.27-r7.md` | 本次交付摘要、sha256、重新部署命令（交付目录） |
+| `交付说明-4.6.0-build.27-r27.md` | 本次交付摘要、sha256、重新部署命令（交付目录） |
 
 ### 历史 / 归档，命令不要照抄
 
@@ -413,7 +413,7 @@ cd /volume1/docker/audiobook && sh scripts/deploy.sh
 ### 源码与包
 
 - Gitee 仓库 `wxgoo/audiobook-src` 是**源码与发布清单的权威来源**，不再单独出 `audiobook-src-*.tar.gz` 源码包。
-- 部署包 `audiobook-deploy-4.6.0-build.27-r7.tar.gz` 仍必须完整分发：Gitee 不跟踪
+- 部署包 `audiobook-deploy-4.6.0-build.27-r27.tar.gz` 仍必须完整分发：Gitee 不跟踪
   `app/dist`、`app/node_modules`，且 Windows / GUI 解压会压扁 MyReader 的符号链接。
 - 三者口径冲突时，以「当前有效」表里前三份为准。
 

@@ -2,7 +2,7 @@
 
 > 版本：4.6.0-15（基于上游 mybooks tag 4.6.0）
 >
-> ⚠️ **本指南写于早期版本，功能章节是当时的说明。当前 `4.6.0-build.27-r7` 的部署、
+> ⚠️ **本指南写于早期版本，功能章节是当时的说明。当前 `4.6.0-build.27-r27` 的部署、
 > 版本检测与 Docker 运维请以 `README.md`、`docs/部署包说明.md`、`docs/在线更新说明.md`、
 > `docs/NAS-Docker缓存池重置与镜像备份恢复手册.md` 为准**；下文涉及解压与构建的命令
 > 已按 r7 口径修正，冲突时一律以上述四份为准。文中 `v4.8.x` 只是早期功能章节的
@@ -150,21 +150,21 @@ docker compose down      # 删除容器（data 目录里的数据仍在）
 
 ### 一键部署（推荐）
 
-SSH 登录 NAS 后完成部署（r7 含前端产物，必须完整部署一次）：
+SSH 登录 NAS 后完成部署（r27 含前端产物，必须完整部署一次）：
 
 ```bash
 cd /volume1/docker
-sha256sum -c audiobook-deploy-4.6.0-build.27-r7.tar.gz.sha256
+sha256sum -c audiobook-deploy-4.6.0-build.27-r27.tar.gz.sha256
 docker compose -f audiobook/docker-compose.yml down 2>/dev/null
 mv audiobook audiobook.old-$(date +%m%d-%H%M)
-tar -xzf audiobook-deploy-4.6.0-build.27-r7.tar.gz
+tar -xzf audiobook-deploy-4.6.0-build.27-r27.tar.gz
 cd audiobook && sh scripts/deploy.sh
 ```
 
 > **解压必须用命令行 `tar -xzf`**：File Station / GUI 解压会把 MyReader 的符号链接压扁，
 > 表现为阅读器进程 FATAL 或打开书报 500。
 
-`scripts/deploy.sh` 会自动做这些事（r7 口径）：
+`scripts/deploy.sh` 会自动做这些事（r27 口径）：
 
 1. **关键文件校验**——Dockerfile、docker-compose.yml、myreader-dist 产物、
    supervisor/nginx 配置、回填脚本、`update/manifest.json`，缺一个直接报错停止；
@@ -187,7 +187,7 @@ cd audiobook && sh scripts/deploy.sh
 1. **套件中心**安装 **Container Manager**（DSM 7）或 Docker（DSM 6）。
 2. 把部署包传到 NAS，用**命令行**解压（File Station / GUI 解压会压扁符号链接）：
    ```bash
-   cd /volume1/docker && tar -xzf audiobook-deploy-4.6.0-build.27-r7.tar.gz
+   cd /volume1/docker && tar -xzf audiobook-deploy-4.6.0-build.27-r27.tar.gz
    ```
 3. 推荐 SSH 进项目目录执行 `sh scripts/deploy.sh`（含 119 根链接校验、热更新固化、
    BuildKit 探测与构建）。

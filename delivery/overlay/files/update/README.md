@@ -10,9 +10,9 @@
 
 ```sh
 python3 scripts/gen-update-manifest.py \
-  --revision 4.6.0-build.27-r8 \
-  --base-revision 4.6.0-build.27-r7 \
-  --base-commit <r7 的 commit sha> \
+  --revision 4.6.0-build.27-r27 \
+  --base-revision 4.6.0-build.27-r26 \
+  --base-commit <r26 的 commit sha> \
   --summary "一句话说明"
 ```
 
