@@ -510,6 +510,9 @@ class AdminSettings(BaseHandler):
     @auth
     def get(self):
         if not self.admin_user:
+            # 非管理员必须是 403：@js 会把返回值包成 200，前端无法区分"无权限"和"字段缺失"，
+            # 结果是读者能打开 /admin/settings 外壳再抛 TypeError（r29 修）。
+            self.set_status(403)
             return {"err": "permission", "msg": _("无权访问此接口")}
 
         hour_ = int(CONF.get("BOOKBARN_COLLECTION_HOUR", 24))

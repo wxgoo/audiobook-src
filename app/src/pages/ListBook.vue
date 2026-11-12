@@ -219,9 +219,16 @@ export default {
     importFile: null,
     importErrors: [],
   }),
-  async asyncData({route, app, res}) {
+  async asyncData({route, app, res, error}) {
     if (res !== undefined) {
       res.setHeader('Cache-Control', 'no-cache');
+    }
+    // 本文件是被 /all、/favorites 等页面复用的模板；Nuxt 会顺手把它注册成 /ListBook，
+    // 但后端没有 /api/ListBook。直入这类地址时按 404 收场，不要发请求、也不要弹错误提示。
+    const LIST_ROUTES = ['all', 'favorites', 'visits', 'wants', 'read-done', 'reading',
+      'audiobooks', 'soledbooks', 'printbooks', 'meta-name'];
+    if (!LIST_ROUTES.includes(route.name)) {
+      return error({statusCode: 404, message: '404'});
     }
     const rsp = await app.$backend(route.fullPath, { timeout: 20000 });
     // 只有「服务端真的取到数据」才标记，避免把构建期的空结果当成已加载：

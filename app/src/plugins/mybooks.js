@@ -121,6 +121,12 @@ export default ({ app }, inject) => {
                     throw msg;
                 }
 
+                if (rsp.status === 403) {
+                    // 权限不足不是"服务器异常"：不弹 alert，把后端 JSON 原样交给调用方决定。
+                    // 典型场景：书籍详情页并发拉 /admin/settings，普通读者静默降级为无全局设备/分类。
+                    return rsp.json().catch(() => ({ err: "permission", msg: "无权访问此接口" }));
+                }
+
                 if (rsp.status !== 200) {
                     msg = "服务器异常，状态码: " + rsp.status + "<br/>请查阅服务器日志:<br/>mybooks.log";
                     app.$alert("error", msg);

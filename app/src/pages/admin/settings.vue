@@ -2824,6 +2824,13 @@ export default {
     ];
 
     this.$backend("/admin/settings").then((rsp) => {
+      if (rsp && rsp.err === "permission") {
+        // 非管理员（后端现在是 403）。admin 中间件已拦在前面，这里只做兜底：
+        // 不能把 settings 覆盖成 undefined，否则渲染时会抛 TypeError。
+        this.$alert("error", rsp.msg || this.$t("settings.save_error"));
+        this.$router.replace("/");
+        return;
+      }
       this.sns_items = rsp.sns;
       this.settings = rsp.settings;
       this.site_url = rsp.site_url;
@@ -3448,6 +3455,8 @@ export default {
       return !!(f && f.lockOn && this.settings && this.settings[f.lockOn]);
     },
     isCheckboxInputValue(f) {
+      // settings 未加载（或非管理员被 403 拦下）时按未勾选渲染，避免 undefined[...] 抛错
+      if (!this.settings) return false;
       return this.isFieldLockedBy(f) ? false : this.settings[f.key];
     },
     onCheckboxChange(f, value) {
@@ -3463,6 +3472,7 @@ export default {
       return !!(opt && opt.requires && this.settings && !this.settings[opt.requires]);
     },
     checkboxListInputValue(f) {
+      if (!this.settings) return [];
       const stored = Array.isArray(this.settings[f.key]) ? this.settings[f.key] : [];
       return stored.filter(
         (value) => !(f.items || []).some((opt) => opt.value === value && this.isCheckboxOptionLocked(f, opt))
