@@ -22,7 +22,7 @@ from webserver.i18n import _
 
 import tornado.escape
 from tornado import web
-from sqlalchemy import func
+from sqlalchemy import case, func
 
 from webserver import loader, perf, site_time, utils
 from webserver.base import accel
@@ -506,12 +506,9 @@ class BookTags(BaseHandler):
     @auth
     def post(self, id):
         book_id = int(id)
-        book = self.get_book(book_id, raise_exception=False)
-        if not book:
-            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
-
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限")}
+        book, err = self.require_book(book_id)
+        if err:
+            return err
 
         isbn = book.get("isbn", "")
         title = book.get("title", "")
@@ -548,12 +545,9 @@ class BookAIFill(BaseHandler):
     @auth
     async def post(self, id):
         book_id = int(id)
-        book = await self.get_book_async(book_id, raise_exception=False)
-        if not book:
-            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
-
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限")}
+        _, err = await self.require_book_async(book_id)
+        if err:
+            return err
 
         # fill_one 内含同步 AI 请求与信息源联网搜索（可达分钟级），下放线程池避免冻住 ioloop
         result = await utils.run_in_threadpool(AIFillInfoService().fill_one, book_id, force=True)
@@ -616,12 +610,9 @@ class BookCategory(BaseHandler):
     @auth
     def post(self, id):
         book_id = int(id)
-        book = self.get_book(book_id, raise_exception=False)
-        if not book:
-            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
-
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限")}
+        _, err = self.require_book(book_id)
+        if err:
+            return err
 
         data = tornado.escape.json_decode(self.request.body)
         category = data.get(COLUMN_CATEGORY, "").strip()
@@ -642,12 +633,9 @@ class BookLocation(BaseHandler):
     @auth
     def post(self, id):
         book_id = int(id)
-        book = self.get_book(book_id, raise_exception=False)
-        if not book:
-            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
-
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限")}
+        _, err = self.require_book(book_id)
+        if err:
+            return err
 
         data = tornado.escape.json_decode(self.request.body)
         location = data.get(COLUMN_LOCATION, "").strip()
@@ -669,12 +657,9 @@ class BookCatalog(BaseHandler):
     @auth
     def post(self, id):
         book_id = int(id)
-        book = self.get_book(book_id, raise_exception=False)
-        if not book:
-            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
-
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限")}
+        _, err = self.require_book(book_id)
+        if err:
+            return err
 
         result = CatalogExtractService().extract_one(book_id, force=True)
         if result.get("err") != "ok":
@@ -910,12 +895,9 @@ class BookConverter(BaseHandler):
     @auth
     def post(self, id):
         book_id = int(id)
-        book = self.get_book(book_id, raise_exception=False)
-        if not book:
-            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
-
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限")}
+        book, err = self.require_book(book_id)
+        if err:
+            return err
 
         fmts = []
         paths = []
@@ -958,12 +940,9 @@ class BookToPDF(BaseHandler):
     @auth
     def post(self, id):
         book_id = int(id)
-        book = self.get_book(book_id, raise_exception=False)
-        if not book:
-            return {"err": "params.book.invalid", "msg": _("书籍不存在")}
-
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限")}
+        book, err = self.require_book(book_id)
+        if err:
+            return err
 
         fmts = []
         paths = []
@@ -1182,8 +1161,9 @@ class BookRefer(BaseHandler):
             if not authors or str(authors[0]).strip().lower() in _AUTHOR_PLACEHOLDERS:
                 org_mi.authors = [_("佚名")]
 
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限")}
+        err = self.check_book_owner(book_id)
+        if err:
+            return err
 
         org_mi.set("comments", _(""))
         if org_mi.get("comments", "") == "":
@@ -1318,8 +1298,9 @@ class BookRefer(BaseHandler):
         mi = self.calibre_db.get_metadata(book_id, index_is_id=True)
         if not mi:
             return {"err": "params.book.invalid", "msg": _("书籍不存在")}
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限")}
+        err = self.check_book_owner(book_id)
+        if err:
+            return err
 
         if should_reset == "yes":
             return self.reset_book_meta(book_id)
@@ -1472,7 +1453,7 @@ class BookCropCover(BaseHandler):
         failed_count = 0
 
         for book_id in book_ids:
-            if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            if self.check_book_owner(book_id):
                 failed_count += 1
                 continue
             try:
@@ -1871,9 +1852,6 @@ class BookReadingStats(BaseHandler):
     @auth
     def get(self):
         """获取当前用户的阅读统计信息"""
-        import datetime
-        from sqlalchemy import extract
-
         user_id = self.user_id()
         logging.info("User %d is fetching reading statistics." % user_id)
 
@@ -1884,32 +1862,27 @@ class BookReadingStats(BaseHandler):
         from webserver.site_time import site_month_bounds_server_local
         _month_start, _month_end = site_month_bounds_server_local()
 
-        # 总体统计
-        total_reading = self.sqlite_session.query(ReadingState).filter(
+        # 总体 / 本月统计：按 read_state 分组合并为 1 条条件聚合，
+        # 本月计数用 CASE 标记是否落在月区间内（原来是 4 条独立 count()）。
+        _in_month = case(
+            (
+                (ReadingState.read_date >= _month_start)
+                & (ReadingState.read_date < _month_end),
+                1,
+            ),
+            else_=0,
+        )
+        _stat_rows = self.sqlite_session.query(
+            ReadingState.read_state,
+            func.count(ReadingState.book_id),
+            func.sum(_in_month),
+        ).filter(
             ReadingState.reader_id == user_id,
-            ReadingState.read_state == 1  # 在读
-        ).count()
-
-        total_read_done = self.sqlite_session.query(ReadingState).filter(
-            ReadingState.reader_id == user_id,
-            ReadingState.read_state == 2  # 已读完
-        ).count()
-
-        # 本月统计 - 在读（本月设置为在读状态的书籍）
-        month_reading = self.sqlite_session.query(ReadingState).filter(
-            ReadingState.reader_id == user_id,
-            ReadingState.read_state == 1,
-            ReadingState.read_date >= _month_start,
-            ReadingState.read_date < _month_end
-        ).count()
-
-        # 本月统计 - 已读完（本月读完的书籍）
-        month_read_done = self.sqlite_session.query(ReadingState).filter(
-            ReadingState.reader_id == user_id,
-            ReadingState.read_state == 2,
-            ReadingState.read_date >= _month_start,
-            ReadingState.read_date < _month_end
-        ).count()
+            ReadingState.read_state.in_((1, 2))  # 1: 在读, 2: 已读完
+        ).group_by(ReadingState.read_state).all()
+        _stats = {state: (total, month or 0) for state, total, month in _stat_rows}
+        total_reading, month_reading = _stats.get(1, (0, 0))
+        total_read_done, month_read_done = _stats.get(2, (0, 0))
 
         # 本月读完的书籍列表
         month_read_done_states = self.sqlite_session.query(ReadingState).filter(
@@ -1919,29 +1892,23 @@ class BookReadingStats(BaseHandler):
             ReadingState.read_date < _month_end
         ).order_by(ReadingState.read_date.desc()).limit(12).all()
 
-        month_read_done_books = []
-        for state in month_read_done_states:
-            book = self.get_book(state.book_id, raise_exception=False)
-            if not book:
-                continue
-            book_data = BookFormatter(self, book).format()
-            book_data["state"] = ReadingStateFormatter.format_reading_state(state)
-            month_read_done_books.append(book_data)
-
         # 当前在读的书籍列表
         current_reading_states = self.sqlite_session.query(ReadingState).filter(
             ReadingState.reader_id == user_id,
             ReadingState.read_state == 1
         ).order_by(ReadingState.read_date.desc()).limit(12).all()
 
-        current_reading_books = []
-        for state in current_reading_states:
-            book = self.get_book(state.book_id, raise_exception=False)
-            if not book:
-                continue
-            book_data = BookFormatter(self, book).format()
-            book_data["state"] = ReadingStateFormatter.format_reading_state(state)
-            current_reading_books.append(book_data)
+        # 两条列表共用 1 次批量取书（原来是每本一次 get_book，最多 24 次）
+        _book_ids = {state.book_id for state in month_read_done_states}
+        _book_ids.update(state.book_id for state in current_reading_states)
+        books_by_id = {}
+        if _book_ids:
+            books_by_id = {
+                book["id"]: book for book in self.get_books_simple(ids=list(_book_ids))
+            }
+
+        month_read_done_books = self._format_reading_state_books(month_read_done_states, books_by_id)
+        current_reading_books = self._format_reading_state_books(current_reading_states, books_by_id)
 
         return {
             "err": "ok",
@@ -1960,6 +1927,22 @@ class BookReadingStats(BaseHandler):
             "month_read_done_books": month_read_done_books,
             "current_reading_books": current_reading_books
         }
+
+    def _format_reading_state_books(self, states, books_by_id):
+        """把 ReadingState 列表转成前端书卡片列表。
+
+        书籍由调用方批量取好后按 states 的顺序拼装，缺失的书跳过，
+        返回结构与原来逐本 get_book 的路径完全一致。
+        """
+        result = []
+        for state in states:
+            book = books_by_id.get(state.book_id)
+            if not book:
+                continue
+            book_data = BookFormatter(self, book).format()
+            book_data["state"] = ReadingStateFormatter.format_reading_state(state)
+            result.append(book_data)
+        return result
 
 
 class BookReadingState(BaseHandler):
@@ -3369,12 +3352,9 @@ class BookUpload(BaseHandler):
 
     async def _add_format_to_existing_book(self, book_id, update_metadata=True, force=False):
         """向已存在的书籍添加新格式文件"""
-        book = await self.get_book_async(book_id, raise_exception=False)
-        if not book:
-            return {"err": "book.not_found", "msg": _("书籍不存在")}
-
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限")}
+        book, err = await self.require_book_async(book_id, not_found_err="book.not_found")
+        if err:
+            return err
 
         name, data = self.get_upload_file()
         if name is None:
@@ -5012,8 +4992,9 @@ class BookSaveMeta(BaseHandler):
     def post(self, bid):
         """将书籍的元数据保存到文件中（支持 META_WRITABLE_FORMATS 中 calibre 可写回的格式）"""
         book_id = int(bid)
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限，非管理员或书籍所有者无法操作")}
+        err = self.check_book_owner(book_id, _("无权限，非管理员或书籍所有者无法操作"))
+        if err:
+            return err
 
         fmt = self.get_argument("fmt", None)
         return self.save_book_meta(book_id, fmt=fmt)
@@ -5025,8 +5006,9 @@ class BookAddStamp(BaseHandler):
     def post(self, bid):
         """为书籍封面加盖图章"""
         book_id = int(bid)
-        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
-            return {"err": "user.no_permission", "msg": _("无权限，非管理员或书籍所有者无法操作")}
+        err = self.check_book_owner(book_id, _("无权限，非管理员或书籍所有者无法操作"))
+        if err:
+            return err
 
         # 检查功能是否启用
         if not CONF.get("ENABLE_STAMP_FEATURE", False):

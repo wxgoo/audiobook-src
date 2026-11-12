@@ -1210,6 +1210,33 @@ class BaseHandler(web.RequestHandler):
                 return None
         return books[0]
 
+    def check_book_owner(self, book_id, msg=None):
+        """管理员或书籍所有者才通过；无权限时返回前端错误 dict，否则返回 None。"""
+        if not self.is_admin() and not self.is_book_owner(book_id, self.user_id()):
+            return {"err": "user.no_permission", "msg": msg or _("无权限")}
+        return None
+
+    def require_book(self, book_id, owner=True, full=False,
+                     not_found_err="params.book.invalid", not_found_msg=None):
+        """取书 + 权限校验的公共前置。
+
+        返回 (book, None) 表示通过；(None, 错误响应) 表示调用方应直接返回该响应。
+        """
+        book = self.get_book(book_id, fully=full, raise_exception=False)
+        if not book:
+            return None, {"err": not_found_err, "msg": not_found_msg or _("书籍不存在")}
+        err = self.check_book_owner(book_id) if owner else None
+        return (None, err) if err else (book, None)
+
+    async def require_book_async(self, book_id, owner=True, full=False,
+                                not_found_err="params.book.invalid", not_found_msg=None):
+        """require_book 的非阻塞版（calibre 查询放工作线程）。"""
+        book = await self.get_book_async(book_id, fully=full, raise_exception=False)
+        if not book:
+            return None, {"err": not_found_err, "msg": not_found_msg or _("书籍不存在")}
+        err = self.check_book_owner(book_id) if owner else None
+        return (None, err) if err else (book, None)
+
     def get_book_files(self, book_id):
         formats = self.calibre_db_cache.formats(book_id)
         return formats
@@ -1292,43 +1319,55 @@ class BaseHandler(web.RequestHandler):
             result[book_id] = row
         return result, empty_item
 
-    def _merge_books_full(self, books, _ts=None, item_maps=None):
+    def _merge_books(self, books, _ts=None, item_maps=None, *,
+                     rename_custom=True, drop_sole=False, mark_audio=False,
+                     apply_read_range=False):
+        """书籍 dict 与本站 Item 合并的公共实现（原三份合并逻辑的唯一来源）。
+
+        rename_custom: 把 calibre 自定义列的数字 colnum 键改名为字段名
+        drop_sole:    剔除「被他人设为独有」的书
+        mark_audio:   命中音频书时打 has_audio=1
+        apply_read_range: 按读者范围过滤（仍受 ALLOW_READ_RANGE_SETTING 开关约束）
+        """
         if _ts is None:
             _ts = time.time()
-        self._build_custom_column_map()
         merge_start = time.perf_counter()
 
-        # Get audio book ids set once for better performance
-        audio_book_ids = set()
-        try:
-            from webserver.handlers.audio import AudioBooksCache
+        if rename_custom:
+            self._build_custom_column_map()
 
-            audio_book_ids = AudioBooksCache.get_audio_book_ids_set()
-        except Exception as e:
-            logging.error(f"Error getting audio book ids: {e}")
+        audio_book_ids = set()
+        if mark_audio:
+            try:
+                from webserver.handlers.audio import AudioBooksCache
+
+                audio_book_ids = AudioBooksCache.get_audio_book_ids_set()
+            except Exception as e:
+                logging.error(f"Error getting audio book ids: {e}")
 
         maps, empty_item = item_maps or self._item_maps([book["id"] for book in books])
 
         soled_books = set()
         for book in books:
-            for colnum, key in self._custom_column_map.items():
-                if colnum in book:
-                    book[key] = book.pop(colnum)
+            if rename_custom:
+                for colnum, key in self._custom_column_map.items():
+                    if colnum in book:
+                        book[key] = book.pop(colnum)
             # Check audio in the same loop to reduce iterations
             if book["id"] in audio_book_ids:
                 book["has_audio"] = 1
             book_item = maps.get(book["id"], empty_item)
             # logging.info("book %d, sole = %s, collector = %s" % (book["id"], book_item["sole"], book_item["collector_id"]))
-            if book_item["sole"] and book_item["collector_id"] != self.user_id():
+            if drop_sole and book_item["sole"] and book_item["collector_id"] != self.user_id():
                 soled_books.add(book["id"])
             else:
-                book.update(maps.get(book["id"], empty_item))
+                book.update(book_item)
 
         if len(soled_books) > 0 and len(books) > 0:
             books = [b for b in books if b["id"] not in soled_books]
 
         # Apply per-user reading range filter (only when read_limit is set)
-        if CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+        if apply_read_range and CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
             books = [b for b in books if self.is_book_visible(b)]
 
         PerfMonitor.instance().record_stage("list.merge_total", (time.perf_counter() - merge_start) * 1000)
@@ -1338,6 +1377,11 @@ class BaseHandler(web.RequestHandler):
         )
         return books
 
+    def _merge_books_full(self, books, _ts=None, item_maps=None):
+        return self._merge_books(
+            books, _ts, item_maps, drop_sole=True, mark_audio=True, apply_read_range=True
+        )
+
     def get_books_simple(self, *args, **kwargs):
         _ts = time.time()
         books = self.calibre_db.get_data_as_dict(*args, **kwargs)
@@ -1345,24 +1389,7 @@ class BaseHandler(web.RequestHandler):
 
     def _merge_books_simple(self, books, _ts=None):
         """get_books_simple 的 sqlite 合并段（同 _merge_books_full，只碰 sqlite_session）。"""
-        if _ts is None:
-            _ts = time.time()
-        self._build_custom_column_map()
-
-        maps, empty_item = self._item_maps([book["id"] for book in books])
-
-        for book in books:
-            for colnum, key in self._custom_column_map.items():
-                if colnum not in book:
-                    continue
-                book[key] = book.pop(colnum)
-            book.update(maps.get(book["id"], empty_item))
-
-        logging.debug(
-            "[%5d ms] select books from database (count = %d)"
-            % (int(1000 * (time.time() - _ts)), len(books))
-        )
-        return books
+        return self._merge_books(books, _ts)
 
     def get_all_fmts(self, book):
         fmts = []
@@ -2245,63 +2272,16 @@ class ListHandler(BaseHandler):
             ids = set(random.sample(list(ids), max_count))
         books = self.calibre_db.get_data_as_dict(ids=ids, **calibre_fast.list_kwargs())
 
-        # 提前查询被标记为sole的图书ID并过滤
-        ids = [book["id"] for book in books]
-        sole_book_ids = (
-            set(
-                item.book_id
-                for item in self.sqlite_session.query(Item)
-                .filter(
-                    Item.book_id.in_(ids),
-                    Item.sole == 1,
-                    Item.collector_id != self.user_id(),
-                )
-                .all()
-            )
-            if ids
-            else set()
+        # 合并逻辑收敛到 _merge_books：原来这里先查一遍 sole 书籍、再查一遍
+        # 剩余书籍的 Item（同一个 Item 查两次），现在复用 _item_maps 一次取齐。
+        # 自定义列改名与阅读范围过滤仍只在 ALLOW_READ_RANGE_SETTING 开启时生效。
+        read_range = CONF.get(constants.ALLOW_READ_RANGE_SETTING, False)
+        return self._merge_books(
+            books,
+            rename_custom=read_range,
+            drop_sole=True,
+            apply_read_range=read_range,
         )
-        books = [b for b in books if b["id"] not in sole_book_ids]
-
-        # 应用阅读范围过滤
-        if CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
-            # get_data_as_dict 返回自定义栏位时使用整数 colnum 作为 key，需先映射为字段名
-            if not hasattr(self, "_custom_column_map"):
-                self._custom_column_map = {}
-                for key, meta in self.calibre_db.field_metadata.items():
-                    if meta["is_custom"]:
-                        self._custom_column_map[meta["colnum"]] = key
-            for book in books:
-                for colnum, key in self._custom_column_map.items():
-                    if colnum in book:
-                        book[key] = book.pop(colnum)
-            books = [b for b in books if self.is_book_visible(b)]
-
-        # 只查询剩余书籍的Item信息
-        item = Item()
-        empty_item = item.to_dict()
-        empty_item["collector"] = (
-            self.sqlite_session.query(Reader).order_by(Reader.id).first()
-        )
-        remaining_ids = [book["id"] for book in books]
-        items = (
-            self.sqlite_session.query(Item)
-            .filter(Item.book_id.in_(remaining_ids))
-            .all()
-            if remaining_ids
-            else []
-        )
-        maps = {}
-        for b in items:
-            d = b.to_dict()
-            c = b.collector.to_dict() if b.collector else empty_item["collector"]
-            d["collector"] = c
-            maps[b.book_id] = d
-
-        for book in books:
-            book.update(maps.get(book["id"], empty_item))
-
-        return books
 
     def do_sort(self, items, field, ascending):
         items.sort(key=lambda x: x[field], reverse=not ascending)
