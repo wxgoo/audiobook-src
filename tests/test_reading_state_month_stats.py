@@ -21,7 +21,9 @@ class TestReadingStateMonthFilter(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://")
         self.session = scoped_session(sessionmaker(bind=engine, autoflush=True, autocommit=False))
-        models.bind_session(self.session)
+        # 不调 models.bind_session()：它改的是全局 _BOUND_SESSION 并重写所有模型类
+        # 的 _session，本文件只做「直接赋列 + 原生 query」，不需要它。绑上不还原会
+        # 把后面 test_sync 等用例的 session 指到已经 remove 的 scoped_session 上。
         models.Base.metadata.create_all(engine)
 
         self.conf = loader.get_settings()
