@@ -204,7 +204,9 @@ def site_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc).astimezone(get_tzinfo())
 
 
-def site_month_bounds_server_local():
+def site_month_bounds_server_local(
+        day: Optional[datetime.date] = None,
+        server_tz: Optional[datetime.tzinfo] = None):
     """本月起止，返回可用于 SQL 过滤的服务器本地 naive datetime 边界。
 
     上游 v4.6.1 的做法：阅读统计里的「本月」不能按容器时区切（``extract('month',
@@ -214,10 +216,14 @@ def site_month_bounds_server_local():
     ``read_date`` 比较时用的也是这个口径，直接拿带 tzinfo 的量去比会错位。
 
     返回 ``(start, end)``，半开区间：``start <= read_date < end``。
+
+    ``day`` 指定「哪个月」（默认取站点时区的今天），``server_tz`` 指定服务器时区
+    （默认按本机时区，测试里注入 UTC 用）；两者都不传时行为与原来完全一致。
     """
     tz = get_tzinfo()
-    now = datetime.datetime.now(tz)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if day is None:
+        day = datetime.datetime.now(tz).date()
+    month_start = datetime.datetime(day.year, day.month, 1, tzinfo=tz)
     year, month = month_start.year, month_start.month
     if month == 12:
         next_month = month_start.replace(year=year + 1, month=1)
@@ -227,7 +233,9 @@ def site_month_bounds_server_local():
     def to_server_naive(aware):
         # 站点时刻 → 服务器本地 naive。read_date 存的是 datetime.now()
         # （容器本地、naive，见 models.py ReadingState），比较口径必须一致；
-        # astimezone() 不带参数即按服务器本地时区转换。
+        # astimezone() 不带参数即按服务器本地时区转换（测试可注入 server_tz）。
+        if server_tz is not None:
+            return aware.astimezone(server_tz).replace(tzinfo=None)
         return aware.astimezone().replace(tzinfo=None)
 
     return to_server_naive(month_start), to_server_naive(next_month)

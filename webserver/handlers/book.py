@@ -1847,6 +1847,23 @@ class BookReadDone(BaseHandler):
                 "books": read_done_books}
 
 
+def _read_state_month_filter(day=None, server_tz=None, bounds=None):
+    """「本月」的 SQL 过滤条件：``start <= read_date < end``（半开区间）。
+
+    边界由 ``site_time.site_month_bounds_server_local`` 按站点时区切月、再换算到
+    ``read_date`` 的存储口径（服务器本地 naive）。月初那几小时不能按容器时区算进
+    上个月；这里单独成函数，方便用真实 sqlite 钉住端点语义。
+
+    调用方若已经算过同一次边界（响应里还要用年月），传 ``bounds`` 复用，避免两次
+    换算跨零点时出现不一致。
+    """
+    month_start, month_end = bounds or site_time.site_month_bounds_server_local(day, server_tz)
+    return (
+        ReadingState.read_date >= month_start,
+        ReadingState.read_date < month_end,
+    )
+
+
 class BookReadingStats(BaseHandler):
     @js
     @auth
@@ -1857,17 +1874,17 @@ class BookReadingStats(BaseHandler):
 
         # 本月起止按站点时区切（上游 v4.6.1 的做法）。原来直接
         # extract('year'/'month', read_date) 等于按容器时区切月：站点时区设成
-        # 其他时区时，月初那几小时会被算进上个月。site_month_bounds_server_local
-        # 返回与 read_date 存储口径一致（naive 服务器本地）的半开区间。
-        from webserver.site_time import site_month_bounds_server_local
-        _month_start, _month_end = site_month_bounds_server_local()
+        # 其他时区时，月初那几小时会被算进上个月。条件是半开区间
+        # ``start <= read_date < end``，与 read_date 的存储口径（服务器本地 naive）一致。
+        _month_start, _month_end = site_time.site_month_bounds_server_local()
+        _month_start_cond, _month_end_cond = _read_state_month_filter(
+            bounds=(_month_start, _month_end))
 
         # 总体 / 本月统计：按 read_state 分组合并为 1 条条件聚合，
         # 本月计数用 CASE 标记是否落在月区间内（原来是 4 条独立 count()）。
         _in_month = case(
             (
-                (ReadingState.read_date >= _month_start)
-                & (ReadingState.read_date < _month_end),
+                (_month_start_cond & _month_end_cond),
                 1,
             ),
             else_=0,
@@ -1888,8 +1905,8 @@ class BookReadingStats(BaseHandler):
         month_read_done_states = self.sqlite_session.query(ReadingState).filter(
             ReadingState.reader_id == user_id,
             ReadingState.read_state == 2,
-            ReadingState.read_date >= _month_start,
-            ReadingState.read_date < _month_end
+            _month_start_cond,
+            _month_end_cond
         ).order_by(ReadingState.read_date.desc()).limit(12).all()
 
         # 当前在读的书籍列表
