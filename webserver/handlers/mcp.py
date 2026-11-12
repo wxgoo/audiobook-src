@@ -75,7 +75,8 @@ class MCPHandler(ListHandler):
             },
             "timestamp": datetime.datetime.now().isoformat(),
         }
-        self.write(response)
+        # 交给 @js 统一写响应：这里再 self.write 会变成 {...}{}
+        return response
 
     def _bearer_token(self):
         """从 Authorization: Bearer 头取 token（推荐方式，不会进 access log）。"""

@@ -2776,7 +2776,10 @@ class BookNav(ListHandler):
 
 
 class RecentBook(ListHandler):
-    @throttle(write=True)
+    # render_book_list 不自写响应，由 @js 统一写；throttle 的 busy 分支也走返回值，
+    # 否则限流时会先 write 一次、@js 再写 {}，响应体变成 {...}{}。
+    @js
+    @throttle()
     async def get(self):
         title = _("新书推荐")
         ids = await self.books_by_id_async()
@@ -2926,7 +2929,8 @@ class SearchBook(ListHandler):
         logging.info(f"[TRACE]Word segmentation search took {time.time() - start:.2f} seconds.")
         return or_query
 
-    @throttle(per_user=True, write=True)
+    @js
+    @throttle(per_user=True)
     async def get(self):
         name = self.get_argument("name", "").strip()
         book_title = self.get_argument("title", "").strip()  # 传入此参数代表只按名称搜索
@@ -2940,7 +2944,7 @@ class SearchBook(ListHandler):
             return await self._render_search(structured_query, _("搜索") + structured_desc, exclude_id, order_by)
 
         if not name and not book_title:
-            return self.write({"err": "params.invalid", "msg": _("请输入搜索关键字")})
+            return {"err": "params.invalid", "msg": _("请输入搜索关键字")}
 
         title_search = len(book_title) > 0
         if title_search:
