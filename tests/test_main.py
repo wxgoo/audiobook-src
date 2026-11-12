@@ -219,6 +219,17 @@ def setup_server():
     main.CONF["ALLOW_REGISTER"] = True
     main.CONF["user_database"] = "sqlite:///%s/library/users.db" % testdir
     # main.CONF["db_engine_args"] = {"echo": True}
+    # 工具箱工作目录硬编码为 /data/toolbox（生产容器内可写）。本机 / WSL 普通
+    # 用户没有 /data 写权限，make_app 注册工具箱路由时直接 PermissionError，
+    # 于是每个文件的 setUpModule 都挂掉（全量跑时表现为几百个 error）。
+    # 只在测试进程内把类属性指到临时目录，容器里仍走 /data，生产行为不变。
+    from webserver.toolbox.base_tool import BaseTool
+
+    try:
+        os.makedirs(BaseTool.TOOL_DATA_ROOT, exist_ok=True)
+    except OSError:
+        BaseTool.TOOL_DATA_ROOT = os.path.join(tempfile.gettempdir(), "mybooks-test-toolbox")
+        os.makedirs(BaseTool.TOOL_DATA_ROOT, exist_ok=True)
     if _app is None:
         _app = main.make_app()
 
