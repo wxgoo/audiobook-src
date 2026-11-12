@@ -236,17 +236,23 @@ def setup_server():
 
 def setup_mock_user():
     global _mock_user
-    _mock_user = mock.patch.object(BaseHandler, "user_id", return_value=1)
+    # setUpModule 会被每个测试文件各调一次（见 setup_server 的说明），
+    # 每次重建 patcher 会让 setUpClass 启动的实例和 tearDownClass 停止的
+    # 实例不是同一个，patch 泄漏到后面的用例，所以这些 setup 必须幂等。
+    if _mock_user is None:
+        _mock_user = mock.patch.object(BaseHandler, "user_id", return_value=1)
 
 
 def setup_mock_sendmail():
     global _mock_mail
-    _mock_mail = mock.patch("calibre.utils.smtp.sendmail", return_value="Yo")
+    if _mock_mail is None:
+        _mock_mail = mock.patch("calibre.utils.smtp.sendmail", return_value="Yo")
 
 
 def setup_mock_service():
     global _mock_service_async_mode
-    _mock_service_async_mode = mock.patch("webserver.services.AsyncService.async_mode")
+    if _mock_service_async_mode is None:
+        _mock_service_async_mode = mock.patch("webserver.services.AsyncService.async_mode")
 
 
 def setup_mock_trash_manager():
@@ -269,6 +275,9 @@ def setup_mock_bookbarn():
        所以拿到脏掉的引用后把 `autofill.BookBarnTags` 一起换掉最稳妥。
     """
     global _mock_bookbarn_tags
+    if _mock_bookbarn_tags is not None:
+        # 已经 start 过：重复 start 会 RuntimeError: Patch is already started
+        return
     from webserver.services import autofill as _autofill
 
     _mock_bookbarn_tags = mock.patch(
@@ -1015,8 +1024,11 @@ class TestUserSignUp(TestWithUserLogin):
 
     @classmethod
     def tearDownClass(self):
+        # 父类的 stop() 一个都不能少：原先只停了 mail，user / async_mode 的
+        # patch 会泄漏到后面的测试类，下一个 TestWithAdminUser.setUpClass
+        # 再 start 同一个 patcher 就报 RuntimeError: Patch is already started。
+        super().tearDownClass()
         self.delete_user()
-        _mock_mail.stop()
 
     @classmethod
     def get_user(self):
