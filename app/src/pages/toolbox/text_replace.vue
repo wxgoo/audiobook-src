@@ -110,7 +110,6 @@
             <!-- Cheat sheet -->
             <v-alert
               v-if="useRegex"
-              color="secondary"
               dense
               text
               rounded="lg"

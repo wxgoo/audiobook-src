@@ -243,7 +243,7 @@
                   />
                   <v-btn
                     small
-                    color="secondary"
+                    color="primary"
                     variant="outlined"
                     :loading="promptSaving"
                     :disabled="!promptNameInput.trim() || !customVoice.trim()"
@@ -293,7 +293,7 @@
                     class="d-none"
                     @change="onCloneFileChange"
                   />
-                  <v-btn color="secondary" variant="outlined" @click="$refs.cloneFileInput.click()">
+                  <v-btn variant="outlined" @click="$refs.cloneFileInput.click()">
                     <v-icon left small>mdi-paperclip</v-icon>{{ $t('mimoTts.cloneChooseBtn') }}
                   </v-btn>
                 </div>
@@ -411,7 +411,6 @@
 
             <div class="d-flex justify-center flex-wrap mt-btn-row">
               <v-btn
-                color="secondary"
                 variant="outlined"
                 class="mt-test-btn"
                 :loading="testing"

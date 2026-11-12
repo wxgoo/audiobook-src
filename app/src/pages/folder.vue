@@ -94,6 +94,7 @@
 <script>
 import BookCards from "~/components/BookCards.vue";
 import { cleanSegment } from "~/components/FolderEditor.vue";
+import { clampPageSize } from "~/utils/pageSize";
 
 export default {
   components: { BookCards },
@@ -125,10 +126,10 @@ export default {
       if (process.client) {
         const stored = localStorage.getItem("defaultPageSize");
         if (stored) {
-          return parseInt(stored);
+          return clampPageSize(stored, 60);
         }
       }
-      return this.$store?.state?.default_page_size || 60;
+      return clampPageSize(this.$store?.state?.default_page_size, 60);
     },
     pageCount() {
       return Math.ceil(this.total / this.pageSize);

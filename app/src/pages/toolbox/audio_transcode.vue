@@ -21,14 +21,22 @@
             （faststart）。转码成功后自动删除对应 mp3，失败的 mp3 会保留。
           </p>
 
-          <!-- 进行中的任务提示 -->
+          <!-- 进行中的任务提示：下方扫描/开始按钮在 phase==='running' 时全部禁用，
+               这里必须与禁用条件用同一个判据，否则「正在取消」阶段（running 已置 false
+               但 status 仍是 cancelling）按钮被禁用却没有任何说明。 -->
           <v-alert
-            v-if="globalTask && globalTask.status === 'running'"
+            v-if="phase === 'running'"
             type="info" dense text rounded="lg" class="mb-4"
           >
-            当前有任务在跑：书 #{{ globalTask.book_id }}
-            《{{ globalTask.book_title }}》
-            {{ globalTask.done }}/{{ globalTask.total }}。等它完成后再开新的。
+            <template v-if="task.status === 'cancelling'">
+              正在取消当前任务（{{ task.done }}/{{ task.total }}）：当前文件转完即停，
+              收尾完成后才能重新扫描或开始新的转码。
+            </template>
+            <template v-else>
+              当前有任务在跑：书 #{{ task.book_id }}
+              《{{ task.book_title }}》
+              {{ task.done }}/{{ task.total }}。等它完成后再开新的。
+            </template>
           </v-alert>
 
           <!-- 书 ID 输入 -->
@@ -51,7 +59,7 @@
               @click="scan"
             >扫描单本</v-btn>
             <v-btn
-              color="secondary" outlined small class="ml-2"
+              color="primary" outlined small class="ml-2"
               :loading="scanningAll"
               :disabled="phase === 'running'"
               @click="scanAll"
@@ -167,14 +175,31 @@
             </template>
           </div>
 
-          <!-- 启动 -->
-          <div class="d-flex justify-center">
+          <!-- 启动 / 取消：只要有任务处于活动状态（running 或 cancelling），这里
+               就有一个可见的取消入口；取消提交后换成带 spinner 的「正在取消」
+               状态条，让用户看清「已经停下来收尾了」，而不是点了没反应。 -->
+          <div class="d-flex justify-center align-center flex-wrap">
             <v-btn
               color="primary"
               :loading="starting"
               :disabled="!canStart"
               @click="confirmStart = true"
             >开始转码</v-btn>
+            <v-btn
+              v-if="phase === 'running' && !isCancelling"
+              color="error" outlined class="ml-2"
+              :loading="cancelling"
+              @click="cancelTask"
+            >取消任务</v-btn>
+            <!-- 取消已提交：后端只是打标记，当前 ffmpeg 跑完才退出，所以这里用
+                 spinner + 文案表示「已停下、正在收尾」，不用灰掉的禁用按钮。 -->
+            <v-chip
+              v-else-if="isCancelling"
+              color="error" outlined small class="ml-2"
+            >
+              <v-progress-circular indeterminate size="14" width="2" class="mr-2" />
+              正在取消，等待当前文件转完…
+            </v-chip>
           </div>
 
           <!-- 进度 -->
@@ -202,12 +227,6 @@
                 </div>
                 <div v-else-if="phase === 'running'" class="text-caption grey--text flex-grow-1"></div>
                 <v-spacer v-if="!task.current"></v-spacer>
-                <v-btn
-                  v-if="phase === 'running'"
-                  text x-small color="error"
-                  :loading="cancelling"
-                  @click="cancelTask"
-                >取消任务</v-btn>
               </div>
               <div v-if="phase === 'running' && task.message" class="text-caption orange--text text--darken-3">
                 {{ task.message }}
@@ -313,8 +332,10 @@ export default {
       if (["done", "error", "cancelled"].includes(this.task.status)) return "done";
       return "idle";
     },
-    globalTask() {
-      return this.task && this.task.running ? this.task : null;
+    // 取消已提交、后台线程还在收尾（当前 ffmpeg 转完才退出）：此阶段按钮保留在
+    // 页面上但不可重复点，文案说明「正在取消」，避免用户以为点了没反应又反复点。
+    isCancelling() {
+      return this.phase === "running" && this.task.status === "cancelling";
     },
     // 当前选中的码率（bps），用于与源码率比较
     bitrateValue() {

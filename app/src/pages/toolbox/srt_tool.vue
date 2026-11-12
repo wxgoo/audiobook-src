@@ -40,7 +40,7 @@
             <span class="text-subtitle-1 font-weight-bold">{{ $t('srtTool.pickBooks') }}</span>
             <v-spacer></v-spacer>
             <v-btn small text color="primary" @click="toggleAll(true)">{{ $t('srtTool.selectAll') }}</v-btn>
-            <v-btn small text color="secondary" @click="toggleAll(false)">{{ $t('srtTool.selectNone') }}</v-btn>
+            <v-btn small text @click="toggleAll(false)">{{ $t('srtTool.selectNone') }}</v-btn>
             <v-btn small text :disabled="loadingBooks" @click="loadBooks">
               <v-icon small left>mdi-refresh</v-icon>{{ $t('srtTool.reload') }}
             </v-btn>

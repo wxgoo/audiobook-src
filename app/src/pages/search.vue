@@ -38,6 +38,7 @@
 
 <script>
 import BookCards from "../components/BookCards.vue";
+import { clampPageSize } from "~/utils/pageSize";
 
 export default {
   components: {
@@ -48,10 +49,10 @@ export default {
       if (process.client) {
         const stored = localStorage.getItem('defaultPageSize');
         if (stored) {
-          return parseInt(stored);
+          return clampPageSize(stored, 60);
         }
       }
-      return this.$store?.state?.default_page_size || 60;
+      return clampPageSize(this.$store?.state?.default_page_size, 60);
     },
     max_search_size() {
       return 1000;
