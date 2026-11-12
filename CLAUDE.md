@@ -35,106 +35,20 @@ docker exec audiobook-mybooks-1 ls /var/www/mybooks/app/dist/_nuxt/ | grep <chun
 
 更多踩坑记录见 [`.claude/memory/MEMORY.md`](.claude/memory/MEMORY.md)（calibre `custom_columns` 没有 `colnum`、实体书双写、上传权限口径、上游分支陷阱等）。
 
-## Common commands
+## 代码地图（简版）
 
-### Backend (Python / webserver)
+> 完整架构、路由顺序、常用命令、开发任务与踩坑清单以 [`docs/开发指南.md`](docs/开发指南.md) 为准，
+> 本文件只留索引级信息，不重复维护。
 
-```bash
-# Lint (matches CI)
-flake8 webserver --count --statistics --config .style.yapf --exclude epub_to_audio,test
-
-# Run all backend tests
-pytest tests
-
-# Run a single test file / test case / test method
-pytest tests/test_models.py
-pytest tests/test_models.py::TestUser
-pytest tests/test_models.py::TestUser::test_shrink_extra_size2
-
-# Coverage (matches CI)
-pytest ./tests -v --cov=webserver --cov-report=term-missing
-```
-
-Test fixtures (sample DBs, ebooks, ssl certs) live in `tests/cases/`. `tests/test_main.py` contains the Tornado `AsyncHTTPTestCase`-based integration tests that spin up the app; most other `tests/test_*.py` files cover individual services/handlers/models.
-
-### Frontend (app/, Vue/Nuxt)
-
-```bash
-cd app
-npm install
-npm run dev          # dev server (nuxt)
-npm run build-spa    # production SPA build -> app/dist/ (served by backend)
-npm run generate     # static site generation
-npm run lint         # eslint
-```
-
-Node 17+ requires `export NODE_OPTIONS=--openssl-legacy-provider` (also set in `app/Makefile`'s `make` target).
-
-The frontend always calls the backend at `/api/...` relative to the page's own origin — when developing the backend separately, proxy `/api|/get|/read|/auth|/opds` to the Tornado server (see `document/Development.zh_CN.md` for an nginx example) rather than hardcoding a backend URL.
-
-### Running the server directly
-Prefer to use default conda environment instead of .venv.
-
-```bash
-python3 server.py --with-library=/data/books/library --port=8083 --host=127.0.0.1 --logging=info --log-file-prefix=/data/log/mybooks.log
-# or
-./run_webserver.sh
-```
-
-`server.py` just calls `webserver.main.main()`. First run needs `--syncdb` to create DB tables.
-
-### Docker (primary deployment path)
-
-The project is normally run via Docker (`docker-compose.yml`, `Dockerfile`, `Dockerfile.base`). `make build` / `make up` / `make down` wrap docker-compose. Recommended dev workflow: run the published `poxenstudio/mybooks` image and bind-mount `webserver/` into the container — the Tornado server autoreloads on code changes (see `document/Development.zh_CN.md`).
-
-## Architecture
-
-### Backend bootstrap (`webserver/main.py`)
-
-`main()` wires together:
-- A Calibre library DB (`legacy` book_db + `cache`, the new-style Calibre cache) opened from `--with-library`
-- SQLAlchemy `ScopedSession` against the app's own user database (`user_database` setting, separate from Calibre's DB)
-- Monkeypatches into Calibre internals (e.g. disabling the Qt GUI requirement, binding top-dir book names) — see `config_calibre()` and the `gui2.must_use_qt` patch
-- A `tornado.web.Application` assembled from per-feature route modules under `webserver/handlers/`
-
-**Route assembly order matters** — routes are concatenated in a specific order because some handlers register catch-alls:
-
-Ported from the audiobook project (v4.7): `handlers/reader_group.py` +
-`services/reader_group.py` (reader-group grade permissions layered on the
-existing `read_limit`/`limit_tags` mechanism, zero DB migration — group defs
-live in `CONF["READER_GROUPS"]`, membership in `Reader.extra["reader_group"]`)
-and `handlers/transcribe.py` + `services/transcribe.py` (optional Whisper
-audio-to-text, gated by `whisper_available()`, progress via BackgroundService).
-1. social auth routes, then feature routes (`assistant`, `mcp`, `admin`, `barcode`, `scan`, `opds`, `book`, `user`, `meta`, `audio`, `toolbox`, `podcast`)
-2. WAP routes (server-rendered pages for e-ink/Kindle browsers) — must precede static files
-3. WebDAV routes (`/books/?(.*)`)
-4. `static_files.routes()` last — it contains the catch-all `r"/(.*)"` that serves the Vue SPA
-
-Several services (podcast, WebDAV, AI assistant) are *always* registered but check their `ENABLE_*` setting at request time, so toggling them in admin settings takes effect without a restart.
-
-### Settings / configuration (`webserver/loader.py`, `webserver/settings.py`)
-
-Settings are a layered dict: `webserver/settings.py` defaults are overlaid by an `auto.py` (machine-generated, e.g. via `SettingsSaver`) and then a `manual.py`, both loaded from `settings_path` (default `/data/books/settings/`). Access the merged config via `webserver.loader.get_settings()` (aliased `CONF` throughout the codebase). Don't hardcode values that exist in `settings.py` — read them from `CONF`.
-
-### Data model (`webserver/models.py`)
-
-Two separate databases coexist:
-- **Calibre's library DB** — books/authors/tags/etc., accessed through `legacy`/`cache` (Calibre's own DB layer), not through SQLAlchemy models here
-- **The app's own SQLAlchemy DB** (`user_database`) — `models.py` defines `Reader`, `Item`, `Message`, and other app-specific entities (users, reading progress, social-auth storage via `social_sqlalchemy`/`social_tornado`)
-
-`bind_session()` wires a SQLAlchemy session into both `Base` (declarative models) and `SQLAlchemyMixin` (social-auth models) so they share one session.
-
-### Handlers (`webserver/handlers/`)
-
-Each module exposes a `routes()` function returning a list of Tornado URL specs; `main.py` concatenates them. `webserver/handlers/base.py` provides `BaseHandler` and shared helpers — notably the `@js` decorator which wraps handler methods to catch exceptions, JSON-encode the response, and set CORS/cache headers uniformly. A class-level `BaseHandler.db_lock` (threading.RLock) serializes thread-unsafe Calibre DB access.
-
-### Services (`webserver/services/`)
-
-Business logic that's too heavy for handlers lives here as service classes (e.g. `BookBarnService`, `AsyncService`, `ItemSyncService`, `ScanService`, `MonitorService`, conversion/import/metadata-update services). Handlers typically delegate to these. `AsyncService` and similar singletons are set up once in `main()` and may run periodic background work (DB checks, scheduled imports, etc.).
-
-### i18n
-
-`webserver/i18n.py` plus `webserver/i18n/` provide `_()`, `choose_language()`, `set_language()` for backend translations; the frontend uses `vue-i18n` with locale files under `app/locales/`.
+- **入口**：`server.py` → `webserver.main.main()`；路由由 `webserver/handlers/*.py` 的 `routes()` 按固定顺序拼接，
+  `static_files.routes()` 含 `r"/(.*)"` 必须最后。
+- **请求**：`webserver/handlers/base.py` 的 `BaseHandler`（`@js` 统一异常/JSON、`db_lock` 串行化 Calibre 访问）；
+  重业务放 `webserver/services/`。
+- **配置**：`webserver/settings.py` 默认值 + `settings_path`（默认 `/data/books/settings/`）下的 `auto.py` / `manual.py`；
+  统一读 `webserver.loader.get_settings()`（别名 `CONF`）。
+- **数据**：Calibre 库（`legacy`/`cache`）+ 应用 SQLAlchemy 库（`webserver/models.py`，`user_database`），两库并存。
+- **前端**：`app/src/**` → `app/dist/`（预构建进包，NAS 不构建）；`myreader-dist/` 是 Next.js standalone 阅读器。
+- **i18n**：后端 `webserver/i18n.py`，前端 `app/locales/`。
 
 ### toolbox
 Refer to [Toolbox Design](document/toolbox_design.md) for details to add new tool in MyBooks.

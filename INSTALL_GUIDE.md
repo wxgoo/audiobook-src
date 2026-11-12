@@ -1523,4 +1523,4 @@ http://<你的地址>/toolbox/audio_transcode
 | 内置依赖 | `third-party/{foliate-js,edge-tts}`、`prebuilt/wheels/` | 已 vendored，不再依赖 git submodule |
 | 移除 exe | `installer/` 已删除 | Docker 唯一部署方式 |
 | 测试 | `tests/test_reader_group.py`（14）、`tests/test_transcribe_service.py`（24）、`tests/test_audio_link_existing.py`（17）、`tests/test_book_dedup.py`（43） | 98 个全通过（用例在源码仓库，部署包不含 `tests/`） |
-| 上游跟进 | [`docs/上游跟进清单.md`](docs/上游跟进清单.md) | **改动清单 + 合并指引，升级前必看** |
+| 上游跟进 | [`docs/上游比对与跟进-4.6.1.md`](docs/上游比对与跟进-4.6.1.md) | **当前版本的比对、优先级与补丁生成，升级前必看**（历史明细见 `docs/archive/上游跟进清单.md`） |
