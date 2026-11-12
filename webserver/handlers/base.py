@@ -1193,14 +1193,15 @@ class BaseHandler(web.RequestHandler):
         return books[0]
 
     async def get_book_async(self, book_id, fully=False, raise_exception=True):
-        """get_book 的非阻塞版：calibre 查询放工作线程，sqlite/Item 合并留在 ioloop。"""
+        """get_book 的非阻塞版：calibre 查询与 Item/收藏者合并都在工作线程，ioloop 只做内存合并。"""
         _ts = time.time()
         book_id = int(book_id)
         books = await self.run_calibre_read_async(self.calibre_db.get_data_as_dict, ids=[book_id])
+        item_maps = await self._item_maps_async([book_id])
         if fully:
-            books = self._merge_books_full(books, _ts)
+            books = self._merge_books_full(books, _ts, item_maps)
         else:
-            books = self._merge_books_simple(books, _ts)
+            books = self._merge_books_simple(books, _ts, item_maps)
         if not books:
             if raise_exception:
                 self.write({"err": "not_found", "msg": _("抱歉，这本书不存在")})
@@ -1387,9 +1388,9 @@ class BaseHandler(web.RequestHandler):
         books = self.calibre_db.get_data_as_dict(*args, **kwargs)
         return self._merge_books_simple(books, _ts)
 
-    def _merge_books_simple(self, books, _ts=None):
+    def _merge_books_simple(self, books, _ts=None, item_maps=None):
         """get_books_simple 的 sqlite 合并段（同 _merge_books_full，只碰 sqlite_session）。"""
-        return self._merge_books(books, _ts)
+        return self._merge_books(books, _ts, item_maps)
 
     def get_all_fmts(self, book):
         fmts = []

@@ -656,9 +656,14 @@ class ReadingStatsService:
         cls._buffer.on_event(reader_id, book_id, Reading.ACTION_PUSH, protocol, datetime.datetime.utcnow())
 
     @classmethod
-    def get_book_format_stats(cls, reader_id: int, book_id: int, fmt: Optional[str] = None) -> List[dict]:
-        """所有格式（或 fmt 指定的单个格式）的统计（供 BookDetail/独立接口/MCP get_book_reading_stats 复用）。"""
-        db = Reading._session()
+    def get_book_format_stats(cls, reader_id: int, book_id: int, fmt: Optional[str] = None,
+                              session=None) -> List[dict]:
+        """所有格式（或 fmt 指定的单个格式）的统计（供 BookDetail/独立接口/MCP get_book_reading_stats 复用）。
+
+        session 只给「在别的线程里查」的场景用（线程池里必须用自己的 session）；
+        默认仍用当前线程的 Reading._session()。
+        """
+        db = session or Reading._session()
         query = db.query(BookReadingStats).filter(
             BookReadingStats.reader_id == reader_id, BookReadingStats.book_id == book_id, BookReadingStats.total_seconds > 10
         )

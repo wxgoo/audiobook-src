@@ -426,36 +426,61 @@ class HomepageConfig(BaseHandler):
 
 
 class BookDetail(BaseHandler):
+    @staticmethod
+    def _detail_extras(session, book_id, user_id):
+        """阅读状态 / 分格式统计 / MyNexus 分析（只读），交给 run_sqlite_async 在工作线程执行。
+
+        三条查询共用一个工作线程 session（用完由 run_sqlite_async 负责 remove）；
+        返回的都是纯 Python 值：ORM 对象不能带出 session，否则就是 detached 的。
+        """
+        state = None
+        stats = []
+        if user_id:
+            reading_state = session.query(ReadingState).filter(
+                ReadingState.book_id == book_id,
+                ReadingState.reader_id == user_id
+            ).first()
+            state = ReadingStateFormatter.format_reading_state(reading_state)
+            stats = ReadingStatsService.get_book_format_stats(user_id, book_id, session=session)
+        analysis = session.get(MyNexusBookAnalysis, book_id)
+        analysis_data = None
+        if analysis:
+            analysis_data = {
+                "status": analysis.status,
+                "progress": analysis.progress,
+                "error_msg": analysis.error_msg,
+                "reading_guide": analysis.reading_guide,
+            }
+        return state, stats, analysis_data
+
     @js
-    def get(self, bid):
+    async def get(self, bid):
         book = None
         try:
             book_id = int(bid)
-            book = self.get_book(book_id, fully=True, raise_exception=False)
+            book = await self.get_book_async(book_id, fully=True, raise_exception=False)
         except Exception as e:
             logging.error("get book %s failed: %s" % (bid, e))
 
         if not book:
             return {"err": "params.book.invalid", "msg": _("书籍不存在")}
 
-        if self.current_user and self.get_argument("track", "1") != "0":
+        current_user = self.current_user
+        if current_user and self.get_argument("track", "1") != "0":
             try:
-                BookVisitService.record(self.current_user.id, book_id)
+                BookVisitService.record(current_user.id, book_id)
             except Exception as e:
                 logging.error("record book visit failed: %s" % e)
 
-        # 添加当前用户的阅读状态信息
-        if self.current_user:
-            reading_state = self.sqlite_session.query(ReadingState).filter(
-                ReadingState.book_id == book_id,
-                ReadingState.reader_id == self.current_user.id
-            ).first()
+        # 阅读状态 / 分格式统计 / AI 分析：三条只读查询合成一次线程池往返
+        user_id = current_user.id if current_user else None
+        state, reading_stats, analysis = await self.run_sqlite_async(
+            self._detail_extras, book_id, user_id
+        )
 
-            # 创建阅读状态映射
-            if reading_state:
-                book["state"] = ReadingStateFormatter.format_reading_state(reading_state)
-            else:
-                book["state"] = ReadingStateFormatter.format_reading_state(None)
+        # 添加当前用户的阅读状态信息
+        if current_user:
+            book["state"] = state
         else:
             logging.info("User not logged in, skipping reading state.")
 
@@ -473,28 +498,27 @@ class BookDetail(BaseHandler):
 
         # 分格式的阅读时长/进度统计
         formated_book = BookFormatter(self, book).format(with_files=True, with_perms=True)
-        formated_book["reading_stats"] = ReadingStatsService.get_book_format_stats(self.current_user.id, book_id) if self.current_user else []
-        analysis = self.sqlite_session.get(MyNexusBookAnalysis, book_id)
-        can_read_ai_data = bool(self.current_user or BookAccessService.guest_read_allowed(self, book_id))
-        formated_book["ai_companion_available"] = bool(self.current_user and analysis and analysis.status == "completed")
-        formated_book["ai_reading_guide"] = analysis.reading_guide if can_read_ai_data and analysis and analysis.status == "completed" else ""
+        formated_book["reading_stats"] = reading_stats
+        can_read_ai_data = bool(current_user or BookAccessService.guest_read_allowed(self, book_id))
+        formated_book["ai_companion_available"] = bool(current_user and analysis and analysis["status"] == "completed")
+        formated_book["ai_reading_guide"] = analysis["reading_guide"] if can_read_ai_data and analysis and analysis["status"] == "completed" else ""
         if self.is_admin():
             formated_book["mynexus_configured"] = bool(CONF.get("ENABLE_MYNEXUS") and CONF.get("MYNEXUS_URL") and CONF.get("MYNEXUS_TOKEN"))
             formated_book["mynexus_analysis"] = {
-                "status": analysis.status,
-                "progress": analysis.progress,
-                "error_msg": analysis.error_msg,
-                "can_retry": analysis.status == "failed",
+                "status": analysis["status"],
+                "progress": analysis["progress"],
+                "error_msg": analysis["error_msg"],
+                "can_retry": analysis["status"] == "failed",
             } if analysis else {"status": "not_started", "progress": 0, "error_msg": ""}
 
         return {
             "err": "ok",
             "kindle_sender": CONF["smtp_username"],
-            "guest_access": None if self.current_user else BookAccessService.guest_read_source(self, book_id),
+            "guest_access": None if current_user else BookAccessService.guest_read_source(self, book_id),
             "book": formated_book,
             "audios": AudioUtils.get_audios(
                 bid,
-                self.current_user.id if self.current_user else None,
+                user_id,
                 db=self.calibre_db_cache,
             ),
         }

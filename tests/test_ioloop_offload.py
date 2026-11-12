@@ -104,13 +104,14 @@ class _FakeSession:
 class _FakeScopedSession:
     """run_sqlite_async 用的 scoped_session 替身：给工作线程发新 session。"""
 
-    def __init__(self, items_query):
+    def __init__(self, items_query=None, **session_kwargs):
         self._items_query = items_query
+        self._session_kwargs = session_kwargs
         self.created = 0
 
     def __call__(self):
         self.created += 1
-        return _FakeSession(items_query=self._items_query)
+        return _FakeSession(items_query=self._items_query, **self._session_kwargs)
 
     def remove(self):
         pass
@@ -210,6 +211,130 @@ class TestRenderBookListNotDecorated(unittest.TestCase):
         self.assertTrue(asyncio.iscoroutinefunction(ListHandler.render_book_list))
 
 
+class TestBookDetailExtras(unittest.TestCase):
+    """BookDetail 的三条只读查询必须共用一个工作线程 session，且只带出纯 Python 值。"""
+
+    def test_returns_plain_values_and_reuses_session(self):
+        from webserver.handlers.book import BookDetail
+        from webserver.services.reading_stats_service import ReadingStatsService
+
+        reading_state = types.SimpleNamespace(
+            favorite=1, favorite_date=None, wants=0, wants_date=None,
+            read_state=2, read_date=None, online_read=3, download=0,
+        )
+        analysis = types.SimpleNamespace(
+            status="completed", progress=100, error_msg="", reading_guide="guide",
+        )
+        session = mock.Mock()
+        session.query.return_value.filter.return_value.first.return_value = reading_state
+        session.get.return_value = analysis
+
+        with mock.patch.object(
+            ReadingStatsService, "get_book_format_stats", return_value=[{"format": "EPUB"}]
+        ) as patched:
+            state, stats, analysis_data = BookDetail._detail_extras(session, 42, 7)
+
+        self.assertEqual(state["favorite"], 1)
+        self.assertEqual(state["online_read"], 3)
+        self.assertEqual(stats, [{"format": "EPUB"}])
+        self.assertEqual(analysis_data, {
+            "status": "completed", "progress": 100, "error_msg": "", "reading_guide": "guide",
+        })
+        # 统计查询必须复用同一个工作线程 session，不能自己再取 Reading._session()
+        self.assertIs(patched.call_args.kwargs["session"], session)
+
+    def test_without_user_skips_state_and_stats(self):
+        from webserver.handlers.book import BookDetail
+        from webserver.services.reading_stats_service import ReadingStatsService
+
+        session = mock.Mock()
+        session.get.return_value = None
+        with mock.patch.object(ReadingStatsService, "get_book_format_stats") as patched:
+            state, stats, analysis_data = BookDetail._detail_extras(session, 42, None)
+
+        self.assertIsNone(state)
+        self.assertEqual(stats, [])
+        self.assertIsNone(analysis_data)
+        patched.assert_not_called()
+
+    def test_queries_run_off_ioloop(self):
+        """三条查询各模拟 120ms：走 run_sqlite_async 时 ioloop 不应出现 ~120ms 的停顿。"""
+        from webserver.handlers.book import BookDetail
+        from webserver.services.reading_stats_service import ReadingStatsService
+
+        delay = 0.12
+
+        class _SlowDetailSession:
+            def __init__(self):
+                self.thread_names = []
+
+            def query(self, model):
+                return self
+
+            def filter(self, *args, **kwargs):
+                return self
+
+            def first(self):
+                self.thread_names.append(threading.current_thread().name)
+                time.sleep(delay)
+                return None
+
+            def get(self, model, pk):
+                self.thread_names.append(threading.current_thread().name)
+                time.sleep(delay)
+                return None
+
+        class _FixedScopedSession:
+            def __init__(self, session):
+                self.session = session
+
+            def __call__(self):
+                return self.session
+
+            def remove(self):
+                pass
+
+        session = _SlowDetailSession()
+        handler = _make_handler([])
+        handler.application = types.SimpleNamespace(
+            settings={"ScopedSession": _FixedScopedSession(session)}
+        )
+
+        def slow_stats(reader_id, book_id, fmt=None, session=None):
+            session.thread_names.append(threading.current_thread().name)
+            time.sleep(delay)
+            return []
+
+        async def run():
+            gaps = []
+
+            async def ticker():
+                while True:
+                    started = time.perf_counter()
+                    await asyncio.sleep(0.005)
+                    gaps.append(time.perf_counter() - started - 0.005)
+
+            task = asyncio.ensure_future(ticker())
+            await asyncio.sleep(0)
+            try:
+                with mock.patch.object(
+                    ReadingStatsService, "get_book_format_stats", slow_stats
+                ):
+                    await handler.run_sqlite_async(BookDetail._detail_extras, 42, 7)
+            finally:
+                task.cancel()
+            return max(gaps) if gaps else 0.0
+
+        worst = asyncio.run(run())
+        main_thread = threading.current_thread().name
+        self.assertEqual(len(session.thread_names), 3)
+        for name in session.thread_names:
+            self.assertNotEqual(name, main_thread)
+            self.assertTrue(name.startswith("mybooks-calibre"), name)
+        # 同步执行时 worst 会 >=0.24s（三条查询串行）
+        self.assertLess(worst, 0.05, "详情页查询仍阻塞 ioloop: %.3fs" % worst)
+
+
 class TestRunInThreadpool(unittest.TestCase):
     def test_returns_result_with_args_and_kwargs(self):
         def work(a, b, scale=1):
@@ -291,6 +416,15 @@ class TestGetBookAsync(unittest.TestCase):
             self.BOOKS,
             items=[_FakeItemRow(7, sole=False, collector_id=3)],
             readers=[_FakeCollector()],
+        )
+        # get_book_async 的 Item/收藏者合并已挪进工作线程，需要 scoped_session 替身
+        self.handler.application = types.SimpleNamespace(
+            settings={
+                "ScopedSession": _FakeScopedSession(
+                    items=[_FakeItemRow(7, sole=False, collector_id=3)],
+                    readers=[_FakeCollector()],
+                )
+            }
         )
 
     def test_calibre_call_runs_off_ioloop(self):
