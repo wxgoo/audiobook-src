@@ -2877,8 +2877,9 @@ class SearchBook(ListHandler):
         or_query = None
 
         try:
-            # 对name进行分词
-            words = jieba.cut(name)
+            # jieba 首次 cut 要建词典（实测 ~1s）并写磁盘缓存，不能留在 ioloop；
+            # 分词本身也是纯 CPU，一起丢进 blocking_pool。
+            words = await utils.run_in_threadpool(lambda: list(jieba.cut(name)))
             # 过滤分词结果：排除等于name本身的词和长度为1的词，并去重
             filtered_words = list({w for w in words if w != name and len(w) > 1})
 
