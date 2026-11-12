@@ -3,8 +3,9 @@
 # pack.sh —— 从仓库打部署包
 #
 # 用法（仓库根目录）：
-#   bash scripts/pack.sh                 # 用 CHANGELOG 里的当前版本号
-#   bash scripts/pack.sh 4.6.0-11        # 指定版本号
+#   bash scripts/pack.sh 4.6.0-build.27-r27  # 推荐：显式传完整修订号（含 -rN）
+#   bash scripts/pack.sh                 # 不传参时版本号取自 CHANGELOG 首条，只有基础版本
+#                                        # （形如 4.6.0-build.27，缺 -rN，会被清单断言拒绝）
 #   bash scripts/pack.sh --check xxx.tar.gz   # 只验一个已有包，不打包
 #
 # 产物：/workspace/audiobook-deploy-<版本>.tar.gz（或在当前目录）
@@ -293,6 +294,21 @@ if [ ! -f update/manifest.json ] || ! grep -q '"revision"' update/manifest.json;
     exit 1
 fi
 echo "  发布清单 OK: $(grep -m1 '"revision"' update/manifest.json | tr -d ' ,')"
+
+# 清单 revision 必须与本次出包的修订号一致：先推清单、后出包（协作备忘 §4）。
+# 这条断言是硬的——r27 就是栽在这里：清单还停在 r26，照它出包，页面装完仍报有新版本。
+MANIFEST_REV=$(grep -m1 -oE '"revision"[[:space:]]*:[[:space:]]*"[^"]+"' update/manifest.json | sed 's/.*"\([^"]*\)"$/\1/')
+if ! printf '%s' "$VER" | grep -qE -- '-r[0-9]+$'; then
+    echo "  !! 版本号 $VER 不含 -rN 修订号，无法与清单 revision 比对"
+    echo "     CHANGELOG 首条只有基础版本（4.6.0-build.27），出修订包请显式传参："
+    echo "     bash scripts/pack.sh 4.6.0-build.27-r27"
+    exit 1
+fi
+[ "$MANIFEST_REV" = "$VER" ] || {
+    echo "  !! 包内清单 revision=$MANIFEST_REV 与本次版本 $VER 不一致（先推清单、后出包）"
+    exit 1
+}
+echo "  清单 revision 与包版本一致: $MANIFEST_REV"
 
 
 # ---------- 打包 ----------
