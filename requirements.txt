@@ -23,7 +23,9 @@ openai
 langchain>=1.0.0,<2.0.0
 langchain-openai>=1.0.0,<2.0.0
 langgraph>=1.0.0,<2.0.0
-requests==2.33.0
+# social-auth-core 6.2.0 的元数据要求 requests>=2.34.0；上游升到 6.2.0 后
+# 这里仍钉 2.33.0，pip 装 requirements.txt 会直接解不出依赖，故同步上调。
+requests==2.34.2
 pydub==0.25.1
 wyoming==1.6.0
 sentencex==0.6.1

@@ -225,7 +225,7 @@ class _FakeMCPClient:
 class _FakeGraph:
     async def astream_events(self, input_data, config, version):
         assert input_data["messages"][-1]["content"] == "查询《三体》"
-        assert config["recursion_limit"] == 16
+        assert config["recursion_limit"] == assistant_agent_module.AGENT_RECURSION_LIMIT
         assert version == "v2"
         yield {"event": "on_tool_start", "name": "search_books"}
         yield {
@@ -258,3 +258,134 @@ def test_react_events_keep_the_existing_websocket_event_shape():
 
 async def _collect_events(events):
     return [event async for event in events]
+
+
+class _RecordingMCPClient(_FakeMCPClient):
+    def __init__(self, text="查询结果"):
+        self.text = text
+        self.calls = []
+
+    async def call_tool(self, tool_name, arguments):
+        self.calls.append((tool_name, dict(arguments)))
+        return {"content": [{"text": self.text}]}
+
+
+def _capture_langchain_tools(monkeypatch, agent, schema):
+    """把 create_agent 换成「只把工具列表递出来」，返回其中的 StructuredTool。"""
+    captured = {}
+
+    def fake_create_agent(model, tools, system_prompt=None):
+        captured["tools"] = tools
+        return SimpleNamespace(astream_events=None)
+
+    monkeypatch.setattr("langchain.agents.create_agent", fake_create_agent)
+    agent._get_chat_model = lambda: None
+    agent._build_react_agent([{
+        "name": "search_books",
+        "description": "Search the library",
+        "inputSchema": schema,
+    }])
+    return captured["tools"]
+
+
+def test_agent_uses_configurable_recursion_limit():
+    assert assistant_agent_module.AGENT_RECURSION_LIMIT == 40
+    assert assistant_agent_module.MAX_TOOL_CALLS_PER_TURN == 12
+
+
+def test_repeated_tool_call_replays_previous_result(monkeypatch):
+    agent = AIAssistantMCPAgent()
+    client = _RecordingMCPClient()
+    agent.mcp_client = client
+    tools = _capture_langchain_tools(monkeypatch, agent, {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    })
+
+    first = asyncio.run(tools[0].coroutine(name="三体"))
+    second = asyncio.run(tools[0].coroutine(name="三体"))
+
+    assert first == "查询结果"
+    assert second == "该工具已使用相同参数调用过，请勿重复调用。上一次的结果如下：\n查询结果"
+    assert client.calls == [("search_books", {"name": "三体"})]
+
+
+def test_tool_calls_per_turn_are_capped(monkeypatch):
+    monkeypatch.setattr(assistant_agent_module, "MAX_TOOL_CALLS_PER_TURN", 2)
+    agent = AIAssistantMCPAgent()
+    client = _RecordingMCPClient()
+    agent.mcp_client = client
+    tools = _capture_langchain_tools(monkeypatch, agent, {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    })
+
+    results = [asyncio.run(tools[0].coroutine(name=term)) for term in ("a", "b", "c")]
+
+    assert results[:2] == ["查询结果", "查询结果"]
+    assert results[2].startswith("本轮工具调用次数已达上限")
+    assert len(client.calls) == 2
+
+
+def test_tool_error_is_reported_to_the_model():
+    assert AIAssistantMCPAgent._tool_result_text({"error": "工具未登录"}) == "工具调用失败：工具未登录"
+    # 有正文时仍以正文为准
+    assert AIAssistantMCPAgent._tool_result_text({
+        "content": [{"text": "正文"}],
+        "error": "附带错误",
+    }) == "正文"
+
+
+def test_recursion_error_returns_partial_answer_instead_of_error_event():
+    class _RecursionGraph:
+        async def astream_events(self, input_data, config, version):
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "run-1",
+                "data": {"chunk": SimpleNamespace(content="已查到一部分。")},
+            }
+            from langgraph.errors import GraphRecursionError
+
+            raise GraphRecursionError("recursion limit reached")
+
+    agent = AIAssistantMCPAgent()
+    agent.mcp_client = _FakeMCPClient()
+    agent._build_react_agent = lambda selected_tools: _RecursionGraph()
+
+    events = asyncio.run(_collect_events(agent.process_user_input("查询《三体》")))
+
+    assert events[0] == {"type": "content", "content": "已查到一部分。"}
+    assert events[-1]["type"] == "content"
+    assert "推理步数已达上限" in events[-1]["content"]
+    assert not [event for event in events if event["type"] == "error"]
+
+
+def test_non_streaming_model_output_is_still_returned():
+    class _NonStreamingGraph:
+        async def astream_events(self, input_data, config, version):
+            yield {
+                "event": "on_chat_model_end",
+                "run_id": "run-1",
+                "data": {"output": SimpleNamespace(content="完整回答。")},
+            }
+
+    agent = AIAssistantMCPAgent()
+    agent.mcp_client = _FakeMCPClient()
+    agent._build_react_agent = lambda selected_tools: _NonStreamingGraph()
+
+    events = asyncio.run(_collect_events(agent.process_user_input("查询《三体》")))
+
+    assert events == [{"type": "content", "content": "完整回答。"}]
+
+
+def test_mcp_tool_listing_normalizes_snake_case_schema():
+    client = MCPStreamClient("http://localhost/mcp", "")
+    client._send_request = AsyncMock(return_value={
+        "result": {"tools": [{"name": "search_books", "input_schema": {"type": "object"}}, "junk"]},
+    })
+
+    tools = asyncio.run(client.list_tools())
+
+    assert tools == [{"name": "search_books", "inputSchema": {"type": "object"}}]

@@ -114,6 +114,10 @@ settings = {
     "AI_DEEPSEEK_API_KEY": "",
     "AI_API_URL": "https://api.deepseek.com",
     "AI_ALLOW_SET_CATEGORY": True,
+    # 上游 5b270c0：LangGraph 按 superstep 计数（一次模型/工具往返约 2 步），
+    # 16 只够约 7 轮工具调用；单轮工具调用另有硬上限，防止模型原地打转。
+    "AI_RECURSION_LIMIT": 40,
+    "AI_MAX_TOOL_CALLS": 12,
     "ENABLE_MYNEXUS": False,
     "MYNEXUS_URL": "",
     "MYNEXUS_TOKEN": "",
