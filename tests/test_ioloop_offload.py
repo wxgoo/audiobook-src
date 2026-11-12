@@ -39,6 +39,12 @@ class _FakeQuery:
     def filter(self, *args, **kwargs):
         return self
 
+    def limit(self, n):
+        return self
+
+    def offset(self, n):
+        return self
+
     def first(self):
         return self._rows[0] if self._rows else None
 
@@ -333,6 +339,55 @@ class TestBookDetailExtras(unittest.TestCase):
             self.assertTrue(name.startswith("mybooks-calibre"), name)
         # 同步执行时 worst 会 >=0.24s（三条查询串行）
         self.assertLess(worst, 0.05, "详情页查询仍阻塞 ioloop: %.3fs" % worst)
+
+
+class TestHotBookQueryOffIoloop(unittest.TestCase):
+    """热度榜的 items 查询（count_visit > 1 排序）必须离开 ioloop。
+
+    10 万级 items 表上这条 ORM 查询首次约 93ms、常驻 5ms，原来和所有请求
+    共用事件循环线程；现在按 _sole_hidden_ids 的方式走 run_sqlite_async。
+    """
+
+    def setUp(self):
+        from webserver.handlers.book import HotBook
+
+        self.HotBook = HotBook
+        self.query = _SlowQuery([_FakeItemRow(1), _FakeItemRow(2)], delay=0.12)
+        self.handler = _make_handler([], cls=HotBook)
+        self.handler.application = types.SimpleNamespace(
+            settings={"ScopedSession": _FakeScopedSession(items_query=self.query)}
+        )
+
+    def test_query_runs_on_worker_thread_without_blocking_ioloop(self):
+        async def run():
+            gaps = []
+
+            async def ticker():
+                while True:
+                    started = time.perf_counter()
+                    await asyncio.sleep(0.005)
+                    gaps.append(time.perf_counter() - started - 0.005)
+
+            task = asyncio.ensure_future(ticker())
+            await asyncio.sleep(0.03)
+            try:
+                ids = await self.handler.run_sqlite_async(
+                    self.HotBook._query_hot_book_ids, 0, 60
+                )
+            finally:
+                await asyncio.sleep(0.03)
+                task.cancel()
+            return ids, max(gaps) if gaps else 0.0
+
+        ids, worst = asyncio.run(run())
+        self.assertEqual(ids, [1, 2])
+        main_thread = threading.current_thread().name
+        self.assertTrue(self.query.thread_names)
+        for name in self.query.thread_names:
+            self.assertNotEqual(name, main_thread)
+            self.assertTrue(name.startswith("mybooks-calibre"), name)
+        # 查询本身 120ms：留在 ioloop 上时 worst 会 >=100ms
+        self.assertLess(worst, 0.05, "热度榜查询仍阻塞 ioloop: %.3fs" % worst)
 
 
 class TestRunInThreadpool(unittest.TestCase):
