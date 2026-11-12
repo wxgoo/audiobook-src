@@ -6,6 +6,7 @@
 #   cd /volume1/docker/audiobook
 #   sh scripts/deploy.sh            # 默认做：校验 -> 构建 -> 启动 -> 验证
 #   sh scripts/deploy.sh build-only # 只构建不启动
+#   NO_CACHE=1 sh scripts/deploy.sh # 或追加 --fresh：全量重建（默认复用构建缓存）
 #
 # 前提：NAS 已安装 Docker + Docker Compose（v2：docker compose 子命令）
 # ============================================================
@@ -134,28 +135,65 @@ SRC="$DIR" DATA="$DATA" sh "$DIR/scripts/sync-hotfix.sh" || {
     exit 1
 }
 
-echo "==> [3/5] Docker 构建镜像（BuildKit + --no-cache）"
+echo "==> [3/5] Docker 构建镜像（BuildKit，默认复用缓存）"
 # 2026-11-09 修订：弃用 legacy builder（DOCKER_BUILDKIT=0）。legacy 在 btrfs 上每层一个
 # 子卷，多次构建把缓存池攒到千级后层索引失手（layer does not exist 事故根源），且已发
 # deprecation 警告。BuildKit 的上下文快照按 (mtime,size) 判重，包内 index.html mtime 固定、
 # 体积可能与上一代相同，理论上可能复用旧快照产出坏镜像——所以下方构建后必须做镜像内
 # index.html 的 sha256 比对，坏镜像在这里被当场拦下，不会走到起容器那一步。
+# 构建期 HOME：探针 + 兜底。
+# 群晖账号的 home 常是 /var/services/homes/<user>，目录不存在时 BuildKit 建临时目录就失败，
+# docker build 直接退出、日志只剩 "Building 0.0s (0/0)"。这里真写一次文件做探针——test -w
+# 只查权限位，遇 ACL、只读挂载、配额满、父目录不可穿越都会误判可写。探针失败才把 HOME
+# 切到一次性临时目录，并把 ~/.docker 拷过去，避免私有仓库登录态（config.json）丢失。
+prepare_build_home() {
+    if _probe="$HOME/.deploy-probe.$$" && : >"$_probe" 2>/dev/null && rm -f "$_probe" 2>/dev/null; then
+        return 0
+    fi
+    BUILD_HOME="$(mktemp -d)"
+    if [ -d "$HOME/.docker" ]; then
+        cp -a "$HOME/.docker" "$BUILD_HOME/" 2>/dev/null || true
+    fi
+    export HOME="$BUILD_HOME"
+    # 清理失败不得影响退出码
+    trap 'rm -rf "$BUILD_HOME" 2>/dev/null || true' EXIT INT TERM
+    echo "    构建期 HOME 探针失败，临时切到 $BUILD_HOME（已尝试继承 ~/.docker 登录态）"
+}
+
+# 缓存策略：默认复用缓存（BuildKit 增量最快）；NO_CACHE=1 或 --fresh 才全量重建。
+FRESH=0
+[ "${NO_CACHE:-0}" = "1" ] && FRESH=1
+for a in "$@"; do [ "$a" = "--fresh" ] && FRESH=1; done
+CACHE_FLAG=""
+[ "$FRESH" = "1" ] && CACHE_FLAG="--no-cache"
+
+build_failed() {
+    echo "!! 构建失败。收尾建议：sh scripts/recover.sh build"
+    echo "   （只到构建+校验、不动容器；只诊断不改动用：sh scripts/recover.sh check）"
+}
+
 build_image() {
+    prepare_build_home
+    if [ "$FRESH" = "1" ]; then
+        echo "    --fresh/NO_CACHE=1：全量重建（不复用缓存）"
+    else
+        echo "    复用构建缓存（如需全量：NO_CACHE=1 或 --fresh）"
+    fi
     # 选路：NAS 若没装独立 buildx 插件，DOCKER_BUILDKIT=1 docker build 会报
     # "buildx component is missing"。compose v2 内嵌 buildx 库，不依赖插件。
     # compose build 的上下文快照判重风险由下方 index.html 指纹比对兜底。
     if docker buildx version >/dev/null 2>&1; then
-        DOCKER_BUILDKIT=1 docker build --no-cache --build-arg "GIT_VERSION=$PKG_VER" \
-            -t mybooks-local:latest . || return 1
+        DOCKER_BUILDKIT=1 docker build $CACHE_FLAG --build-arg "GIT_VERSION=$PKG_VER" \
+            -t mybooks-local:latest . || { build_failed; return 1; }
     else
-        docker compose build --no-cache --build-arg "GIT_VERSION=$PKG_VER" || return 1
+        docker compose build $CACHE_FLAG --build-arg "GIT_VERSION=$PKG_VER" || { build_failed; return 1; }
     fi
     host_sha=$(sha256sum app/dist/index.html | awk '{print $1}')
     img_sha=$(docker run --rm mybooks-local:latest sha256sum /var/www/mybooks/app/dist/index.html | awk '{print $1}')
     if [ "$host_sha" != "$img_sha" ]; then
         echo "!! 镜像内 index.html 与包内不一致：$img_sha != $host_sha"
         echo "   （上下文快照复用的典型症状）处理：docker builder prune -f 后重跑本脚本；"
-        echo "    仍不行则 DOCKER_BUILDKIT=0 legacy 兜底一轮"
+        echo "    仍不行跑 sh scripts/recover.sh check 做逐步诊断（不要关闭 BuildKit）"
         return 1
     fi
     echo "==> 镜像内 index.html: $img_sha"

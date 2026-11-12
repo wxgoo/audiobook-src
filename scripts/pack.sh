@@ -33,11 +33,12 @@
 #    少一条 .pnpm 里的文件，链接就全断，阅读器启动即 502。
 #    打包后必须实际数一遍有效链接（本脚本第 4 步）。
 #
-# 3. app/node_modules 默认保留。它是构建期依赖（app/.gitignore 忽略），历史上能跑通的
-#    r26/r27 包都带着它。排除后包会小 60MB 左右，但过去几次「看着没用就删」都出过运行异常，
-#    因此默认不排除；确需瘦身时显式 `--slim`，且产物必须按 docs/真机验证清单.md 真机点检
-#    通过后才允许发布。myreader-dist 下的三层 node_modules（含 app/node_modules 三个链接）
-#    任何模式都不动。
+# 3. app/node_modules 只有构建期需要（Dockerfile 的 npm ci 用它），运行时不读；
+#    打包机没有这个目录时自然不入包，不必为此加排除规则，也不影响运行。
+#    r29 起源码整包（--src）改为只打 git 跟踪文件，app/node_modules 本就被 .gitignore
+#    忽略，因此不会出现；部署包仍保留当前机器上存在的 app/node_modules（见 --slim）。
+#    myreader-dist 的依赖自成闭环（自带 node_modules/.pnpm），由第 4 步断链门禁
+#    （断链必须为 0）保证，与 app/node_modules 有没有无关。
 # ============================================================
 set -euo pipefail
 
@@ -393,6 +394,20 @@ STAGE="$ROOT/.pack-stage.$$"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/audiobook"
 trap 'rm -rf "$STAGE"' EXIT
+if [ "$MODE" = src ]; then
+    # 源码整包：只打 git 跟踪的文件（r29 起）。
+    # 起因：r28 的 src 包混进约 4.3MB 测试生成物（tests/library/、tests/cases/library/、
+    # old.epub/new.epub），都是本机跑 pytest 留下的、被 .gitignore 忽略的残留。
+    # 改成 ls-files 白名单后，被忽略的生成物永远不会入包，也不用维护排除规则。
+    # 需要但未跟踪的例外在这里显式追加（当前没有）。
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+        || { echo "  !! --src 必须在 git 工作树里打（找不到 .git）"; exit 1; }
+    rm -f "$STAGE/.files"
+    git ls-files -z > "$STAGE/.files"
+    ( cd "$ROOT" && tar --null --no-recursion -T "$STAGE/.files" -cf - ) \
+        | ( cd "$STAGE/audiobook" && tar -xf - ) \
+        || { echo "  !! 按 git ls-files 暂存失败"; exit 1; }
+else
 for item in $(ls -A); do
     # 两种模式共同的排除项：版本库、仓库根 node_modules、运行期数据、各类缓存、本脚本的暂存目录
     # 注意：这里只排顶层名字，app/node_modules 不在其中（默认保留，--slim 才删，见下方清理段）
@@ -419,6 +434,8 @@ for item in $(ls -A); do
     tar -cf - "$item" 2>/dev/null | ( cd "$STAGE/audiobook" && tar -xf - ) \
         || { echo "  !! 暂存失败: $item"; exit 1; }
 done
+fi
+rm -f "$STAGE/.files"
 # 暂存自检：关键目录/文件必须进暂存区，否则打出来的包必缺文件（不再静默验到旧包）
 for must in Dockerfile docker-compose.yml app conf scripts update tools myreader-dist; do
     [ -e "$STAGE/audiobook/$must" ] || { echo "  !! 暂存区缺 $must（staging 失败，未进包）"; exit 1; }
