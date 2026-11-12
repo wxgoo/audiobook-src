@@ -4,9 +4,18 @@
 #
 # 用法（仓库根目录）：
 #   bash scripts/pack.sh 4.6.0-build.27-r27  # 推荐：显式传完整修订号（含 -rN）
+#   bash scripts/pack.sh --src 4.6.0-build.27-r27
+#                                        # 打源码整包 audiobook-src-<版本>-full.tar.gz
+#                                        # （与部署包同一套暂存/门禁，仅顶层结构与裁剪不同）
+#   bash scripts/pack.sh --slim 4.6.0-build.27-r27
+#                                        # 瘦身包：排除 app/node_modules（构建期依赖），
+#                                        # 产物名多一个 -slim 后缀，不会覆盖同名正式包。
+#                                        # 默认**不排除**，与历史上能跑通的 r26/r27 包同构。
+#                                        # --slim 产出的包必须先按 docs/真机验证清单.md
+#                                        # 在真机逐项点检通过，才允许用于发布。
 #   bash scripts/pack.sh                 # 不传参时版本号取自 CHANGELOG 首条，只有基础版本
 #                                        # （形如 4.6.0-build.27，缺 -rN，会被清单断言拒绝）
-#   bash scripts/pack.sh --check xxx.tar.gz   # 只验一个已有包，不打包
+#   bash scripts/pack.sh --check xxx.tar.gz   # 只验一个已有包，不打包（自动识别部署包/源码包）
 #
 # 产物：$OUTDIR/audiobook-deploy-<版本>.tar.gz（默认 /workspace 可写则用它，否则 ~/audiobook-out；可用 OUTDIR=... 指定）
 #
@@ -24,8 +33,11 @@
 #    少一条 .pnpm 里的文件，链接就全断，阅读器启动即 502。
 #    打包后必须实际数一遍有效链接（本脚本第 4 步）。
 #
-# 3. app/node_modules 要带上。Dockerfile 里 `COPY app/ /build/` 依赖它，
-#    且 NAS 上 npm ci 极易因网络抖动失败。
+# 3. app/node_modules 默认保留。它是构建期依赖（app/.gitignore 忽略），历史上能跑通的
+#    r26/r27 包都带着它。排除后包会小 60MB 左右，但过去几次「看着没用就删」都出过运行异常，
+#    因此默认不排除；确需瘦身时显式 `--slim`，且产物必须按 docs/真机验证清单.md 真机点检
+#    通过后才允许发布。myreader-dist 下的三层 node_modules（含 app/node_modules 三个链接）
+#    任何模式都不动。
 # ============================================================
 set -euo pipefail
 
@@ -41,6 +53,10 @@ if [ "${1:-}" = "--check" ]; then
         T=$(mktemp -d -p "$(pwd)" 2>/dev/null || mktemp -d)
         trap 'rm -rf "$T"' EXIT
         tar -xzf "$PKG" -C "$T" || { echo "!! 解压失败"; exit 1; }
+        # 包类型自动识别：带 audiobook/ 顶层前缀的是部署包；仓库根即包根的是源码整包。
+        # 两者共用大部分检查，只有「不该有什么」和开发侧裁剪的断言不同。
+        IS_SRC=0
+        [ -d "$T/audiobook" ] || IS_SRC=1
         D="$T/audiobook"
         [ -d "$D" ] || D="$T"      # 允许把已解开的目录打包后再验
         [ -d "$D" ] || { echo "!! 包内没有 audiobook/ 或包根不是目录"; exit 1; }
@@ -56,13 +72,25 @@ if [ "${1:-}" = "--check" ]; then
             [ -e "$D/$f" ] || { echo "  !! 缺 $f"; fail=1; }
         done
 
-        # 不该有的东西：归档、开发侧杂物
-        # 注意：app/node_modules 是要的 —— Dockerfile 里 COPY app/ /build/ 靠它走「已有产物」快路，
-        # 少了它镜像里没有 next，阅读器起不来。别当成杂物排掉。
-        for junk in scripts/archive docs/archive docs/settings-redesign audiobook-src .git skills .claude tests \
-                    .build-trash .pack-stage app/.nuxt; do
-            [ -e "$D/$junk" ] && { echo "  !! 部署包里混入不该下发的内容: $junk"; fail=1; }
+        # 不该有的东西：版本库/构建缓存，两种模式都一样；
+        # 归档、tests、skills、.claude 这些开发侧内容只在部署包里算杂物，源码整包必须保留。
+        # app/node_modules 不在此列：默认就是要保留的（--slim 才排除），见脚本头部说明。
+        # app/.nuxt / app/.next 是构建中间产物，任何模式都不该有。
+        if [ "$IS_SRC" = "1" ]; then
+            junk=".git .build-trash .pack-stage app/.nuxt app/.next"
+        else
+            junk="scripts/archive docs/archive docs/settings-redesign audiobook-src .git skills .claude tests \
+                  .build-trash .pack-stage app/.nuxt app/.next"
+        fi
+        for j in $junk; do
+            [ -e "$D/$j" ] && { echo "  !! 包里混入不该有的内容: $j"; fail=1; }
         done
+        # 只报数、不判失败：保留与排除都是合法口径，取决于打包时是否加了 --slim
+        if [ -d "$D/app/node_modules" ]; then
+            echo "  app/node_modules: 在包内（$(find "$D/app/node_modules" \( -type f -o -type l \) | wc -l | tr -d ' ') 条，非瘦身包）"
+        else
+            echo "  app/node_modules: 不在包内（--slim 瘦身包）"
+        fi
 
         # 换行纪律（fix2 事故防复发，2026-11-07）：容器/宿主要执行的文本必须 LF。
         # CRLF 进镜像后 start.sh 的 shebang 变成 "#!/bin/sh\r" → exec 报 no such file。
@@ -174,6 +202,9 @@ if [ "${1:-}" = "--check" ]; then
             echo "  基线: 无（首次跑 watch-upstream.py --baseline 时自动生成，不影响使用）"
         fi
 
+        # 下面两条是部署包专属断言：源码整包保留仓库原貌，srt-tool/tools 的开发侧文件
+        # 本来就该在（要打包成 exe、要抓书源），不能按部署包口径判它「混入」。
+        if [ "$IS_SRC" = "0" ]; then
         # srt-tool 只该留运行必需的 4 个文件 —— 打包脚本漏排会立刻在这里暴露
         # 注意：不能用 `var=$(...)` 收集，set -e 下 ls 找不到文件会让整个脚本静默退出
         st_junk=""
@@ -200,6 +231,7 @@ if [ "${1:-}" = "--check" ]; then
             echo "     （包内只该留 5 个运维脚本，见 docs/部署包说明.md）"
             fail=1
         fi
+        fi   # IS_SRC=0（部署包专属断言结束）
 
         # 版本锁：运行期版本 4.6.0-20 不得被回退（写回 4.8.x）、写成裸 4.6.0、
         # 或被交付标签/构建参数覆盖（防反弹保护；失败信息由脚本自己打印，说明补救方法）
@@ -221,6 +253,22 @@ if [ "${1:-}" = "--check" ]; then
     exit 0
 fi
 
+# ---------- 模式 ----------
+# 默认 deploy；--src 打源码整包。两者共用同一套暂存/清理/门禁，只有三处不同：
+#   1) 产物命名与顶层结构；2) 不裁开发侧目录（tools/tests/skills/.claude/归档）；
+#   3) 不覆盖 update/manifest.json（源码包要仓库原貌，不是发布清单）。
+# --slim 是独立的瘦身开关（两种模式都可用），默认关闭：不带它时保留 app/node_modules，
+# 产出与历史上能跑通的 r26/r27 包同构。
+MODE=deploy
+SLIM=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --src)  MODE=src; shift ;;
+        --slim) SLIM=1;   shift ;;
+        *) break ;;
+    esac
+done
+
 # ---------- 确定版本号 ----------
 VER="${1:-}"
 if [ -z "$VER" ]; then
@@ -237,7 +285,15 @@ fi
 REPRO_MTIME=$(git log -1 --format=%ct 2>/dev/null)
 [ -n "$REPRO_MTIME" ] || REPRO_MTIME=1700000000   # 不在 git 仓库里时的兜底
 
-NAME="audiobook-deploy-$VER"
+if [ "$MODE" = src ]; then
+    NAME="audiobook-src-$VER-full"
+    PFX=""                     # 源码整包：仓库根即包根
+else
+    NAME="audiobook-deploy-$VER"
+    PFX="audiobook/"           # 部署包：统一收在 audiobook/ 下
+fi
+# 瘦身包单独命名，避免一次 --slim 试跑就覆盖掉同名正式包
+[ "$SLIM" = "1" ] && NAME="$NAME-slim"
 # 输出目录：显式 OUTDIR 优先；否则用可写的 /workspace（构建机常见），
 # 普通用户在家目录下跑时 /workspace 建不出来（根目录不可写），退回 ~/audiobook-out。
 if [ -n "${OUTDIR:-}" ]; then
@@ -338,15 +394,13 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/audiobook"
 trap 'rm -rf "$STAGE"' EXIT
 for item in $(ls -A); do
+    # 两种模式共同的排除项：版本库、仓库根 node_modules、运行期数据、各类缓存、本脚本的暂存目录
+    # 注意：这里只排顶层名字，app/node_modules 不在其中（默认保留，--slim 才删，见下方清理段）
     case "$item" in
-        # 版本库与开发侧杂物
-        .git|.claude|node_modules|cache|sync|books|data|__pycache__|logs) continue ;;
+        .git|node_modules|cache|sync|books|data|__pycache__|logs) continue ;;
         # app/build.sh 的构建归档目录：它把旧的 .nuxt / dist 改名挪到这里（rename 不删除），
         # 一份能到 40M 以上。属于本机构建垃圾，混进包里既撑大体积又让人以为要部署它。
         .build-trash) continue ;;
-        # skills/ 是给 AI 客户端（clawdbot / openclaw）加载的 skill 包，走 HTTP API
-        # 操作书库，不是服务端依赖。NAS 上用不到，要用的在 PC 上装。
-        skills) continue ;;
         # pytest 缓存在仓库根也会生成（在 srt-tool/ 里跑测试时 rootdir 会往上找到仓库根）
         .pytest_cache) continue ;;
         # 误提交的嵌套仓库条目（历史上 clone 自己的残留），空目录，无内容
@@ -354,6 +408,14 @@ for item in $(ls -A); do
         # 本脚本自己建的暂存目录，不能递归进包
         .pack-stage*) continue ;;
     esac
+    # 仅部署包排除的开发侧目录，源码整包要保留（它们是仓库的一部分）
+    if [ "$MODE" = deploy ]; then
+        case "$item" in
+            # skills/ 是给 AI 客户端（clawdbot / openclaw）加载的 skill 包，走 HTTP API
+            # 操作书库，不是服务端依赖。NAS 上用不到，要用的在 PC 上装。
+            .claude|skills) continue ;;
+        esac
+    fi
     tar -cf - "$item" 2>/dev/null | ( cd "$STAGE/audiobook" && tar -xf - ) \
         || { echo "  !! 暂存失败: $item"; exit 1; }
 done
@@ -363,6 +425,8 @@ for must in Dockerfile docker-compose.yml app conf scripts update tools myreader
 done
 echo "  暂存 OK: $(ls "$STAGE/audiobook" | tr '\n' ' ')"
 
+# 以下裁剪只针对部署包；源码整包（--src）保留仓库原貌。
+if [ "$MODE" = deploy ]; then
 # 归档目录不进部署包：它们是历史记录（v9 那趟的一次性脚本、旧版操作手册、
 # 设计稿截图），NAS 上用不到，只会让包变大、让人分不清哪个脚本该跑。
 # 仓库里保留，随时可查。
@@ -371,16 +435,6 @@ echo "  暂存 OK: $(ls "$STAGE/audiobook" | tr '\n' ' ')"
 for junk in scripts/archive docs/archive docs/settings-redesign tests; do
     [ -e "$STAGE/audiobook/$junk" ] && rm -rf "$STAGE/audiobook/$junk"
 done
-
-# app/.nuxt 是 nuxt generate 的中间缓存（构建后可达上百 MB），部署只用 app/dist。
-# Dockerfile 走「已有 dist 就跳过 npm ci/generate」的快路，不读 .nuxt，带上纯属负担。
-rm -rf "$STAGE/audiobook/app/.nuxt"
-
-# app/node_modules 是构建期依赖（被 app/.gitignore 忽略，本就不进仓库），部署包用不到：
-# Dockerfile 见到 app/dist 就走快路、不跑 npm ci/generate。参与过前端构建的机器上它必然存在，
-# 若不清掉，包会凭空多出约 25.6 万个成员 / 256MB（未压缩），且体积随机器而变——
-# 同一提交打出 149MB 与 221MB 两种包的实测差异，来源就是它，不是 app/dist 缺文件。
-rm -rf "$STAGE/audiobook/app/node_modules" "$STAGE/audiobook/app/.next"
 
 # srt-tool 是 PC 上的辅助工具，NAS 上既跑不了也不该跑。包内只留能直接运行的
 # 4 个文件（README / make_srt.py / srt_core.py / make_srt_gui.py）：
@@ -409,6 +463,28 @@ for f in "$STAGE/audiobook/tools"/* "$STAGE/audiobook/tools"/.[!.]*; do
     rm -rf "$f"
 done
 echo "  tools/ 只留运维脚本: $(ls "$STAGE/audiobook/tools" | tr '\n' ' ')"
+fi
+
+# app/.nuxt / app/.next 是 nuxt generate 的中间产物与 Next 构建缓存，任何模式都不进包：
+# 部署只用 app/dist，Dockerfile 见到 dist 就走「跳过 npm ci/generate」的快路。
+# 注意：这两个目录被排除不影响 --check（它只认 app/dist）与首屏（首屏只读 dist 静态文件）。
+rm -rf "$STAGE/audiobook/app/.nuxt" "$STAGE/audiobook/app/.next"
+
+# app/node_modules 默认**保留**（与历史上能跑通的 r26/r27 包同构）。过去几次按「看着没用」
+# 删除都出现过运行异常，因此把排除收紧成显式开关：只有 --slim 才删。
+# 瘦身包必须先按 docs/真机验证清单.md 在真机逐项点检通过，才允许用于发布。
+# myreader-dist 下的三层 node_modules（含 app/node_modules 的 next/react/react-dom 三个
+# 相对符号链接）任何模式都不动 —— 它们是 MyReader 运行期的解析路径，不靠推理判断。
+if [ "$SLIM" = "1" ]; then
+    rm -rf "$STAGE/audiobook/app/node_modules"
+    echo "  --slim：已排除 app/node_modules（瘦身包，发布前须真机验证）"
+else
+    if [ -d "$STAGE/audiobook/app/node_modules" ]; then
+        echo "  app/node_modules 保留（默认行为）：$(find "$STAGE/audiobook/app/node_modules" \( -type f -o -type l \) | wc -l | tr -d ' ') 条"
+    else
+        echo "  app/node_modules 不存在（该构建机未装前端依赖），包内自然没有"
+    fi
+fi
 
 # __pycache__ 同理：开发时跑过脚本就会留下，5MB 左右，NAS 上纯占地方。
 # 镜像构建本来就从 .dockerignore 排掉它，部署包里更不该有。
@@ -421,12 +497,13 @@ find "$STAGE/audiobook" -name '.pytest_cache' -type d -prune -exec rm -rf {} + 2
 find "$STAGE/audiobook" \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null
 echo "  已清掉 __pycache__ / .pytest_cache / *.pyc（开发残留）"
 
-# ---------- 同步远端发布清单（必须在暂存之后、归档之前） ----------
+# ---------- 同步远端发布清单（必须在暂存之后、归档之前；仅部署包） ----------
 # 分工：`update/manifest.json` 由 workbuddy 在 Gitee 上生成并提交，容器只认远端那份；
 # 本仓库的 update/manifest.json 往往落后（r27 这次就停在 r26/r21），照它出包会让页面
 # 装完仍报「有新版本」。所以出包前用远端 raw 那份覆盖包内清单。
 # 与 webserver/services/version_check.py 读的是同一路径（公开仓库，无需令牌）。
 # 失败不阻断：回退基线清单并显式告警，绝不静默通过。
+if [ "$MODE" = deploy ]; then
 echo "==> [3b/4] 同步远端发布清单"
 MANIFEST_URL="${MANIFEST_URL:-https://gitee.com/wxgoo/audiobook-src/raw/master/update/manifest.json}"
 MF_TMP="$STAGE/.manifest.remote.json"
@@ -468,10 +545,17 @@ else
     echo "     本次包内清单沿用基线版本: revision=$(mf_get "$STAGE/audiobook/update/manifest.json" revision) —— 页面可能误报新版本"
 fi
 rm -f "$MF_TMP"
+fi
 
 
 mkdir -p "$OUTDIR" 2>/dev/null || { echo "  !! 无法创建输出目录: $OUTDIR（用 OUTDIR=<可写目录> 重跑）"; exit 1; }
-( cd "$STAGE" && tar $TAR_OPTS -cf - audiobook | gzip -n > "$OUT" )
+if [ "$MODE" = src ]; then
+    # 源码整包：以仓库根为包根（成员不带 audiobook/ 前缀）
+    ( cd "$STAGE/audiobook" && tar $TAR_OPTS -cf - $(ls -A) | gzip -n > "$OUT" )
+else
+    # 部署包：cd 到暂存父目录对目录名打包，不用 --transform（会改坏符号链接目标）
+    ( cd "$STAGE" && tar $TAR_OPTS -cf - audiobook | gzip -n > "$OUT" )
+fi
 # pipefail 已保证 tar 失败即退出；再确认产物非空，避免验到上一次遗留的坏包
 [ -s "$OUT" ] || { echo "  !! 打包产物为空，tar 可能失败"; exit 1; }
 echo "  产物: $OUT"
@@ -488,19 +572,19 @@ LIST="$STAGE/.pkg.list"
 tar -tzf "$OUT" > "$LIST" || gate_bad "无法读取包内成员清单"
 grep -v '/$' "$LIST" > "$LIST.f" || true
 
-DIST_FILES=$(grep -c '^audiobook/app/dist/' "$LIST.f" || true)
+DIST_FILES=$(grep -c "^${PFX}app/dist/" "$LIST.f" || true)
 [ "$DIST_FILES" = "757" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 757）"
 
-DIST_IDX=$(tar -xzOf "$OUT" audiobook/app/dist/index.html 2>/dev/null | sha256sum | cut -d' ' -f1)
-[ "$DIST_IDX" = "b7c49b20c2e9042538dcdd9038e0c43557a18d7449922e159569e8ee509a1ebc" ] \
-    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 b7c49b20c2e9…）"
+DIST_IDX=$(tar -xzOf "$OUT" "${PFX}app/dist/index.html" 2>/dev/null | sha256sum | cut -d' ' -f1)
+[ "$DIST_IDX" = "18bf92faf74db69d6f9b359f2364c763d52764162f6936a23656843d4f5e7965" ] \
+    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 18bf92fa…，4914 字节）"
 
-grep -qx 'audiobook/app/dist/static/pdfjs/web/viewer.html' "$LIST" \
+grep -qx "${PFX}app/dist/static/pdfjs/web/viewer.html" "$LIST" \
     || gate_bad "包内缺 app/dist/static/pdfjs/web/viewer.html"
 
 PKG_FILES=$(wc -l < "$LIST.f" | tr -d ' ')
-if grep -qx 'audiobook/MANIFEST' "$LIST"; then
-    MF_FILES=$(tar -xzOf "$OUT" audiobook/MANIFEST | sed -n 's/^files[: ]*//p' | head -1)
+if grep -qx "${PFX}MANIFEST" "$LIST"; then
+    MF_FILES=$(tar -xzOf "$OUT" "${PFX}MANIFEST" | sed -n 's/^files[: ]*//p' | head -1)
     [ "${MF_FILES:-}" = "$PKG_FILES" ] \
         || gate_bad "包内 MANIFEST 记 $MF_FILES 个成员，实际 $PKG_FILES 个"
 else
@@ -516,7 +600,7 @@ if [ "$gate_fail" != "0" ]; then
     rm -f "$OUT"
     exit 1
 fi
-echo "  门禁 OK：app/dist $DIST_FILES 个文件，index.html b7c49b20…，pdfjs viewer 在包内，成员共 $PKG_FILES 个"
+echo "  门禁 OK：app/dist $DIST_FILES 个文件，index.html 18bf92fa…（4914 字节），pdfjs viewer 在包内，成员共 $PKG_FILES 个"
 
 # ---------- 验包 ----------
 echo "==> [4/4] 验包"
