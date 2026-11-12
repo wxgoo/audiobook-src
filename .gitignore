@@ -99,3 +99,32 @@ node_modules/
 
 # 跑 webserver/test/test_download_amazon_cover.py 会写出来的产物（那个脚本是手工试验，不是 pytest 用例）
 amazon_cover.jpg
+
+# ============================================================
+# 例外：tests/cases/library/ + tests/cases/users.db 是集成测试的 calibre 库夹具。
+# 由 tests/make_fixtures.py --force 生成（13 本书，精确对上 test_main.py 里
+# 写死的 13 本 / 72 标签 / 15 作者 / 7 系列 / 10 出版社 / 2 个评分桶），
+# 整个目录约 0.7 MB，users.db 约 0.3 MB。
+#
+# 为什么必须入库：test_main.setup_server() 要把这个库目录整份复制到
+# tests/library/ 再启动整站；缺了它就是 200+ 个 FileNotFoundError。
+# 而上面的 *.db / *.epub / *.pdf 通配规则会把它整份挡掉。
+#
+# 只放开这一条精确路径，不放开 *.db 通配；tests/library/（运行期副本）
+# 仍然由 tests/.gitignore 挡住。
+# 验证：git status --short --ignored tests/cases   # 期望：无 !! 输出
+# ============================================================
+!tests/cases/library/
+!tests/cases/library/**
+!tests/cases/users.db
+# old.epub / new.epub 不入库：是新版 7.5 MB 的真实出版物，涉版权且会让仓库永久变大。
+# 跑 tests/make_fixtures.py 会在本地生成；依赖它们的用例在缺件时 skip，
+# 需要时自备 tests/cases/old.epub、tests/cases/new.epub（见 docs/待修复项.md）。
+# 其余夹具按用户决定一并入库（体积大不要紧）：
+#   metadata.db        413,696 B   calibre 库（13 本），test_main 在 cases/library
+#                                  不存在时回退用它
+#   big-metadata.db 38,601,728 B   calibre 库（24,835 本），大库/性能类用例
+#   title_has_0x00.pdf 7,747,492 B 书名含 0x00 的 PDF 用例
+!tests/cases/metadata.db
+!tests/cases/big-metadata.db
+!tests/cases/title_has_0x00.pdf
