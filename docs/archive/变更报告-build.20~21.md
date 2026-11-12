@@ -1,4 +1,8 @@
-# 变更报告：`4.6.0-19-r13` → `4.6.0-build.20`
+# 变更报告：build.20 / build.21（历史归档）
+
+> 由 `变更报告-4.6.0-build.20.md` 与 `变更报告-4.6.0-build.21.md` 合并，正文未删改。
+
+## 变更报告：`4.6.0-19-r13` → `4.6.0-build.20`
 
 > 对比基线：`4.6.0-19-r13`（旧部署包 `audiobook-deploy-4.6.0-19-r13-patched.tar.gz` 对应的源码状态，
 > 即本 fork 的初始提交 `32bc1d4`）。
@@ -7,7 +11,7 @@
 
 ---
 
-## 一、版本关系
+### 一、版本关系
 
 | 项 | 取值 | 说明 |
 |---|---|---|
@@ -30,7 +34,7 @@
 
 ---
 
-## 二、变更总览
+### 二、变更总览
 
 | 范围 | 文件数 | 新增行 | 删除行 |
 |---|---:|---:|---:|
@@ -60,11 +64,11 @@
 
 ---
 
-## 三、逐项变更
+### 三、逐项变更
 
 每项都给出「改了什么 / 为什么 / 影响面 / 如何回退」。回退命令均以本仓库提交号为准。
 
-### 1. 数据备份与恢复闭环（P0，`182a524`）
+#### 1. 数据备份与恢复闭环（P0，`182a524`）
 
 - **改了什么**：新增 `scripts/backup.sh`（单入口）与 `scripts/backup_run.py`（仅标准库）：
   SQLite 在线备份 API、文件硬链接快照、日/周/月三层保留、`manifest` + sha256 + `integrity_check`，
@@ -73,7 +77,7 @@
 - **影响面**：纯新增脚本，不进入运行时请求链路；不改表结构、不改配置字段。
 - **回退**：删除 `scripts/backup*.{sh,py}` 与对应文档即可，无数据影响。
 
-### 2. MCP token 改走 Authorization 头（P1-1，`f15b515`）
+#### 2. MCP token 改走 Authorization 头（P1-1，`f15b515`）
 
 - **改了什么**：`handlers/mcp.py` 等只从 `Authorization: Bearer` 取 token；URL 带 token 默认 403
   （`ALLOW_MCP_TOKEN_IN_URL` 可临时兼容）；日志递归脱敏；`assistant/mcp_client.py` 同步改 Header。
@@ -81,14 +85,14 @@
 - **影响面**：**不兼容变更** —— 旧 MCP 客户端若仍把 token 放 URL 会收到 403。
 - **回退**：`git revert f15b515`；或临时设 `ALLOW_MCP_TOKEN_IN_URL=true` 兼容旧客户端（不推荐长期开）。
 
-### 3. AI WebSocket 同源校验（P1-2，`5353d5e`）
+#### 3. AI WebSocket 同源校验（P1-2，`5353d5e`）
 
 - **改了什么**：`handlers/assistant.py` 的 `check_origin` 改为同源比对（`is_same_host_origin`）。
 - **为什么**：原逻辑放任跨站页面建立 WS 会话（CSWSH）。
 - **影响面**：反向代理改写 `Host`/`Origin` 的部署需保证两者一致，否则 WS 握手失败。
 - **回退**：`git revert 5353d5e`。
 
-### 4. 音频缓存移出请求线程 / Range 异步 / 标志增量（P1-3、P1-4，`20647d4`、`3c0fded`、`20aad04`）
+#### 4. 音频缓存移出请求线程 / Range 异步 / 标志增量（P1-3、P1-4，`20647d4`、`3c0fded`、`20aad04`）
 
 - **改了什么**：`handlers/audio.py` 三处：
   1. 音频书籍缓存改为单飞后台刷新 + 兜底周期 + 启动预热，不再在请求线程读盘；
@@ -98,14 +102,14 @@
 - **影响面**：**行为变化** —— 新建/导入音频后，标志最多滞后一个扫描周期才在列表生效。
 - **回退**：按提交逐个 `git revert`（三处互相独立，可单独回退）。
 
-### 5. 详情页音频目录改用 calibre 解析（`f1f5955`）
+#### 5. 详情页音频目录改用 calibre 解析（`f1f5955`）
 
 - **改了什么**：`handlers/book.py`、`services/audios_import.py` 的音频目录由 calibre 解析，不再全库遍历。
 - **为什么**：详情页每次全库扫描，书多时明显卡顿。
 - **影响面**：依赖 calibre 元数据一致性；极少数元数据与实际目录不符的老库可能显示为空。
 - **回退**：`git revert f1f5955`。
 
-### 6. 中文书目检索索引（FTS5，`47cdc73`）
+#### 6. 中文书目检索索引（FTS5，`47cdc73`）
 
 - **改了什么**：新增 `webserver/services/search_index.py`（独立 DB 的 FTS5 索引、重建与增量）、
   `webserver/handlers/search_index.py`（HTTP 接口）、`scripts/search_index.py`（命令行）。
@@ -113,7 +117,7 @@
 - **影响面**：新增独立索引库文件；**首次使用需重建一次**，否则检索结果为空。
 - **回退**：`git revert 47cdc73`；索引库为独立文件，可直接删除，不影响主库。
 
-### 7. 游标分页（`11126be`）
+#### 7. 游标分页（`11126be`）
 
 - **改了什么**：新增 `webserver/base/pagination.py`；书目与有声书列表支持 `after` 游标；
   `handlers/base.py` 输出适配。
@@ -121,21 +125,21 @@
 - **影响面**：**接口契约变化** —— 前端/第三方分页需按 `after` 游标适配；不传则维持原行为。
 - **回退**：`git revert 11126be`。
 
-### 8. 导入攒批窗口可配置（`bd62261`）
+#### 8. 导入攒批窗口可配置（`bd62261`）
 
 - **改了什么**：`services/audios_import.py` 的 Phase2 攒批窗口改为配置项。
 - **为什么**：大批量导入时固定窗口导致耗时过长。
 - **影响面**：仅影响导入吞吐；明确单写者一致性约束（不要并发跑两个导入）。
 - **回退**：`git revert bd62261`。
 
-### 9. 失败任务可读错误与重试提示（`f58dba6`）
+#### 9. 失败任务可读错误与重试提示（`f58dba6`）
 
 - **改了什么**：`handlers/mcp.py`、`main.py`、`services/background_service.py` 给失败任务返回可读原因与重试提示。
 - **为什么**：失败只显示堆栈，用户无法自助处理。
 - **影响面**：仅提示文案与任务状态字段，无 schema 变更。
 - **回退**：`git revert f58dba6`。
 
-### 10. 上游跟进主题包（`2d4050d`）
+#### 10. 上游跟进主题包（`2d4050d`）
 
 - **改了什么**：新增 `docs/上游跟进/`（A 安全与元数据、B 扫描与导入、C 音频与播放、D 功能与权限）
   与 `scripts/upstream/patch_tool.py`。
@@ -143,7 +147,7 @@
 - **影响面**：纯文档 + 导出工具，不进入运行时。
 - **回退**：删除对应目录/脚本。
 
-### 11. NAS 交付与无 git 覆盖包（`b77fb64`、`bff41d9`）
+#### 11. NAS 交付与无 git 覆盖包（`b77fb64`、`bff41d9`）
 
 - **改了什么**：新增 `delivery/`（`nas/00`–`90`、`paths.conf`、`README-NAS.md`）、无 git 覆盖包
   `overlay/`（34 个改动文件 + 基线 sha256 清单）、`patches/`（14 个主题补丁）与自包含发布包。
@@ -151,7 +155,7 @@
 - **影响面**：不进入镜像；`60-apply-overlay.sh` 会先校验基线再覆盖、失败自动回滚。
 - **回退**：删除 `delivery/`；已覆盖的服务器按 `60-apply-overlay.sh` 的备份目录回滚。
 
-### 12. 版本号统一与版本锁（`129e19c`、`569bc3b`，本轮）
+#### 12. 版本号统一与版本锁（`129e19c`、`569bc3b`，本轮）
 
 - **改了什么**：
   - `webserver/version.py`、`app/package.json`、`app/package-lock.json`、`docker-compose.yml` 的
@@ -167,7 +171,7 @@
 
 ---
 
-## 四、风险与不兼容变更
+### 四、风险与不兼容变更
 
 | 级别 | 项 | 影响 | 应对 |
 |---|---|---|---|
@@ -184,9 +188,9 @@
 
 ---
 
-## 五、升级步骤与验证方法
+### 五、升级步骤与验证方法
 
-### 升级顺序（NAS / DSM，无外网可用 `delivery/`）
+#### 升级顺序（NAS / DSM，无外网可用 `delivery/`）
 
 1. **备份**：`scripts/backup.sh`（或 `delivery/nas/20-backup-full.sh`），确认退出码 0；
    再跑 `delivery/nas/30-verify-backup.sh` 校验。
@@ -197,7 +201,7 @@
 5. **重建检索索引**（首次升级必须）：`python3 scripts/search_index.py --rebuild`。
 6. **重启后自检**：`delivery/nas/70-check-image.sh`（核对镜像/容器内源码与预期一致）。
 
-### 验证命令与判据
+#### 验证命令与判据
 
 | 检查 | 命令 | 通过判据 |
 |---|---|---|
@@ -215,7 +219,7 @@
 
 ---
 
-## 六、已知限制
+### 六、已知限制
 
 1. **Windows 开发机缺 calibre 依赖**：部分集成用例（扫描/导入/元数据）会被 skip，
    必须在容器或 CI 里跑完整 `pytest`。
@@ -227,7 +231,7 @@
 
 ---
 
-## 七、附录：变更文件清单（不含 `delivery/` 副本）
+### 七、附录：变更文件清单（不含 `delivery/` 副本）
 
 | 文件 | 模块 | 新增 | 删除 |
 |---|---|---:|---:|
@@ -283,3 +287,105 @@
 | `webserver/handlers/audio.py` | 音频与性能 | +172 | -74 |
 
 > 合计：50 个文件，+4,512 / -132 行（delivery/ 下另有 73 个交付副本/补丁/压缩包，未计入）。
+
+
+---
+
+## 变更报告：`4.6.0-build.20` → `4.6.0-build.21`
+
+> 对比基线：build.20（发布提交 `5348bf3`）。
+> 对比终点：build.21（本版本提交）。统计口径：`git diff 5348bf3..HEAD`。
+> 上游基线不变：mybooks tag `4.6.0`（本轮未合入上游新代码）。
+
+---
+
+### 一、版本关系
+
+| 项 | 取值 |
+|---|---|
+| 旧版本 | `4.6.0-build.20` |
+| 新版本 | `4.6.0-build.21`（第 21 次本地构建，运行期版本与交付标签同值） |
+| 版本锁 | 七处载体同步升号：`version.py`、`docker-compose.yml`、`Dockerfile ARG`、`app/package.json`、`package-lock.json`、`Makefile VERSION_LOCK`、`check-version-lock.py`（校验器常量与文案）；`tests/test_version_lock.py` 9 用例通过 |
+
+版本号约束不变：整串相等比较、不参与升级门控、不与 `4.6.0` 比大小（详见 CHANGELOG 号段说明）。
+
+---
+
+### 二、变更总览（6 个提交）
+
+| 主题 | 提交 | 内容 |
+|---|---|---|
+| 检索 FTS 挪出事件循环 | `6926057` / `503e9fb` | `cached_search_async` 的 `search()`（MATCH + 纯 Python 子串过滤，大库宽查询可达秒级）挪进 blocking_pool；`_connect_read` 每次新建只读连接，线程池执行安全 |
+| 有声书缓存测试竞态 | `6926057` / `da52091` | 假扫描改为 Event 闸门，「过期读立即返回旧值」从猜运气变确定性验证（部分机器原版 5/5 必红） |
+| 音频缓存标记补齐 | `36d3e71` | `scan_service._sync_sidecar_audio`（扫描导入混放/分季子目录）与 `book_dedup._move_audio`（重复书合并搬音频）补 `mark_has_audio/mark_no_audio`——原来新书最长 6 小时兜底扫描才进有声书列表，合并后被删书还挂在列表里 |
+| 备份 fail-closed ×3 | `bec66b6` | ①快照内任一文件复制失败 → 整份快照判失败并清理（原实现只记 warning 退码 2，残缺快照被保留策略当最新一份保护）；②重跑同一 `--timestamp` 不再 rmtree 已存在旧快照；③manifest 原子写（tmp+fsync+replace），失败清理本次产物退码 3；顺带清掉在线备份失败后的半截目标 db |
+| 版本锁升号 | 本提交 | 七处载体 + `tests/test_version_lock.py` 字面量同步 |
+
+两人平行修复说明：`6926057` 与 `da52091`/`503e9fb` 是同两处问题的独立修复，
+后者 stacked 在前者之上做等价改写（注释更完整，已采纳），无功能叠加。
+
+---
+
+### 三、风险与不兼容变更
+
+| 级别 | 项 | 说明 |
+|---|---|---|
+| 中 | **需要重建镜像** | `version.py` 进镜像，旧镜像仍显示 build.20 |
+| 低 | 备份脚本行为变化 | 退出码 2 语义收窄为「仅轻微软性提示」；快照不完整一律退码 3 并清理。已有 cron 若按 `RC>=3` 告警，语义更严格（更安全） |
+| 低 | 有声书列表实时性提升 | 新导入音频即时出现在列表（原来最长等 6 小时兜底），无副作用 |
+| 无 | 数据库 schema | 本轮零 schema 变更；`audio_playback.client_ts` 等此前已由启动补列覆盖 |
+
+#### 追记二（设置页归堆 + 提示人性化，`0fb7b52`）
+
+- **用户与访问组重新归堆**：访问权限 / 默认权限与配额 / 读者组三张分散卡
+  合并为「访问控制与读者组」一张卡（门槛→访客→读者组一条权限链）；
+  注册邀请 + 新用户默认权限 + 下载配额合并为「注册、邀请与新用户」。
+  键集不变，保存/脏跟踪/搜索别名机制照旧。
+- **作者归一化提示人性化**：两处「改存量书请用作者清理」补位置说明
+  （工具箱 → 作者清理）并加直达按钮；全库扫描确认无同类残留。
+
+---
+
+### 四、升级步骤与验证
+
+- **版本改版工具化**（`20d43ce`）：`check-version-lock.py --set 4.6.0-build.<N>`
+  一条命令改写全部九处载体（CARRIERS 表登记、预期次数不符拒绝盲改、改完立即
+  复检）；`WHY/SEMVER_NOTE` 提示文案函数化（从 VERSION_LOCK 派生）。往返冒烟
+  build.21→22→21 全绿。起因：build.21 升号时手工改七处载体，漏了 Dockerfile
+  与校验器常量，被校验器连抓两次——「记得改 N 处」变成「跑一条命令」。
+- **backup.sh 退出码拆分**（`20d43ce`）：被跳过（锁占用/锁不可用）从 2 拆出为
+  独立的 **4**——原来与「有告警」同码，监控只盯 `>=3` 会把连续跳过当成正常；
+  cron 告警条件建议改为 `RC != 0`（演练文档表已同步）。配合已交付的三个
+  fail-closed 修复，backup.sh 可以放心挂无人值守 cron。
+
+---
+
+### 四、升级步骤与验证
+
+1. 备份：`scripts/backup.sh`（或 `delivery/nas/20-backup-full.sh`），确认退码 0。
+2. 取源码：`git fetch && git merge --ff-only origin/master`（或解压本包）。
+3. 版本锁：`python3 scripts/check-version-lock.py` → 必须通过。
+4. 重建镜像：`make`（`VER` 缺省即 `4.6.0-build.21`）。
+5. 重启后核对：`docker exec <容器> grep VERSION /var/www/mybooks/webserver/version.py` 含 `4.6.0-build.21`；`GET /api/siteinfo` 同值。
+
+#### 功能抽查建议
+
+| 检查 | 判据 |
+|---|---|
+| 大库搜索 | 搜索期间另开页面刷 `/api/user/info` 不再卡顿 |
+| 有声书列表 | 扫描导入 epub+mp3 混放目录后，书**立即**出现在 /api/audiobooks |
+| 备份演练 | 跑 `backup.sh` 成功退码 0；再跑一次同时间戳退码 3 且旧快照完好 |
+| 备份故障注入 | 临时塞满备份盘再跑：退码 3、无残缺快照残留、无 .tmp 清单 |
+
+失败判据：版本锁 exit≠0；容器内版本不符；备份成功路径退码非 0。
+
+---
+
+### 五、已知限制
+
+1. `delivery/patches/01–14`（主题补丁）保留 build.20 状态，**未随 build.21 重新切分**；
+   build.21 增量统一收录在 `patches/all-in-one.patch` 与 `delivery/overlay/`
+   （overlay 是无 git 部署的权威路径，已重新生成并逐文件校验哈希）。
+2. Windows 开发机缺 calibre：部分集成用例 skip，完整 `pytest` 需在容器/CI 跑。
+3. `pack.sh --check` 的符号链接校验需在 Linux/DSM 上执行；Windows 侧打包
+   （python tarfile 流式重建）已另行验证符号链接原样保留。

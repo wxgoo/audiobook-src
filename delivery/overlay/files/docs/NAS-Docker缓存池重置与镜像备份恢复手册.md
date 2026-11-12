@@ -390,14 +390,14 @@ cd /volume1/docker/audiobook && sh scripts/deploy.sh
 
 | 文档 | 看什么 |
 |---|---|
-| `docs/部署包说明.md` | 完整部署、验收、dist 指纹表、历次修订摘要 |
+| `docs/README.md` | 全部文档的分类索引（先从这里找） |
+| `docs/部署包说明.md` | 完整部署、验收、dist 指纹表（逐版记录见 `docs/archive/部署包版本记录-2026-11.md`） |
 | `docs/在线更新说明.md` | 版本检测、分级更新、回滚、防倒退、发布新修订 |
 | `docs/NAS-Docker缓存池重置与镜像备份恢复手册.md` | 本手册（缓存池事故、镜像备份、文档索引） |
 | `CHANGELOG.md` | 全部修订的变更明细 |
 | `README.md` | 快速开始与构建口径（已改为 BuildKit + 脚本部署） |
 | `update/README.md` | 发布清单字段、生成命令 |
-| `docs/备份与恢复演练.md` | 备份范围、恢复演练、RPO/RTO（构建口径已同步） |
-| `docs/NAS备份演练清单.md` | NAS 上可直接照抄的备份命令与判定 |
+| `docs/备份与恢复演练.md` | 备份范围、恢复演练、RPO/RTO、NAS 演练清单（原 `交付/NAS备份演练清单.md` 已并入） |
 | `交付说明-4.6.0-build.27-r27.md` | 本次交付摘要、sha256、重新部署命令（交付目录） |
 
 ### 历史 / 归档，命令不要照抄
