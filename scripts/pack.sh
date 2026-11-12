@@ -8,7 +8,7 @@
 #                                        # （形如 4.6.0-build.27，缺 -rN，会被清单断言拒绝）
 #   bash scripts/pack.sh --check xxx.tar.gz   # 只验一个已有包，不打包
 #
-# 产物：/workspace/audiobook-deploy-<版本>.tar.gz（或在当前目录）
+# 产物：$OUTDIR/audiobook-deploy-<版本>.tar.gz（默认 /workspace 可写则用它，否则 ~/audiobook-out；可用 OUTDIR=... 指定）
 #
 # ------------------------------------------------------------
 # 为什么不能简单地 tar -czf 一下
@@ -238,7 +238,15 @@ REPRO_MTIME=$(git log -1 --format=%ct 2>/dev/null)
 [ -n "$REPRO_MTIME" ] || REPRO_MTIME=1700000000   # 不在 git 仓库里时的兜底
 
 NAME="audiobook-deploy-$VER"
-OUTDIR="${OUTDIR:-/workspace}"
+# 输出目录：显式 OUTDIR 优先；否则用可写的 /workspace（构建机常见），
+# 普通用户在家目录下跑时 /workspace 建不出来（根目录不可写），退回 ~/audiobook-out。
+if [ -n "${OUTDIR:-}" ]; then
+    :
+elif [ -d /workspace ] && [ -w /workspace ]; then
+    OUTDIR=/workspace
+else
+    OUTDIR="$HOME/audiobook-out"
+fi
 OUT="$OUTDIR/$NAME.tar.gz"
 
 # ---------- 打包前自检 ----------
@@ -368,6 +376,12 @@ done
 # Dockerfile 走「已有 dist 就跳过 npm ci/generate」的快路，不读 .nuxt，带上纯属负担。
 rm -rf "$STAGE/audiobook/app/.nuxt"
 
+# app/node_modules 是构建期依赖（被 app/.gitignore 忽略，本就不进仓库），部署包用不到：
+# Dockerfile 见到 app/dist 就走快路、不跑 npm ci/generate。参与过前端构建的机器上它必然存在，
+# 若不清掉，包会凭空多出约 25.6 万个成员 / 256MB（未压缩），且体积随机器而变——
+# 同一提交打出 149MB 与 221MB 两种包的实测差异，来源就是它，不是 app/dist 缺文件。
+rm -rf "$STAGE/audiobook/app/node_modules" "$STAGE/audiobook/app/.next"
+
 # srt-tool 是 PC 上的辅助工具，NAS 上既跑不了也不该跑。包内只留能直接运行的
 # 4 个文件（README / make_srt.py / srt_core.py / make_srt_gui.py）：
 #   - build.bat / build.py / make_srt.spec：在 Windows 上建 venv + PyInstaller 打 exe 用
@@ -438,12 +452,15 @@ sys.exit(0 if isinstance(d, dict) and d.get("revision") else 1)' "$MF_TMP" 2>/de
     MF_REV=$(mf_get "$MF_TMP" revision)
     MF_VER=$(mf_get "$MF_TMP" version)
     echo "  ✓ 已用远端清单覆盖包内基线: revision=$MF_REV base=$(mf_get "$MF_TMP" base_revision)"
+    # revision 是完整的「基础版本-rN」，必须与本次发布版本逐字相等
     case "$MF_REV" in
-        "$VER"-r*) ;;
+        "$VER") ;;
         *) echo "  !! 告警：包内清单 revision=$MF_REV 与本次发布版本 $VER 不一致（仍按远端清单打包）" ;;
     esac
-    if [ -n "$MF_VER" ] && [ "$MF_VER" != "$VER" ]; then
-        echo "  !! 告警：包内清单 version=$MF_VER 与本次发布版本 $VER 不一致（仍按远端清单打包）"
+    # version 只是基础版本（不含 -rN），只能和 $VER 去掉 -rN 后的部分比
+    VER_BASE="${VER%-r*}"
+    if [ -n "$MF_VER" ] && [ "$MF_VER" != "$VER_BASE" ]; then
+        echo "  !! 告警：包内清单 version=$MF_VER 与本次发布版本的基础版本 $VER_BASE 不一致（仍按远端清单打包）"
     fi
 else
     echo "  !! 告警：未能从远端同步 update/manifest.json（网络/404/JSON 非法或缺 revision）"
@@ -453,11 +470,53 @@ fi
 rm -f "$MF_TMP"
 
 
-mkdir -p "$OUTDIR"
+mkdir -p "$OUTDIR" 2>/dev/null || { echo "  !! 无法创建输出目录: $OUTDIR（用 OUTDIR=<可写目录> 重跑）"; exit 1; }
 ( cd "$STAGE" && tar $TAR_OPTS -cf - audiobook | gzip -n > "$OUT" )
 # pipefail 已保证 tar 失败即退出；再确认产物非空，避免验到上一次遗留的坏包
 [ -s "$OUT" ] || { echo "  !! 打包产物为空，tar 可能失败"; exit 1; }
 echo "  产物: $OUT"
+
+# ---------- 打包后门禁 ----------
+# 打包前的检查只能证明「树里齐」，证明不了「包里齐」：暂存排除规则、tar 参数、
+# 稀疏检出/缺文件都可能让成员在归档时静默消失。这里直接对产物说话，
+# 不符就删包退出，绝不留半成品当交付物。
+# 注意：下面先把成员清单落到文件再查，不能用 `tar -tzf | grep -q`——grep 提前退出
+# 会让 tar 吃到 SIGPIPE，配合 pipefail 会被误判成「没找到」。
+gate_fail=0
+gate_bad() { echo "  !! 门禁失败：$1"; gate_fail=1; }
+LIST="$STAGE/.pkg.list"
+tar -tzf "$OUT" > "$LIST" || gate_bad "无法读取包内成员清单"
+grep -v '/$' "$LIST" > "$LIST.f" || true
+
+DIST_FILES=$(grep -c '^audiobook/app/dist/' "$LIST.f" || true)
+[ "$DIST_FILES" = "757" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 757）"
+
+DIST_IDX=$(tar -xzOf "$OUT" audiobook/app/dist/index.html 2>/dev/null | sha256sum | cut -d' ' -f1)
+[ "$DIST_IDX" = "b7c49b20c2e9042538dcdd9038e0c43557a18d7449922e159569e8ee509a1ebc" ] \
+    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 b7c49b20c2e9…）"
+
+grep -qx 'audiobook/app/dist/static/pdfjs/web/viewer.html' "$LIST" \
+    || gate_bad "包内缺 app/dist/static/pdfjs/web/viewer.html"
+
+PKG_FILES=$(wc -l < "$LIST.f" | tr -d ' ')
+if grep -qx 'audiobook/MANIFEST' "$LIST"; then
+    MF_FILES=$(tar -xzOf "$OUT" audiobook/MANIFEST | sed -n 's/^files[: ]*//p' | head -1)
+    [ "${MF_FILES:-}" = "$PKG_FILES" ] \
+        || gate_bad "包内 MANIFEST 记 $MF_FILES 个成员，实际 $PKG_FILES 个"
+else
+    STAGE_FILES=$(find "$STAGE/audiobook" \( -type f -o -type l \) | wc -l | tr -d ' ')
+    [ "$STAGE_FILES" = "$PKG_FILES" ] \
+        || gate_bad "包内成员数=$PKG_FILES 与暂存区=$STAGE_FILES 不一致（归档丢成员）"
+    echo "  包内无 MANIFEST，成员数改与暂存区比对：$PKG_FILES"
+fi
+rm -f "$LIST" "$LIST.f"
+
+if [ "$gate_fail" != "0" ]; then
+    echo "  !! 门禁未通过，删除半成品包: $OUT"
+    rm -f "$OUT"
+    exit 1
+fi
+echo "  门禁 OK：app/dist $DIST_FILES 个文件，index.html b7c49b20…，pdfjs viewer 在包内，成员共 $PKG_FILES 个"
 
 # ---------- 验包 ----------
 echo "==> [4/4] 验包"
