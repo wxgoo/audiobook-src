@@ -294,6 +294,7 @@ if [ ! -f update/manifest.json ] || ! grep -q '"revision"' update/manifest.json;
 fi
 echo "  发布清单 OK: $(grep -m1 '"revision"' update/manifest.json | tr -d ' ,')"
 
+
 # ---------- 打包 ----------
 echo "==> [3/4] 打包（cd 到父目录对目录名打包，不用 --transform）"
 
@@ -389,6 +390,52 @@ find "$STAGE/audiobook" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/
 find "$STAGE/audiobook" -name '.pytest_cache' -type d -prune -exec rm -rf {} + 2>/dev/null
 find "$STAGE/audiobook" \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null
 echo "  已清掉 __pycache__ / .pytest_cache / *.pyc（开发残留）"
+
+# ---------- 同步远端发布清单（必须在暂存之后、归档之前） ----------
+# 分工：`update/manifest.json` 由 workbuddy 在 Gitee 上生成并提交，容器只认远端那份；
+# 本仓库的 update/manifest.json 往往落后（r27 这次就停在 r26/r21），照它出包会让页面
+# 装完仍报「有新版本」。所以出包前用远端 raw 那份覆盖包内清单。
+# 与 webserver/services/version_check.py 读的是同一路径（公开仓库，无需令牌）。
+# 失败不阻断：回退基线清单并显式告警，绝不静默通过。
+echo "==> [3b/4] 同步远端发布清单"
+MANIFEST_URL="${MANIFEST_URL:-https://gitee.com/wxgoo/audiobook-src/raw/master/update/manifest.json}"
+MF_TMP="$STAGE/.manifest.remote.json"
+mf_get() {
+    python3 -c 'import json,sys
+d=json.load(open(sys.argv[1], encoding="utf-8"))
+print(d.get(sys.argv[2], ""))' "$1" "$2" 2>/dev/null || true
+}
+mf_fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --max-time 20 "$MANIFEST_URL" -o "$MF_TMP" 2>/dev/null && return 0
+    fi
+    if command -v wget >/dev/null 2>&1; then
+        wget -q -T 20 -O "$MF_TMP" "$MANIFEST_URL" 2>/dev/null && return 0
+    fi
+    return 1
+}
+if command -v python3 >/dev/null 2>&1 && mf_fetch && [ -s "$MF_TMP" ] \
+        && python3 -c 'import json,sys
+d=json.load(open(sys.argv[1], encoding="utf-8"))
+sys.exit(0 if isinstance(d, dict) and d.get("revision") else 1)' "$MF_TMP" 2>/dev/null; then
+    cp "$MF_TMP" "$STAGE/audiobook/update/manifest.json"
+    MF_REV=$(mf_get "$MF_TMP" revision)
+    MF_VER=$(mf_get "$MF_TMP" version)
+    echo "  ✓ 已用远端清单覆盖包内基线: revision=$MF_REV base=$(mf_get "$MF_TMP" base_revision)"
+    case "$MF_REV" in
+        "$VER"-r*) ;;
+        *) echo "  !! 告警：包内清单 revision=$MF_REV 与本次发布版本 $VER 不一致（仍按远端清单打包）" ;;
+    esac
+    if [ -n "$MF_VER" ] && [ "$MF_VER" != "$VER" ]; then
+        echo "  !! 告警：包内清单 version=$MF_VER 与本次发布版本 $VER 不一致（仍按远端清单打包）"
+    fi
+else
+    echo "  !! 告警：未能从远端同步 update/manifest.json（网络/404/JSON 非法或缺 revision）"
+    echo "     $MANIFEST_URL"
+    echo "     本次包内清单沿用基线版本: revision=$(mf_get "$STAGE/audiobook/update/manifest.json" revision) —— 页面可能误报新版本"
+fi
+rm -f "$MF_TMP"
+
 
 mkdir -p "$OUTDIR"
 ( cd "$STAGE" && tar $TAR_OPTS -cf - audiobook | gzip -n > "$OUT" )
