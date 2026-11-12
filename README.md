@@ -3,7 +3,7 @@
 基于 [PoxenStudio/mybooks](https://github.com/PoxenStudio/mybooks) 的私人图书服务器定制版。
 在 Calibre 书库之上提供 Web 阅读、听书、权限分级、元数据刮削、格式转换等能力。
 
-> **当前版本：`4.6.0-build.27`**，当前部署包修订 **`4.6.0-build.27-r10`**
+> **当前版本：`4.6.0-build.27`**，当前部署包修订 **`4.6.0-build.27-r27`**
 > （上游 tag `4.6.0` + 第 27 次本地构建；新版本检测与在线更新见 `/admin/version`）
 
 ---
