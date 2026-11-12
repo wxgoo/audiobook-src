@@ -39,6 +39,10 @@ uploads/
 *.flac
 
 *.wav
+# MiMo TTS 的 9 个预置音色试听样音是源码资产，要随仓库/预构建 dist 一起走
+# （其余 wav 仍然忽略；这两条必须写在 *.wav 之后才生效）
+!app/public/static/mimo_tts/samples/*.wav
+!app/dist/static/mimo_tts/samples/*.wav
 
 *.aac
 
