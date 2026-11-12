@@ -9,14 +9,14 @@
 # 用法：
 #   sh scripts/check-dist.sh              # 校验仓库里的 app/dist
 #   sh scripts/check-dist.sh /path/pkg/audiobook
-#   BASELINE=757 sh scripts/check-dist.sh
+#   BASELINE=766 sh scripts/check-dist.sh
 #
 # 退出码：0 通过；1 缺文件/数量不符；2 用法或目录缺失。
 
 set -u
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 DIST="$ROOT/app/dist"
-BASELINE="${BASELINE:-757}"
+BASELINE="${BASELINE:-766}"
 
 [ -d "$DIST" ] || { echo "!! 找不到 $DIST（先 npm run generate）"; exit 2; }
 
@@ -31,6 +31,7 @@ for p in \
     static/fonts \
     static/wallpaper \
     static/images \
+    static/mimo_tts/samples/mimo_default.wav \
     icons \
     robots.txt \
     logo \
@@ -40,7 +41,7 @@ do
 done
 
 # 2) 关键目录的数量下限（目录在但空 = generate 把它清了）
-for pair in "static/pdfjs:369" "static/fonts:3" "static/wallpaper:4" "static/images:4" "icons:1"
+for pair in "static/pdfjs:369" "static/fonts:3" "static/wallpaper:4" "static/images:4" "static/mimo_tts/samples:9" "icons:1"
 do
     d=${pair%%:*}; n=${pair##*:}
     [ -d "$DIST/$d" ] || continue

@@ -122,8 +122,8 @@ if [ "${1:-}" = "--check" ]; then
                 fail=1
             fi
             dtotal=$(find "$D/app/dist" -type f 2>/dev/null | wc -l | tr -d ' ')
-            if [ "$dtotal" -ne 757 ]; then
-                echo "  !! app/dist 文件数 $dtotal != 基线 757 —— 先跑 sh scripts/check-dist.sh 定位缺什么"
+            if [ "$dtotal" -ne 766 ]; then
+                echo "  !! app/dist 文件数 $dtotal != 基线 766 —— 先跑 sh scripts/check-dist.sh 定位缺什么"
                 fail=1
             fi
         fi
@@ -573,7 +573,7 @@ tar -tzf "$OUT" > "$LIST" || gate_bad "无法读取包内成员清单"
 grep -v '/$' "$LIST" > "$LIST.f" || true
 
 DIST_FILES=$(grep -c "^${PFX}app/dist/" "$LIST.f" || true)
-[ "$DIST_FILES" = "757" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 757）"
+[ "$DIST_FILES" = "766" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 766）"
 
 DIST_IDX=$(tar -xzOf "$OUT" "${PFX}app/dist/index.html" 2>/dev/null | sha256sum | cut -d' ' -f1)
 [ "$DIST_IDX" = "18bf92faf74db69d6f9b359f2364c763d52764162f6936a23656843d4f5e7965" ] \
