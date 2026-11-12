@@ -51,7 +51,7 @@
 | 包 | 说明 |
 | --- | --- |
 | `audiobook-deploy-4.6.0-build.27-r27.tar.gz` | 部署整包（不切片），附 `.md5` / `.sha256` |
-| `audiobook-src-4.6.0-build.27-r27-full.tar.gz` | 源码整包（含 dist / node_modules），附 `.md5` / `.sha256` |
+| `audiobook-src-4.6.0-build.27-r27-full.tar.gz` | 源码整包（含 `app/dist`，不含 `app/node_modules` 构建依赖），附 `.md5` / `.sha256` |
 
 > 出包后按流式方式（`tar -tzf` / 逐成员读取，未把整包解压到磁盘）复核包内
 > `delivery/overlay/files/docs/操作总纲.md` 与 `scripts/upgrade-upstream.sh`：32 位十六进制令牌明文 0 处；
