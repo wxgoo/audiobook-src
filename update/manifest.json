@@ -1,53 +1,44 @@
 {
   "schema": 1,
-  "revision": "4.6.0-build.27-r21",
-  "base_revision": "4.6.0-build.27-r20",
+  "revision": "4.6.0-build.27-r27",
+  "base_revision": "4.6.0-build.27-r26",
   "version": "4.6.0-build.27",
-  "date": "2026-11-11",
-  "summary": "修「读者组下拉全空 / 已分组列表不显示」：列表与候选值接口不再把同步 IO 留在 ioloop",
+  "date": "2026-11-12",
+  "summary": "安全清理与文档补充：容器内代码无变更（宿主侧脚本需手动同步）",
   "notes": [
-    "GET /api/admin/reader_groups 改为 async：Reader 全表查询移入工作线程，8s 超时返回 err=timeout 而非无限转圈",
-    "GET /api/admin/reader_groups/options 的 field_metadata 与分类 JOIN 移出事件循环；用户名/分类/标签各自降级，单项失败不影响其余",
-    "分组配置历史数据兼容：reader_groups 被存成 JSON 字符串时解析为 dict，否则重启后所有组静默消失",
-    "members_of 查询异常返回 {}（原先返回 []，会让调用方 .get() 抛 AttributeError，把「库忙」变成 500）",
-    "orphan_groups 复用同一份成员快照，Reader 表不再被扫两遍"
+    "移除 scripts/upgrade-upstream.sh 里硬编码的 Gitee 令牌（宿主侧脚本，容器运行时不读，需随包/手动同步）",
+    "读者组转圈复盘的动作清单与实际状态对齐",
+    "清理《操作总纲》里的凭据明文",
+    "归档「所有书籍首屏空白」的实现规格与任务清单",
+    "开发指南 / 部署包说明补充相应说明"
   ],
   "requires_dist": false,
-  "hotfixable": true,
+  "hotfixable": false,
   "dist_hotfixable": false,
   "dist_files": [],
   "dist_deleted": [],
-  "reason": "仅后端 Python 代码变更，可在线替换并重启服务，无需重建镜像",
-  "files": [
-    {
-      "path": "webserver/handlers/reader_group.py",
-      "sha256": "f95c2c99e6c6790b2268f4d986de48cf79095ef8bf6ce5b8bb94fb7f1f593e68",
-      "bytes": 17316
-    },
-    {
-      "path": "webserver/services/reader_group.py",
-      "sha256": "437d3d261527e101ca5203edadf1f49da09d3732b7fc675db33946b59fb69255",
-      "bytes": 30525
-    }
-  ],
+  "reason": "仅文档或无需运行态变更的内容",
+  "files": [],
   "changed": {
-    "hotfix": [
-      "webserver/handlers/reader_group.py",
-      "webserver/services/reader_group.py"
-    ],
+    "hotfix": [],
     "dist": [],
     "appsrc": [],
     "blocking": [],
     "docs": [
-      "tests/test_reader_group_handlers.py"
+      "delivery/overlay/files/docs/操作总纲.md",
+      "docs/archive/spec-所有书籍首屏空白.md",
+      "docs/archive/tasks-所有书籍首屏空白.md",
+      "docs/开发指南.md",
+      "docs/部署包说明.md",
+      "scripts/upgrade-upstream.sh"
     ]
   },
   "deploy_commands": [
     "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.6.0-build.27-r21.tar.gz.sha256",
+    "sha256sum -c audiobook-deploy-4.6.0-build.27-r27.tar.gz.sha256",
     "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
     "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.6.0-build.27-r21.tar.gz",
+    "tar -xzf audiobook-deploy-4.6.0-build.27-r27.tar.gz",
     "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }
