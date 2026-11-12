@@ -17,13 +17,14 @@ BaseHandler.run_calibre_async/get_book_async.
 import asyncio
 import contextvars
 import threading
+import time
 import types
 import unittest
 from unittest import mock
 
 from tornado import web
 
-from webserver.handlers.base import BaseHandler
+from webserver.handlers.base import BaseHandler, ListHandler
 from webserver.models import Item, Reader
 from webserver.utils import blocking_pool, calibre_pool, run_in_threadpool
 
@@ -43,6 +44,20 @@ class _FakeQuery:
 
     def all(self):
         return list(self._rows)
+
+
+class _SlowQuery(_FakeQuery):
+    """模拟大表上的慢查询：记录执行线程，并占用一段时间。"""
+
+    def __init__(self, rows, delay):
+        super().__init__(rows)
+        self._delay = delay
+        self.thread_names = []
+
+    def all(self):
+        self.thread_names.append(threading.current_thread().name)
+        time.sleep(self._delay)
+        return super().all()
 
 
 class _FakeCollector:
@@ -70,9 +85,10 @@ class _FakeItemRow:
 
 
 class _FakeSession:
-    def __init__(self, readers=(), items=()):
+    def __init__(self, readers=(), items=(), items_query=None):
         self._readers = list(readers)
         self._items = list(items)
+        self._items_query = items_query
 
     def execute(self, _stmt):
         return [types.SimpleNamespace(_mapping=item.to_dict()) for item in self._items]
@@ -80,9 +96,24 @@ class _FakeSession:
     def query(self, model):
         if model is Reader:
             return _FakeQuery(self._readers)
-        if model is Item:
-            return _FakeQuery(self._items)
+        if model is Item or model is Item.book_id:
+            return self._items_query or _FakeQuery(self._items)
         raise AssertionError("unexpected model %r" % model)
+
+
+class _FakeScopedSession:
+    """run_sqlite_async 用的 scoped_session 替身：给工作线程发新 session。"""
+
+    def __init__(self, items_query):
+        self._items_query = items_query
+        self.created = 0
+
+    def __call__(self):
+        self.created += 1
+        return _FakeSession(items_query=self._items_query)
+
+    def remove(self):
+        pass
 
 
 class _FakeCalibreDB:
@@ -101,17 +132,82 @@ class _FakeCalibreDB:
         return list(self._books)
 
 
-def _make_handler(books, items=(), readers=()):
+def _make_handler(books, items=(), readers=(), items_query=None, cls=BaseHandler):
     # 跳过 RequestHandler.__init__（需要 application/db），只装配被测路径触及的属性
-    handler = BaseHandler.__new__(BaseHandler)
+    handler = cls.__new__(cls)
     handler.request = None
     handler.calibre_db = _FakeCalibreDB(books)
     handler.db_lock = threading.RLock()
-    handler.sqlite_session = _FakeSession(readers=readers, items=items)
+    handler.sqlite_session = _FakeSession(readers=readers, items=items, items_query=items_query)
     handler.write = lambda chunk: None
     handler.set_status = lambda status, reason=None: None
     handler.user_id = lambda: 1
     return handler
+
+
+class TestSoleHiddenIdsOffIoloop(unittest.TestCase):
+    """列表接口的 total 修正查询（items WHERE sole=1）必须离开 ioloop。
+
+    ``_sole_hidden_ids`` 原先直接在 handler 的 sqlite_session 上跑 ORM：10 万级 items
+    表实测 5ms（进程内首次 ~90ms），且与 get_book_list 共用同一个事件循环线程。
+    """
+
+    ROWS = [(7,), (9,)]
+
+    def setUp(self):
+        self.query = _SlowQuery(self.ROWS, delay=0.12)
+        self.scoped = _FakeScopedSession(self.query)
+        self.handler = _make_handler([], items_query=self.query, cls=ListHandler)
+        # settings 是只读属性（取自 application.settings），用轻量替身挂上去
+        self.handler.application = types.SimpleNamespace(
+            settings={"ScopedSession": self.scoped}
+        )
+        self.handler.library_version = lambda: 11
+        self.handler._sole_hidden_cache = {}
+
+    def test_query_runs_on_worker_thread(self):
+        main_thread = threading.current_thread().name
+        hidden = asyncio.run(self.handler._sole_hidden_ids())
+        self.assertEqual(hidden, {7, 9})
+        self.assertTrue(self.query.thread_names)
+        for name in self.query.thread_names:
+            self.assertNotEqual(name, main_thread)
+            self.assertTrue(name.startswith("mybooks-calibre"), name)
+
+    def test_ioloop_stays_responsive(self):
+        async def run():
+            gaps = []
+
+            async def ticker():
+                while True:
+                    started = time.perf_counter()
+                    await asyncio.sleep(0.005)
+                    gaps.append(time.perf_counter() - started - 0.005)
+
+            task = asyncio.ensure_future(ticker())
+            await asyncio.sleep(0)
+            try:
+                await self.handler._sole_hidden_ids()
+            finally:
+                task.cancel()
+            return max(gaps) if gaps else 0.0
+
+        worst = asyncio.run(run())
+        # 查询本身 120ms：留在 ioloop 上时 worst 会 >=100ms
+        self.assertLess(worst, 0.05, "sole 查询仍阻塞 ioloop: %.3fs" % worst)
+
+    def test_cached_after_first_call(self):
+        asyncio.run(self.handler._sole_hidden_ids())
+        asyncio.run(self.handler._sole_hidden_ids())
+        self.assertEqual(len(self.query.thread_names), 1)
+
+
+class TestRenderBookListNotDecorated(unittest.TestCase):
+    def test_not_wrapped_by_js(self):
+        # 外层 RecentBook/SearchBook.get 已经是 @js：内层再包一层会在 finish() 之后
+        # 再 write() 一次，每个请求抛 "Cannot write() after finish()"。
+        self.assertEqual(ListHandler.render_book_list.__name__, "render_book_list")
+        self.assertTrue(asyncio.iscoroutinefunction(ListHandler.render_book_list))
 
 
 class TestRunInThreadpool(unittest.TestCase):

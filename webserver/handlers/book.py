@@ -3040,14 +3040,15 @@ class SearchBook(ListHandler):
 
 
 class HotBook(ListHandler):
-    def get(self):
+    @js
+    async def get(self):
         title = _("热度榜单")
         db_items = self.sqlite_session.query(Item).filter(Item.count_visit > 1).order_by(Item.count_visit.desc())
         start = self.get_argument_start()
         delta = 60
         items = db_items.limit(delta).offset(start).all()
         ids = [item.book_id for item in items]
-        return self.render_book_list([], ids=ids, title=title)
+        return await self.render_book_list([], ids=ids, title=title)
 
 
 # 通ISBN添加实体图书
