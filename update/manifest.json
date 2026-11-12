@@ -7,10 +7,10 @@
   "summary": "安全清理与文档补充：容器内代码无变更（宿主侧脚本需手动同步）",
   "notes": [
     "移除 scripts/upgrade-upstream.sh 里硬编码的 Gitee 令牌（宿主侧脚本，容器运行时不读，需随包/手动同步）",
+    "pack.sh 新增「清单 revision 必须等于包版本」硬断言与用法说明；出包前自动同步远端清单",
     "读者组转圈复盘的动作清单与实际状态对齐",
-    "清理《操作总纲》里的凭据明文",
-    "归档「所有书籍首屏空白」的实现规格与任务清单",
-    "开发指南 / 部署包说明补充相应说明"
+    "清理《操作总纲》里的凭据明文；归档「所有书籍首屏空白」规格与任务清单",
+    "开发指南 / 部署包说明 / CHANGELOG 补 r27 口径"
   ],
   "requires_dist": false,
   "hotfixable": false,
@@ -25,11 +25,13 @@
     "appsrc": [],
     "blocking": [],
     "docs": [
+      "CHANGELOG.md",
       "delivery/overlay/files/docs/操作总纲.md",
       "docs/archive/spec-所有书籍首屏空白.md",
       "docs/archive/tasks-所有书籍首屏空白.md",
       "docs/开发指南.md",
       "docs/部署包说明.md",
+      "scripts/pack.sh",
       "scripts/upgrade-upstream.sh"
     ]
   },
