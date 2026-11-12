@@ -16,6 +16,17 @@ import unittest
 
 from webserver.services.cfi_gen.launcher import CfiBatchError, generate_cfis
 
+# 锚点文本与夹具正文共用同一份常量（tests/make_epub_fixtures.py）：
+# old.epub / new.epub 不进版本库，由 tests/fixtures_gen.py 现场生成，
+# 正文是公有领域文本。两处各写一份句子必然漂移，所以只认这一处。
+from tests.make_epub_fixtures import (  # noqa: E402
+    BR_WRAPPED_TEXT,
+    NEW_BOOK_TITLE,
+    NEW_UNIQUE_TEXT,
+    OLD_UNIQUE_TEXT,
+    WHITESPACE_ANCHOR,
+)
+
 TESTDIR = os.path.dirname(os.path.abspath(__file__))
 OLD_EPUB = os.path.join(TESTDIR, "cases", "old.epub")
 NEW_EPUB = os.path.join(TESTDIR, "cases", "new.epub")
@@ -43,7 +54,7 @@ def run(coro):
 
 class TestCfiBatchGenerator(unittest.TestCase):
     def test_unique_text_match_produces_a_cfi(self):
-        anchors = [{"id": "a1", "text": "献给在二十世纪后半叶中国大地上默默苦行的民间英雄"}]
+        anchors = [{"id": "a1", "text": OLD_UNIQUE_TEXT}]
         results = run(generate_cfis(OLD_EPUB, anchors))
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["id"], "a1")
@@ -57,14 +68,14 @@ class TestCfiBatchGenerator(unittest.TestCase):
         self.assertEqual(results[0]["status"], "no_match")
 
     def test_whitespace_normalization_still_matches(self):
-        # new.epub's chapter body has "...形状各异。 骄阳悬空..." (a single
-        # space after the sentence-ending period, straight from the source
-        # XHTML). Feeding an anchor with different whitespace there still has
-        # to match after normalization — both sides collapse whitespace runs
-        # to a single space (§4.4) — so this exercises that path against a
-        # real, already-whitespace-containing passage instead of one we've
-        # artificially split.
-        anchors = [{"id": "a3", "text": "形状各异。  \n 骄阳悬空，炙烤着大地"}]
+        # new.epub's chapter body keeps "三十而立。 四十而不惑，五十而知天命。"
+        # (a single space after the sentence-ending period, straight from the
+        # source XHTML). Feeding an anchor with different whitespace there
+        # still has to match after normalization — both sides collapse
+        # whitespace runs to a single space (§4.4) — so this exercises that
+        # path against a real, already-whitespace-containing passage instead
+        # of one we've artificially split.
+        anchors = [{"id": "a3", "text": WHITESPACE_ANCHOR}]
         results = run(generate_cfis(NEW_EPUB, anchors))
         self.assertEqual(results[0]["status"], "ok")
 
@@ -81,7 +92,7 @@ class TestCfiBatchGenerator(unittest.TestCase):
         # asyncio.create_subprocess_exec), but a same-order/same-length
         # sanity check that one generate_cfis() call handles a mixed batch.
         anchors = [
-            {"id": "b1", "text": "献给在二十世纪后半叶中国大地上默默苦行的民间英雄"},
+            {"id": "b1", "text": OLD_UNIQUE_TEXT},
             {"id": "b2", "text": "这段文字绝对不会出现在任何一本书里_zzz_不存在"},
             {"id": "b3"},
         ]
@@ -92,7 +103,7 @@ class TestCfiBatchGenerator(unittest.TestCase):
         self.assertEqual(results[2]["status"], "ok")
 
     def test_second_fixture_book_also_resolves(self):
-        anchors = [{"id": "c1", "text": "除了杂草灌木，便是随处可见的灰白色石头，大小不一，形状各异。"}]
+        anchors = [{"id": "c1", "text": NEW_UNIQUE_TEXT}]
         results = run(generate_cfis(NEW_EPUB, anchors))
         self.assertEqual(results[0]["status"], "ok")
 
@@ -102,13 +113,13 @@ class TestCfiBatchGenerator(unittest.TestCase):
         # EPUBs — two more occurrences sit in <title> elements in <head>,
         # correctly excluded since that's never visible reading content).
         # This is the ≥2-hit case from plan §4.5, not a bug.
-        anchors = [{"id": "e1", "text": "凡人修仙之仙界篇"}]
+        anchors = [{"id": "e1", "text": NEW_BOOK_TITLE}]
         results = run(generate_cfis(NEW_EPUB, anchors))
         self.assertEqual(results[0]["status"], "ambiguous")
         self.assertEqual(results[0]["matchCount"], 5)
 
     def test_on_ambiguous_first_match_picks_one_deterministically(self):
-        anchors = [{"id": "e2", "text": "凡人修仙之仙界篇"}]
+        anchors = [{"id": "e2", "text": NEW_BOOK_TITLE}]
         results = run(generate_cfis(NEW_EPUB, anchors, on_ambiguous="first_match"))
         self.assertEqual(results[0]["status"], "ok")
         self.assertEqual(results[0]["matchCount"], 5)
@@ -125,7 +136,7 @@ class TestCfiBatchGenerator(unittest.TestCase):
     def test_br_hard_wrap_mid_sentence_does_not_break_the_match(self):
         # Regression test for a real bug found while building this pipeline:
         # this book's source XHTML has
-        #   "...从一座农舍走到另<br class="calibre1"/>一座农舍..."
+        #   "...三人行，必<br class="calibre1"/>有我师焉..."
         # — a mid-clause line-wrap `<br>`, not a real break. An anchor with
         # the sentence written normally (no gap where the `<br>` sits) must
         # still match; if `<br>` were treated like a block-level boundary
@@ -133,7 +144,7 @@ class TestCfiBatchGenerator(unittest.TestCase):
         # the BLOCK_TAGS/`<br>` comment in cfi_batch.mjs for the full story.
         if not os.path.exists(HUNDRED_YEARS_EPUB):
             self.skipTest("library fixture not present in this checkout")
-        anchors = [{"id": "f1", "text": "他手里拿着两大块磁铁，从一座农舍走到另一座农舍"}]
+        anchors = [{"id": "f1", "text": BR_WRAPPED_TEXT}]
         results = run(generate_cfis(HUNDRED_YEARS_EPUB, anchors))
         self.assertEqual(results[0]["status"], "ok")
         self.assertEqual(results[0]["matchCount"], 1)

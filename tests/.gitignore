@@ -1,2 +1,14 @@
-users.db
-library/
+# 运行期副本：test_main.setup_server() 从 tests/cases/ 复制出来的库目录，
+# 每次跑测试都会重建，不入库。
+# 注意必须写成 /library/（仅 tests/library）。
+/library/
+
+# 生成物：tests/cases/library/ 是 tests/fixtures_gen.py 现场生成的 calibre 库
+# 目录（13 本书的格式文件 + 封面），不入库 —— 这里是「书」，收进仓库涉及
+# 版权，而且以后每次重建都会让 diff 抖动。库里入库的只有四个静态文件：
+# users.db / metadata.db / big-metadata.db / title_has_0x00.pdf，例外写在
+# 仓库根 .gitignore 末尾。
+/cases/library/
+
+# 同理，old.epub / new.epub 也是 fixtures_gen 生成的（正文为公有领域文本），
+# 由仓库根 .gitignore 的 *.epub 规则挡掉。

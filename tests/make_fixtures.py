@@ -4,12 +4,17 @@
 ## 为什么需要这个脚本
 
 `tests/test_main.py` 有 63 个用例，用 `TestApp`/`TestWithUserLogin` 基类
-真启动整站、发 HTTP 请求。但它们一直「永远红」，原因是两个夹具库
-`tests/cases/metadata.db`（calibre 库）和 `tests/cases/users.db` 从来没有
-进版本库——`tests/.gitignore` 里就写着 `users.db` 和 `library/`。
+真启动整站、发 HTTP 请求，依赖一份 calibre 库（13 本 / 72 标签 / 15 作者…）
+和一份 users.db（31 个用户）。
 
-结果：任何一个新克隆的仓库、任何一台 CI，这 63 个用例都跑不起来。
-**这不是测试写得不对，是环境造不出来。**
+现在入库的只有四个静态文件：
+`tests/cases/users.db`、`metadata.db`、`big-metadata.db`、`title_has_0x00.pdf`。
+**库目录 `tests/cases/library/` 与 old.epub / new.epub 不入库**（正文是书，
+体积又会永久留在 git 历史里），由 `tests/fixtures_gen.py` 在缺件时现场生成、
+正文一律用公有领域文本（见 `tests/make_epub_fixtures.py`）。
+
+本脚本仍保留「从零重建整份夹具」的能力：改数据集规模、或删掉了
+`tests/cases/library/` 想重新生成时用它。
 
 ## 数据集规模怎么定的
 
@@ -342,30 +347,10 @@ def _cover_bytes(title, seed):
 
 
 # 《百年孤独》的正文不能用通用占位段落：test_sync_import.py 拿这几句做
-# CFI 定位，且第一句中间必须夹一个 <br class="calibre1"/>（calibre 转换后
+# CFI 定位，且其中一句中间必须夹一个 <br class="calibre1"/>（calibre 转换后
 # 的硬换行），用来锁住 cfi_batch.mjs 不把 <br> 当块级边界的行为。
-HUNDRED_YEARS_CHAPTERS = [
-    ("第一章",
-     "<p>许多年之后，面对行刑队，奥雷里亚诺·布恩迪亚上校将会回想起"
-     "父亲带他去见识冰块的那个遥远的下午。</p>"
-     "<p>那时马孔多还是个二十户人家的村落，泥巴和芦苇盖成的屋子沿河岸排开。</p>"
-     "<p>他手里拿着两大块磁铁，从一座农舍走到另<br class=\"calibre1\"/>一座农舍，"
-     "那块铁屑纷飞。</p>"
-     "<p>满脸络腮胡子，手指瘦得象鸟的爪子。</p>"),
-    ("第二章",
-     "<p>何塞·阿尔卡蒂奥·布恩迪亚是个富于幻想的人。</p>"
-     "<p>他对磁铁、放大镜、炼金术都有着近乎痴迷的热情。</p>"
-     "<p>百年孤独这四个字，那时还没有人说得出口。</p>"
-     # 「百年孤独」必须在 <body> 里出现 **≥2 次**：
-     # tests/test_sync_import.py::test_ambiguous_anchor_is_not_committed
-     # 用这四个字来构造「多义定位」的用例，正文里只出现一次的话它解析成
-     # ok，用例会以「expected an ambiguous match」直接失败——那是夹具没
-     # 跟上，不是被测逻辑的问题。
-     # 另外 `<head><title>` 里的书名和页眉都会被 cfi 定位排除在外，
-     # 所以这里必须实打实写在段落里，不能指望标题凑数。
-     "<p>多年以后他才明白，所谓百年孤独，不过是同一句话在稿纸上"
-     "反复出现，直到把一个人的记忆磨平。</p>"),
-]
+# 正文与断言共用 tests/make_epub_fixtures.py 里的常量，见那边的说明。
+from tests.make_epub_fixtures import HUNDRED_YEARS_CHAPTERS  # noqa: E402
 
 
 def _hundred_years_epub(title, author=None):
@@ -762,20 +747,22 @@ def build_users_db(target):
     log("写出 %s (%.0f KB)" % (target, os.path.getsize(target) / 1024))
 
 
-def build_upload_samples():
-    """造 test_upload.py 用的两个 epub 样例。
+def build_upload_samples(force=False):
+    """造 test_upload.py 用的两个 epub 样例（缺什么补什么）。
 
-    这两个文件以前也不在版本库里，所以 test_upload 一跑就
-    FileNotFoundError: tests/cases/old.epub。
+    这两个文件不进版本库，正文与 CFI 用例共用
+    tests/make_epub_fixtures.py 的常量，所以直接交给它写，别在这里再造一份
+    通用占位 epub —— 那样 old.epub 会被 test_cfi_gen 的锚点判成 no_match。
     """
-    for name in ("old.epub", "new.epub"):
-        path = os.path.join(CASES, name)
-        if os.path.exists(path):
-            continue
-        data = _minimal_epub("Upload Sample %s" % name.split(".")[0], "Fixtures")
-        with open(path, "wb") as f:
-            f.write(data)
-        log("写出 %s (%d 字节)" % (path, len(data)))
+    from tests.make_epub_fixtures import write_upload_samples
+
+    if force:
+        # 正文常量可能改过，--force 时连样例一起重写，否则新旧断言会对不上
+        for name in ("old.epub", "new.epub"):
+            path = os.path.join(CASES, name)
+            if os.path.exists(path):
+                os.remove(path)
+    write_upload_samples()
 
 
 def main():
@@ -800,7 +787,7 @@ def main():
     try:
         build_metadata_db(meta)
         build_users_db(users)
-        build_upload_samples()
+        build_upload_samples(force=args.force)
     except Exception as e:
         print("✗ 失败: %s" % e)
         import traceback

@@ -16,11 +16,18 @@ from tests.test_main import TestWithUserLogin, setUpModule as init, main
 from webserver import models
 from webserver.services.sync_service import MyReaderSyncService
 
+# 正文常量与库夹具（tests/make_fixtures.py）共用 tests/make_epub_fixtures.py
+# 里的同一份定义：夹具正文是公有领域文本，句子只写在那里一处。
+from tests.make_epub_fixtures import (  # noqa: E402
+    BR_WRAPPED_TEXT,
+    LIBRARY_BOOK_TITLE,
+    OLD_UNIQUE_TEXT,
+    OTHER_UNIQUE_TEXT,
+)
+
 EPUB_BOOK_ID = 1
 NO_EPUB_BOOK_ID = 2
-UNIQUE_TEXT = "他手里拿着两大块磁铁，从一座农舍走到另一座农舍"
-BR_WRAPPED_TEXT = "他手里拿着两大块磁铁，从一座农舍走到另一座农舍"  # same sentence, resolves across a mid-sentence <br>
-OTHER_UNIQUE_TEXT = "满脸络腮胡子，手指瘦得象鸟的爪子"  # a different, also-unique passage in the same book
+UNIQUE_TEXT = OLD_UNIQUE_TEXT
 
 
 def setUpModule():
@@ -150,7 +157,7 @@ class TestSyncImportHandler(TestWithUserLogin):
         # new.epub-style books; use a passage this book repeats too — the
         # exact count doesn't matter, only that it's >1 and therefore never
         # written even with dry_run=False.
-        d = self.post_import(book_id=EPUB_BOOK_ID, dry_run=False, anchors=[{"id": "amb-1", "text": "百年孤独"}])
+        d = self.post_import(book_id=EPUB_BOOK_ID, dry_run=False, anchors=[{"id": "amb-1", "text": LIBRARY_BOOK_TITLE}])
         status = d["results"][0]["status"]
         if status == "ambiguous":
             self.assertEqual(d["pushed"]["notes"], [])

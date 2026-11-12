@@ -158,6 +158,12 @@ class TestBookList(unittest.TestCase):
         args = {"size": size}
         handler.get_argument = lambda name, default=None: args.get(name, default)
         handler.get_argument_start = lambda: 0
+        # 裸造 handler 跳过了 initialize()/RequestHandler 初始化：
+        # * user_id() 走 get_secure_cookie，要求 application.settings 里有
+        #   cookie_secret、请求上有 cookies；这里只测分页，直接钉成游客；
+        # * db_lock 是类属性（默认 None），应用启动时才被 main.py 赋真锁。
+        handler.user_id = lambda: 0
+        handler.db_lock = mock.MagicMock()
         self.fmt_calls = []
 
         async def books(ids, **kw):
@@ -219,6 +225,10 @@ class TestUpload(unittest.TestCase):
         handler.increase_history_count = mock.Mock()
         handler.user_id = lambda: 1
         handler.sqlite_session = mock.Mock()
+        # db_lock 是 BaseHandler 的类属性（默认 None），应用启动时由 main.py
+        # 赋成真锁。裸造 handler 拿不到，normal 模式下 _after_import 会
+        # `with self.db_lock:` → TypeError。
+        handler.db_lock = mock.MagicMock()
         with normal(), mock.patch.object(book_module, "AutoFillService"), mock.patch.object(book_module, "CatalogExtractService") as catalog:
             handler._after_import(mock.Mock(title="t"), 5)
         catalog.return_value.extract_one_async.assert_called_once_with(5)

@@ -27,6 +27,18 @@ import asyncio
 
 import pytest
 
+# 夹具缺件现场生成（tests/cases/library/、old.epub、new.epub 都不入库）。
+# 放在 import 期做，是因为 test_cfi_gen.py 在**模块级**就按
+# `os.path.exists(tests/cases/old.epub)` 决定要不要跳过用例，那时任何
+# fixture 都还没跑。生成失败不在这里抛：让真正依赖它的用例自己报错，
+# 否则连「不需要夹具」的测试文件都跑不起来。
+try:
+    from tests.fixtures_gen import ensure_fixtures
+
+    ensure_fixtures()
+except Exception as _e:  # pragma: no cover - 环境缺 calibre 等
+    print("[fixtures] 生成失败，依赖夹具的用例会红：%r" % (_e,))
+
 
 @pytest.fixture(autouse=True)
 def _ensure_event_loop():

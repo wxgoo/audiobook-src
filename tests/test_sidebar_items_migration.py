@@ -49,16 +49,24 @@ class TestNormalizeSidebarItems(unittest.TestCase):
         for key in NEW_KEYS:
             self.assertIn(key, served)
 
-    def test_physical_books_is_not_a_sidebar_item(self):
-        """实体书不再是「侧边栏显示项目」，入口由 ENABLE_PHYSICAL_BOOKS 唯一决定。
+    def test_physical_books_is_a_sidebar_item_since_build22(self):
+        """实体书从 build.22 起重新成为「侧边栏显示项目」（两处判据叠加）。
 
-        AppHeader 已改为只读 sys.allow.physical_books。若把 printbooks 重新写回默认列表，
-        就又变成「功能开关 + 勾选项」两处判据（勾选项一旦没有该值，开关打开也不显示入口，
-        且设置页无处补勾），本测试是防回归锚点。
+        这条断言原先写的是 `assertNotIn`，锁的是「printbooks 不在列表、
+        入口只由 ENABLE_PHYSICAL_BOOKS 决定」的旧设计。产品后来改了：
+
+        * webserver/base/sidebar.py:41-57 明确把 printbooks 放回默认列表；
+        * app/src/pages/admin/settings.vue:2106 把它列成可勾选项
+          （requires: ENABLE_PHYSICAL_BOOKS）；
+        * app/src/components/AppHeader.vue:770 的显示条件是
+          `showItem("printbooks") && sys.allow.physical_books`，即
+          勾选项与功能开关**同时**满足才出现入口。
+
+        所以断言改成「在列表里」，并保留对归一化行为的检查：旧默认列表带的
+        printbooks 归一化后仍然是当前默认列表（不重复、不丢失）。
         """
-        self.assertNotIn("printbooks", SIDEBAR_DEFAULT_ITEMS)
-        # 旧默认列表里带的 printbooks 在归一化后应被丢弃，存量配置不再参与显隐
-        self.assertNotIn("printbooks", normalize_sidebar_items(list(LEGACY_ITEMS)))
+        self.assertIn("printbooks", SIDEBAR_DEFAULT_ITEMS)
+        self.assertEqual(list(SIDEBAR_DEFAULT_ITEMS), normalize_sidebar_items(list(LEGACY_ITEMS)))
 
     def test_legacy_default_in_shuffled_order_is_still_migrated(self):
         """集合相同即认定陈旧（保存顺序可能因历史版本而异）。"""

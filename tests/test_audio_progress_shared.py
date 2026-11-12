@@ -17,10 +17,23 @@
 import os
 import re
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIALOG = os.path.join(ROOT, "app", "src", "components", "AudioListDialog.vue")
 PAGE = os.path.join(ROOT, "app", "src", "pages", "audio", "_id.vue")
 BACKEND = os.path.join(ROOT, "webserver", "handlers", "audio.py")
+
+# `app/src/components/AudioListDialog.vue` 已在 commit 18f0c75「refactor(audio):
+# 下线详情页有声书弹窗，生成/取消/删除统一收归播放页」里**有意删除**（同一
+# commit 把逻辑搬进了 audio/_id.vue 与 book/_bookid.vue，全仓库现已无任何引用）。
+# 弹窗侧的 3 条契约因此没有被测对象，标 skip 而不是删掉：将来若恢复弹窗，
+# 这些回归锚点直接生效。播放页侧的等价契约仍由本文件其余用例覆盖。
+DIALOG_REMOVED = not os.path.exists(DIALOG)
+_DIALOG_GONE = pytest.mark.skipif(
+    DIALOG_REMOVED,
+    reason="AudioListDialog.vue 已于 18f0c75 下线（功能收归播放页），弹窗侧契约无被测对象",
+)
 
 
 def _read(path):
@@ -52,6 +65,7 @@ def _method_body(src, name):
     raise AssertionError(f"方法 {name} 大括号不匹配")
 
 
+@_DIALOG_GONE
 def test_dialog_writes_same_key_schema_as_player():
     """弹窗写共享键时用的字段名/语义必须与播放页一致。"""
     src = _read(DIALOG)
@@ -65,6 +79,7 @@ def test_dialog_writes_same_key_schema_as_player():
     assert "audio_progress_${userId}_${this.bookId}" in page_src
 
 
+@_DIALOG_GONE
 def test_dialog_saves_periodically_while_playing():
     """进度要在播放中周期落盘 —— 只在退出时保存会漏掉「没关弹窗就跳页」。"""
     src = _read(DIALOG)
@@ -89,6 +104,7 @@ def test_dialog_saves_periodically_while_playing():
     assert m and int(m.group(1)) <= 10000, "周期保存的间隔不应超过 10 秒"
 
 
+@_DIALOG_GONE
 def test_dialog_sync_not_skipped_when_key_missing():
     """_syncSharedProgress 必须在 key 缺失时也能执行（不能放在早退之后）。"""
     src = _read(DIALOG)

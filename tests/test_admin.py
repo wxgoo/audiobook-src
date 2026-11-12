@@ -16,6 +16,19 @@ class TestAdmin(TestWithUserLogin):
 
 
 class TestAdminTrashBooks(TestWithUserLogin):
+    def setUp(self):
+        super().setUp()
+        # 恢复流程末尾会调 `AutoFillService().auto_fill(book_id)`
+        # （webserver/handlers/admin.py:1582，AUTO_FILL_META 打开时）。测试库里
+        # 没有真实可刮削的来源，这次回写会真的写进 calibre 库：book 1 的作者被
+        # 清成 Unknown，原「加西亚·马尔克斯」变成孤儿行被 calibre 回收，于是
+        # 同一次全量里 test_main::TestMeta::test_author 变成 14 != 15。
+        # 这里把刮削服务整体钉成 no-op：本组用例测的是回收站接口的入参/出参，
+        # 不对刮削行为负责。
+        autofill = mock.patch("webserver.handlers.admin.AutoFillService")
+        autofill.start()
+        self.addCleanup(autofill.stop)
+
     def new_api(self):
         from tests.test_main import _app
         return _app.settings["legacy"].new_api

@@ -83,6 +83,12 @@ class TestBookList(unittest.TestCase):
         args = {"size": str(size)}
         handler.get_argument = lambda name, default=None: args.get(name, default)
         handler.get_argument_start = lambda: 0
+        # 裸造 handler 跳过 initialize()/RequestHandler 初始化：
+        # * user_id() 走 get_secure_cookie，要求 application.settings 里有
+        #   cookie_secret、请求上有 cookies；这里只测分页，直接钉成游客；
+        # * db_lock 是类属性（默认 None），应用启动时才被 main.py 赋真锁。
+        handler.user_id = lambda: 0
+        handler.db_lock = mock.MagicMock()
         handler.calibre_db_cache = mock.Mock()
         handler.calibre_db_cache.all_field_for.side_effect = lambda field, ids, default: {i: sort_values[i] for i in ids}
 
