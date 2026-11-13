@@ -62,7 +62,7 @@
                                   @click="link.action ? handleLinkAction(link.action, link) : undefined"
                             >
                                 <v-list-item-action class="mt-1 mb-1 mr-2" dense>
-                                    <img v-if="link.favicon" :src="link.favicon" class="friend-favicon" @error="$event.target.style.display='none'" />
+                                    <img v-if="link.favicon && !link._iconFailed" :src="link.favicon" class="friend-favicon" @error="onFaviconError(link)" />
                                     <v-icon v-else class="pa-0 ma-0" :class="iconClass(link)" :color="iconColor(link)">{{ link.icon }}</v-icon>
                                 </v-list-item-action>
                                 <v-list-item-content>
@@ -931,6 +931,11 @@ export default {
         },
     },
     methods: {
+        onFaviconError(link) {
+            // favicon 加载/解码失败（后端存了非图片内容的「假图标」）时，
+            // 回落到类型图标，而不是把 <img> 隐藏后留下整格空白。
+            this.$set(link, "_iconFailed", true);
+        },
         refreshUserInfo() {
             this.$backend("/user/info").then((rsp) => {
                 if (!rsp || !rsp.sys) return;

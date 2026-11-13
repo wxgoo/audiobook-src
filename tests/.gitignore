@@ -12,3 +12,7 @@
 
 # 同理，old.epub / new.epub 也是 fixtures_gen 生成的（正文为公有领域文本），
 # 由仓库根 .gitignore 的 *.epub 规则挡掉。
+
+# 同上：calibre 建库中途的暂存目录（测试被中断或并发时会留下），同样是「书」，
+# 不入库。历史上有一次 check-dist/测试跑完残留 18 个文件混进暂存区，故显式忽略。
+/cases/library.building/
