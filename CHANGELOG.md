@@ -16,6 +16,24 @@
 
 ---
 
+## 4.6.0-build.27-r34 后续修复（**upgrade.sh 数据挂载误报**，仅脚本，revision / 清单字节不变）
+
+- 症状：`sh scripts/upgrade.sh <r34 包>` 在 `[6/8]` 报
+  `!! docker-compose.yml 里没有 'audiobook-data:/data' 挂载` 并退出，
+  此时旧源码已归档、新包已解压，但**镜像未重建、容器未启动**，处于半升级状态。
+- 根因：`r33` 把 `docker-compose.yml` 变量化成
+  `${DATA_DIR:-/volume1/docker/audiobook-data}:/data`，而 `upgrade.sh` L219 仍按字面量
+  `grep -q "audiobook-data:/data"` 校验，中间多一个 `}` 就匹配不上。属上一轮变量化引入的回归。
+- 修复：改用 `docker compose config` 解析实际挂载源（自动合并 `.env` 与默认值），
+  解析不到再退回文本兜底（兼容 `变量形式` / `旧字面量`）；并新增语义检查——
+  必须是**源码目录之外的绝对路径**，防止把 `/data` 挂进会被归档的源码目录。
+  实测 4 种 compose 形态解析正确，挂错目录 / 缺 `: /data` 两种坏例被拦。
+- **不需要重新部署、不需要重出包**：只改 `scripts/upgrade.sh`，清单与 dist 一个字节没动。
+  已装 r34 的站点无感；当前卡在半升级的机器只需
+  `cd /volume1/docker/audiobook && sh scripts/deploy.sh` 完成构建与启动即可。
+
+---
+
 ## 4.6.0-build.27-r34（2026-11-14，**修复详情页修改分类报错**，纯后端，可热更）
 
 ### 根因：`_` 被当成局部变量，盖掉了 i18n 翻译函数

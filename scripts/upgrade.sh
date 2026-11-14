@@ -215,14 +215,41 @@ for f in Dockerfile docker-compose.yml; do
 done
 echo "    OK：关键文件齐全"
 
-# 校验 compose 的数据挂载指向 audiobook-data
-if ! grep -q "audiobook-data:/data" "$SRC/docker-compose.yml"; then
-    echo "    !! docker-compose.yml 里没有 'audiobook-data:/data' 挂载"
-    grep -n ":/data" "$SRC/docker-compose.yml" | sed 's/^/       /'
-    echo "    !! 请手工修正 volumes 行为: - /volume1/docker/audiobook-data:/data"
-    exit 1
+# 校验 compose 里 /data 的挂载源。
+# r34 起 docker-compose.yml 变量化为 ${DATA_DIR:-/volume1/docker/audiobook-data}:/data，
+# 旧写法按字面量 grep "audiobook-data:/data" 会误报并中断升级（现场实锤：
+# [6/8] 报「没有 audiobook-data:/data 挂载」，实际挂载完全正确）。
+# 现在优先用 docker compose config 解析实际 source（自动合并 .env 与默认值），
+# 解析不到再退回文本兜底；最后确认它是源码目录之外的绝对路径。
+DATA_MOUNT=""
+if ( cd "$SRC" && docker compose config >/dev/null 2>&1 ); then
+    DATA_MOUNT=$( cd "$SRC" && docker compose config 2>/dev/null | awk '
+        /^[[:space:]]*source:/ { s = $2 }
+        /^[[:space:]]*target:[[:space:]]*\/data[[:space:]]*$/ { print s; exit }' )
 fi
-echo "    OK：数据挂载指向 audiobook-data"
+if [ -z "$DATA_MOUNT" ]; then
+    VOL=$(sed -n 's|^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"]*\):/data"\{0,1\}[[:space:]]*$|\1|p' \
+              "$SRC/docker-compose.yml" | head -1)
+    case "$VOL" in
+        *'${DATA_DIR:-'*) DATA_MOUNT=$(printf '%s' "$VOL" | sed 's/.*\${DATA_DIR:-\([^}]*\)}.*/\1/') ;;
+        *'${DATA_DIR}'*)  DATA_MOUNT="${DATA_DIR:-/volume1/docker/audiobook-data}" ;;
+        /*)               DATA_MOUNT="$VOL" ;;
+    esac
+fi
+case "$DATA_MOUNT" in
+    /*)
+        [ "$DATA_MOUNT" != "$SRC" ] || {
+            echo "    !! /data 不能挂到源码目录 $SRC（升级时会连同旧源码一起被归档）"; exit 1; }
+        ;;
+    *)
+        echo "    !! 无法确认 compose 里 /data 的挂载源（解析得到 '$DATA_MOUNT'）"
+        grep -n ':/data' "$SRC/docker-compose.yml" | sed 's/^/       /'
+        echo "    !! 应形如: - /volume1/docker/audiobook-data:/data"
+        echo "    !! 或变量形式: - \${DATA_DIR:-/volume1/docker/audiobook-data}:/data"
+        exit 1
+        ;;
+esac
+echo "    OK：数据挂载 $DATA_MOUNT -> /data（独立于源码目录）"
 
 # ---------- 6.2 MyReader 符号链接校验 / 重建 ----------
 # 2026-11-09 现场实锤：包内 myreader-dist 有 119 根相对符号链接，
