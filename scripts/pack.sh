@@ -123,8 +123,11 @@ if [ "${1:-}" = "--check" ]; then
                 fail=1
             fi
             dtotal=$(find "$D/app/dist" -type f 2>/dev/null | wc -l | tr -d ' ')
-            if [ "$dtotal" -ne 766 ]; then
-                echo "  !! app/dist 文件数 $dtotal != 基线 766 —— 先跑 sh scripts/check-dist.sh 定位缺什么"
+            # r31 基线 768（r30 是 766）：+2 来自 CategoryTabs.vue 抽成公共组件
+            # 后的新 chunk 与 manifest 变化；已用 .nuxt/dist/server/client.manifest.json
+            # 对比磁盘确认零残留零丢失后才挪的基线，别在未做引用核对时随手改这个数。
+            if [ "$dtotal" -ne 768 ]; then
+                echo "  !! app/dist 文件数 $dtotal != 基线 768 —— 先跑 sh scripts/check-dist.sh 定位缺什么"
                 fail=1
             fi
         fi
@@ -590,11 +593,11 @@ tar -tzf "$OUT" > "$LIST" || gate_bad "无法读取包内成员清单"
 grep -v '/$' "$LIST" > "$LIST.f" || true
 
 DIST_FILES=$(grep -c "^${PFX}app/dist/" "$LIST.f" || true)
-[ "$DIST_FILES" = "766" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 766）"
+[ "$DIST_FILES" = "768" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 768）"
 
 DIST_IDX=$(tar -xzOf "$OUT" "${PFX}app/dist/index.html" 2>/dev/null | sha256sum | cut -d' ' -f1)
-[ "$DIST_IDX" = "797e0d4d07b50b24a2584c39638e0f96bfcb82ae9318f59f7fe0ec569ee27082" ] \
-    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 797e0d4d…，4901 字节）"
+[ "$DIST_IDX" = "2c02df40e218bbbdd282fc1c7d818c6b0768f3b8941410a9d8c966e3cdf6084d" ] \
+    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 2c02df40…，4901 字节）"
 
 grep -qx "${PFX}app/dist/static/pdfjs/web/viewer.html" "$LIST" \
     || gate_bad "包内缺 app/dist/static/pdfjs/web/viewer.html"
@@ -617,7 +620,7 @@ if [ "$gate_fail" != "0" ]; then
     rm -f "$OUT"
     exit 1
 fi
-echo "  门禁 OK：app/dist $DIST_FILES 个文件，index.html 797e0d4d…（4901 字节），pdfjs viewer 在包内，成员共 $PKG_FILES 个"
+echo "  门禁 OK：app/dist $DIST_FILES 个文件，index.html 2c02df40…（4901 字节），pdfjs viewer 在包内，成员共 $PKG_FILES 个"
 
 # ---------- 验包 ----------
 echo "==> [4/4] 验包"
