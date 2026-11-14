@@ -42,6 +42,22 @@ if [ -z "$PKG_VER" ]; then
 fi
 echo "==> 包内版本: $PKG_VER"
 
+# 包内发布清单最小校验（r27 / r33 事故防复发）：
+# 完整校验（revision 与仓库清单字节比对）由 upgrade.sh / pack.sh 在包层级完成；
+# 这里只挡「手工解压了带旧清单的坏包、直接跑 deploy.sh」这条路。
+MF="update/manifest.json"
+if [ -f "$MF" ]; then
+    MF_REV=$(sed -n 's/.*"revision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MF" | head -1 | tr -d '\r')
+    [ -n "$MF_REV" ] || { echo "!! update/manifest.json 缺 revision，停止部署"; exit 1; }
+    printf '%s' "$MF_REV" | grep -qE -- '-r[0-9]+$' || {
+        echo "!! update/manifest.json revision='$MF_REV' 不带 -rN（旧清单被打进包），停止部署"
+        exit 1; }
+    echo "==> 包内清单 revision: $MF_REV"
+else
+    echo "!! 缺 update/manifest.json（/admin/version 会拿不到本地基线），停止部署"
+    exit 1
+fi
+
 echo "==> [0/5] 源码目录污染自检"
 # 布局（自 4.6.0-1 起）数据外置到 /volume1/docker/audiobook-data，
 # 源码目录里不应出现 books/ data/ 等运行数据目录。

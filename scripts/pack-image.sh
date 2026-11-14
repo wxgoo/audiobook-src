@@ -186,6 +186,11 @@ services:
       - ${DATA_DIR}:/data
     ports:
       - "${HTTP_PORT:-9800}:80"
+      # 8443 → 容器内 443。nginx 的 server 块同时 listen 80 与 443 ssl，
+      # 证书读 /data/books/ssl/ssl.crt|ssl.key；首次启动镜像会补一份自签证书，
+      # 所以空数据目录也能起 443（浏览器会告警，换真证书见 deploy-cert.sh）。
+      # 不需要 HTTPS 就删这一行，或把 HTTPS_PORT 改成别的宿主机端口。
+      - "${HTTPS_PORT:-8443}:443"
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -194,7 +199,7 @@ services:
 # 不用 docker compose，直接命令行等价于：
 #   docker run -d --name mybooks --restart always \
 #     --security-opt seccomp=unconfined \
-#     -v /你的/数据目录:/data -p 9800:80 \
+#     -v /你的/数据目录:/data -p 9800:80 -p 8443:443 \
 #     -e PUID=$(id -u) -e PGID=$(id -g) -e TZ=Asia/Shanghai \
 #     @IMAGE_TAG@
 YAMLEOF
@@ -208,6 +213,8 @@ DATA_DIR=./data
 
 # 宿主机端口。被占用就换，比如 9801。
 HTTP_PORT=9800
+# HTTPS 宿主机端口（映射容器内 443）。不需要就把 compose 里对应的 ports 行删掉。
+HTTPS_PORT=8443
 
 # 群晖/威联通：SSH 里执行 id 你的用户名 拿 UID/GID，常见 1026/100。
 # Linux 普通用户通常是 1000/1000。填错会导致「上传不了书 / 设置存不下」。
@@ -248,6 +255,8 @@ docker compose up -d
 \`\`\`
 
 浏览器打开 \`http://<这台机器的IP>:9800\`。
+HTTPS 是 \`https://<这台机器的IP>:8443\`（自签证书，浏览器会告警，见第四节第 2 条）；
+不需要 HTTPS 就把 compose 里 8443 那行删掉，或改 \`HTTPS_PORT\`。
 
 没有 docker compose 的话，用命令行（等价）：
 
@@ -255,7 +264,7 @@ docker compose up -d
 docker run -d --name mybooks --restart always \\
   --security-opt seccomp=unconfined \\
   -v /你的/数据目录:/data \\
-  -p 9800:80 \\
+  -p 9800:80 -p 8443:443 \\
   -e PUID=\$(id -u) -e PGID=\$(id -g) \\
   -e TZ=Asia/Shanghai \\
   $DELIVER_IMG
@@ -309,9 +318,13 @@ docker compose start
 
 ### 2. HTTPS 是自签 demo 证书
 
-镜像里带的是 \`CN=demo.com\` 的演示证书，浏览器必然告警。
-要么只用 HTTP（默认只映射了 80），要么自己换成真证书放进
-\`<DATA_DIR>/books/ssl/\`（\`ssl.crt\` / \`ssl.key\`）。
+compose 默认把宿主机 \`8443\` 映射到容器 \`443\`，但镜像里带的是
+\`CN=demo.com\` 的演示证书，浏览器必然告警。只用 HTTP 就删掉 compose 里
+8443 那行，或改 \`HTTPS_PORT\`。
+
+换真证书：把 \`ssl.crt\` / \`ssl.key\` 放进 \`<DATA_DIR>/books/ssl/\` 覆盖同名文件，
+再让 nginx 重载（\`docker exec <容器> nginx -s reload\`）。没有域名、家宽
+80/443 被封时申请不到公网可信证书，见仓库 \`docs/HTTPS真证书申请与部署.md\`（DNS-01）。
 
 ### 3. 首次启动慢
 

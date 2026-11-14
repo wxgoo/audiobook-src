@@ -16,6 +16,34 @@
 
 ---
 
+## 4.6.0-build.27-r33 重出（2026-11-14，**仅脚本加固，revision / 清单字节不变**）
+
+r33 包**同 revision 重出**（只有包 md5 变了）：`update/manifest.json` 一个字节没改，
+`app/dist` 基线 768 / `index.html` 指纹 `2c02df40…` 也没变，所以**不需要再走一次
+redeploy**，已装 r33 的站点不受影响。本轮改动全在 `scripts/` 与文档，按
+`gen-update-manifest.py` 的 `classify()` 归为 `docs`，不阻塞热更。
+
+### 发布清单闭环（r27 / r33 事故的根治）
+
+- `scripts/pack.sh` **删掉从 Gitee raw 拉清单的历史逻辑**——出包链路零网络请求；
+  包内清单唯一来源是仓库工作区 `update/manifest.json`（前面已断言 `revision == $VER`）。
+  首次修复只做到「远端落后就跳过 + 暂存区断言」，断言仍没覆盖**最终 .tar.gz**，闭环没合上。
+- 新增 `scripts/verify-pkg-manifest.sh`：直接从最终 `.tar.gz` 解出清单，校验
+  `revision` 格式、与本次版本一致、整份字节 `sha256` 与仓库清单一致。
+- `pack.sh` 打包后门禁强制调用它，不一致就**删包退出**；`pack.sh --check` 也调用它。
+- `scripts/upgrade.sh` §5.5 / `scripts/deploy.sh` 解压后反向校验包内 `revision`
+  与包文件名的 `-rN` 一致，坏包在构建前被拦。
+- 新增 `tests/test-pkg-manifest-guard.sh`：重演「r32 清单打进 r33 包」等 13 个用例，全绿；
+  `scripts/check-remote-manifest.sh` 作为发布**后置**只读检查，不进出包链路、不覆盖产物。
+
+### compose 部署
+
+- `docs/部署方式速查.md` 新增 §2.5：仓库自带 compose 已是 `9800:80` / `8443:443` /
+  `/volume1/docker/audiobook-data:/data`；明确**源码目录不能挂 `/data`**、证书路径与自签说明。
+- `scripts/pack-image.sh` 的交付 compose 模板补 `8443:443` 与 `HTTPS_PORT`、证书说明。
+
+---
+
 ## 4.6.0-build.27-r33（2026-11-14，**打包口径收敛 + 部署文档整理**，需重新部署）
 
 ### 打包：默认排除 `app/node_modules`
@@ -34,8 +62,9 @@
 - `myreader-dist` 下三层 `node_modules`（119 根相对符号链接）任何模式都不动，门禁不变。
 - **修复包内清单基线被 Gitee raw 缓存污染**：旧逻辑出包前从 raw 拉清单覆盖包内那份，
   r33 首次打包时 raw 还停在 r32，导致「包名 r33、包内清单 r32」，装完页面会一直
-  误报有新版本 / 反复要求重新部署（r27 同类事故重演）。现在一律用仓库内已断言
-  `revision == VER` 的那份，远端只打印同步提示，并在写进包后再校验一次，不一致直接拒绝出包。
+  误报有新版本 / 反复要求重新部署（r27 同类事故重演）。首次修复只做到
+  「远端落后就跳过 + 暂存区断言」，**断言没覆盖最终 .tar.gz**，闭环仍未合上；
+  完整根治见上方「r33 重出」。
 
 ### 文档：一份按场景给命令的速查表 + 全仓口径对齐
 

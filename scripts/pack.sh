@@ -78,6 +78,24 @@ if [ "${1:-}" = "--check" ]; then
             [ -e "$D/$f" ] || { echo "  !! 缺 $f"; fail=1; }
         done
 
+        # 包内发布清单（r27 / r33 事故防线）：直接对 .tar.gz 说话，不靠解压后的目录。
+        # 常见用法是「拿新仓库的 pack.sh 验旧包」，所以优先用本仓库的校验脚本；
+        # 若是拿包里自带的 pack.sh 验包，则退回包内那份。
+        VM="$SELF_DIR/verify-pkg-manifest.sh"
+        [ -f "$VM" ] || VM="$D/scripts/verify-pkg-manifest.sh"
+        if [ -f "$VM" ]; then
+            sh "$VM" "$PKG" || fail=1
+        else
+            # 兜底：老包没带校验脚本，至少确认清单带 -rN 修订号
+            MF="$D/update/manifest.json"
+            if [ -f "$MF" ]; then
+                R=$(sed -n 's/.*"revision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MF" | head -1)
+                printf '%s' "$R" | grep -qE -- '-r[0-9]+$' \
+                    || { echo "  !! 包内清单 revision='$R' 不带 -rN（旧清单被打进包）"; fail=1; }
+                echo "  包内清单 revision=$R（老包无校验脚本，仅做最小检查）"
+            fi
+        fi
+
         # 不该有的东西：版本库/构建缓存，两种模式都一样；
         # 归档、tests、skills、.claude 这些开发侧内容只在部署包里算杂物，源码整包必须保留。
         # app/node_modules 默认排除（--full 才保留），两种口径都不判失败。
@@ -523,51 +541,24 @@ find "$STAGE/audiobook" \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null
 echo "  已清掉 __pycache__ / .pytest_cache / *.pyc（开发残留）"
 
 # ---------- 包内发布清单基线（仅部署包） ----------
-# 旧做法：出包前从 Gitee raw 拉清单覆盖包内那份，理由是「本仓库清单往往落后」。
-# 但 Gitee raw 有缓存：r27 与 r33 都出现过「仓库已是新清单、raw 还停在上一版」，
-# 结果把旧 revision 打进包里，装完页面一直误报有新版本 / 反复要求重新部署。
-# 现在的口径：本脚本前面的断言已确认仓库里的 update/manifest.json 的 revision == $VER，
-# 它就是本次要发布的清单，直接以它为准；远端只打印一个「是否已同步」的提示，
-# 绝不覆盖产物。这样也避免重出清单时远端的旧字节混进包里。
+# 单一事实源 = 仓库工作区的 update/manifest.json；前面的断言已确认 revision == $VER。
+#
+# ★ 出包链路禁止任何网络 I/O ★
+# r27 / r33 两次事故同形：这里曾有一段「从 Gitee raw 拉清单覆盖包内基线」的历史分工
+# 逻辑，理由是「本仓库清单往往落后」。但 raw 有缓存，仓库已推新清单、远端还停在
+# 上一版，结果把旧 revision 打进新包；装完 /admin/version 一直误报有新版本。
+# 「远端是否已同步」是发布流程的**后置检查**（推完清单后轮询 raw 确认），
+# 由 CI / scripts/check-remote-manifest.sh 负责，绝不进出包链路、绝不覆盖产物。
+# 本次连「仅作提示」的网络请求也一并删除：留着就是给后人留一个改回覆盖的口子。
 if [ "$MODE" = deploy ]; then
-    echo "==> [3b/4] 包内发布清单基线"
-    MANIFEST_URL="${MANIFEST_URL:-https://gitee.com/wxgoo/audiobook-src/raw/master/update/manifest.json}"
-    MF_TMP="$STAGE/.manifest.remote.json"
-    mf_get() {
-        python3 -c 'import json,sys
-d=json.load(open(sys.argv[1], encoding="utf-8"))
-print(d.get(sys.argv[2], ""))' "$1" "$2" 2>/dev/null || true
-    }
-    mf_fetch() {
-        if command -v curl >/dev/null 2>&1; then
-            curl -fsSL --max-time 20 "$MANIFEST_URL" -o "$MF_TMP" 2>/dev/null && return 0
-        fi
-        if command -v wget >/dev/null 2>&1; then
-            wget -q -T 20 -O "$MF_TMP" "$MANIFEST_URL" 2>/dev/null && return 0
-        fi
-        return 1
-    }
-    if command -v python3 >/dev/null 2>&1 && mf_fetch && [ -s "$MF_TMP" ] \
-            && python3 -c 'import json,sys
-d=json.load(open(sys.argv[1], encoding="utf-8"))
-sys.exit(0 if isinstance(d, dict) and d.get("revision") else 1)' "$MF_TMP" 2>/dev/null; then
-        MF_REV=$(mf_get "$MF_TMP" revision)
-        if [ "$MF_REV" = "$VER" ]; then
-            echo "  · 远端清单已是 $MF_REV（仅作参考，不覆盖包内产物）"
-        else
-            echo "  · 远端清单 revision=$MF_REV 落后于本次 $VER（Gitee raw 缓存），跳过"
-        fi
-    else
-        echo "  · 远端清单不可读（网络/缓存/JSON），不影响出包：以仓库内清单为准"
-    fi
-    rm -f "$MF_TMP"
-
-    # 一律用仓库里已通过断言的那份，并在写进包后再校验一次（防止今后又被人改成远端覆盖）
+    echo "==> [3b/4] 包内发布清单基线（单一事实源：仓库工作区，零网络请求）"
     cp update/manifest.json "$STAGE/audiobook/update/manifest.json"
-    STAGE_REV=$(mf_get "$STAGE/audiobook/update/manifest.json" revision)
+    STAGE_REV=$(sed -n 's/.*"revision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                    "$STAGE/audiobook/update/manifest.json" | head -1)
     [ "$STAGE_REV" = "$VER" ] || {
-        echo "  !! 包内清单 revision=$STAGE_REV != 本次版本 $VER，禁止出包"; exit 1; }
-    echo "  ✓ 包内清单基线: revision=$STAGE_REV（取自仓库，字节与提交一致）"
+        echo "  !! 暂存清单 revision=$STAGE_REV != 本次版本 $VER，禁止出包"; exit 1; }
+    echo "  ✓ 暂存清单: revision=$STAGE_REV（取自仓库，未经网络）"
+    echo "  → 打包后会对最终 .tar.gz 再做一次字节级断言（verify-pkg-manifest.sh）"
 fi
 
 
@@ -591,6 +582,25 @@ echo "  产物: $OUT"
 # 会让 tar 吃到 SIGPIPE，配合 pipefail 会被误判成「没找到」。
 gate_fail=0
 gate_bad() { echo "  !! 门禁失败：$1"; gate_fail=1; }
+
+# ★ 最终产物级清单断言（r27 / r33 事故防复发，最关键的一条）★
+# 前面的断言只证明了「仓库工作区那份对」「暂存区那份对」，证明不了
+# 「交付到用户手上的 .tar.gz 里那份对」。事故恰恰发生在打包链路里：
+# 旧版脚本会从 Gitee raw 覆盖暂存清单，raw 缓存把 r32 清单打进 r33 包。
+# 所以这里直接把清单从最终产物里解出来，做两件硬比对：
+#   1) revision == 本次 $VER
+#   2) 整份字节 sha256 == 仓库 update/manifest.json（挡住任何中途替换/污染）
+# 任一不符 → gate_bad → 删包退出，绝不留一个「看起来是新版、其实带旧清单」的包。
+if [ "$MODE" = deploy ]; then
+    [ -f "$SELF_DIR/verify-pkg-manifest.sh" ] || {
+        echo "  !! 缺 scripts/verify-pkg-manifest.sh，产物清单无法校验，禁止出包"; exit 1; }
+    MF_SHA=$(sha256sum update/manifest.json | cut -d' ' -f1)
+    if ! sh "$SELF_DIR/verify-pkg-manifest.sh" "$OUT" \
+            --expect-rev "$VER" --expect-sha256 "$MF_SHA"; then
+        gate_bad "最终产物内 update/manifest.json 与仓库清单不一致（禁止交付）"
+    fi
+fi
+
 LIST="$STAGE/.pkg.list"
 tar -tzf "$OUT" > "$LIST" || gate_bad "无法读取包内成员清单"
 grep -v '/$' "$LIST" > "$LIST.f" || true

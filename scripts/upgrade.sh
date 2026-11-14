@@ -161,6 +161,37 @@ PKG_VER=$(sed -n 's/^VERSION[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "$SRC/webser
 [ -n "$PKG_VER" ] || { echo "    !! 读不出 $SRC/webserver/version.py 的 VERSION"; exit 1; }
 echo "    包内版本: $PKG_VER"
 
+# ---------- 5.5 包内发布清单校验（r27 / r33 事故防复发） ----------
+# 事故形状：包文件名是 r33，包内 update/manifest.json 却是 r32 —— 出包时 Gitee raw
+# 缓存把旧清单覆盖进产物。装完 /admin/version 会把 r32 当本地基线，于是永远
+# 「检测到新版本 / 需要重新部署」。这里在构建之前就把坏包拦下，别让它进镜像。
+echo "==> [5.5/8] 包内发布清单校验"
+if [ -f "$SRC/scripts/verify-pkg-manifest.sh" ]; then
+    sh "$SRC/scripts/verify-pkg-manifest.sh" "$PKG" || {
+        echo "    !! 包内发布清单校验失败，停止部署（不要手工跳过）"; exit 1; }
+else
+    echo "    （旧包未带 verify-pkg-manifest.sh，走内联最小检查）"
+fi
+
+MF="$SRC/update/manifest.json"
+[ -f "$MF" ] || { echo "    !! 包内缺 update/manifest.json"; exit 1; }
+PKG_MF_REV=$(sed -n 's/.*"revision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MF" | head -1 | tr -d '\r')
+[ -n "$PKG_MF_REV" ] || { echo "    !! 包内清单缺 revision"; exit 1; }
+printf '%s' "$PKG_MF_REV" | grep -qE -- '-r[0-9]+$' || {
+    echo "    !! 包内清单 revision='$PKG_MF_REV' 不带 -rN（旧清单被打进包）"; exit 1; }
+
+# 包文件名里的 -rN 必须与包内 revision 一致：这是「r32 清单打进 r33 包」最直接的拦截。
+FILE_R=$(basename "$PKG" | grep -oE -- '-r[0-9]+' | tail -1 || true)
+MF_R=$(printf '%s' "$PKG_MF_REV" | grep -oE -- '-r[0-9]+' | tail -1 || true)
+if [ -n "$FILE_R" ] && [ -n "$MF_R" ]; then
+    [ "$FILE_R" = "$MF_R" ] || {
+        echo "    !! 包文件名是 $FILE_R，包内清单却是 $MF_R —— 旧清单被打进包，拒绝部署"
+        echo "       换正确版本重出的包即可（同 revision 重出，不必改版本号）"; exit 1; }
+    echo "    ✓ 包内清单 revision=$PKG_MF_REV，与包文件名一致"
+else
+    echo "    ✓ 包内清单 revision=$PKG_MF_REV（包名不含 -rN，跳过文件名比对）"
+fi
+
 # ---------- 6. 污染自检 ----------
 echo "==> [6/8] 源码目录污染自检"
 DIRTY_PATHS=""
