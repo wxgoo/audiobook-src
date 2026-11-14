@@ -800,71 +800,16 @@ class BookCategoryBatch(BaseHandler):
 
 
 class BookCategories(BaseHandler):
-    def _filter_categories_by_reading_range(self, categories):
-        """根据当前用户的阅读范围设置过滤分类列表，管理员和未登录用户不过滤"""
-        user = self.current_user
-        if not user:
-            # 未登录用户只能看到未设置分类的书籍，因此只能看到一个空分类
-            return []
-        if not user or self.is_admin():
-            return categories
-        # v4.7 读者组：自身未显式设置时回退组配置
-        from webserver.services.reader_group import ReaderGroupService
-        eff = ReaderGroupService.effective_limits(user)
-        read_limit = eff["read_limit"]
-        if read_limit == 0:
-            return categories
-        limit_cats = set(filter(None, eff["limit_categories"].split(',')))
-        if not limit_cats:
-            return categories
-        if read_limit == 1:
-            return [c for c in categories if c["name"] in limit_cats]
-        # read_limit == 2: 黑名单
-        return [c for c in categories if c["name"] not in limit_cats]
-
     @js
     async def get(self):
-        # Find the custom column for category
-        category_key = CALIBRE_COLUMN_CATEGORY
-        if category_key not in self.calibre_db.field_metadata:
-            return {"err": "ok", "categories": []}
+        """分类浏览页的分类列表。
 
-        meta = self.calibre_db.field_metadata[category_key]
-        table = f"custom_column_{meta['colnum']}"
-        link_table = f"books_{table}_link"
-
-        sql = f"""
-            SELECT t.value, count(l.book) as count
-            FROM {table} t
-            JOIN {link_table} l ON t.id = l.value
-            GROUP BY t.id
-            ORDER BY count DESC
+        骨架统一由 BaseHandler.catalog_categories 提供（含可见性/阅读范围口径），
+        有声书页的 tab 用的是同一份，只是把 count 换成有声书数——
+        两页分类名与顺序因此天然一致。
         """
-
         try:
-            version = self.library_version()
-            rows = BaseHandler._catalog_cache.get(("categories", sql), version)
-            if rows is None:
-                rows = [(row[0], row[1]) for row in await self.run_calibre_sql(sql)]
-                BaseHandler._catalog_cache.put(("categories", sql), version, rows)
-            categories = [{"name": row[0], "count": row[1]} for row in rows]
-
-            # 分类页每个 tab 后面的 (N) 以前是全库 SQL 的 count(l.book)，
-            # 只按名字过滤了条目、没重算数字；读者组成员点进去看到的书
-            # 远少于括号里的数。这里统一换成「可见口径」的计数。
-            key = self._scope_key()
-            scoped = (await self.run_calibre_read_async(self.scoped_counts, key)
-                      if key is not None else None)
-            if scoped:
-                counts = scoped.get("categories") or {}
-                categories = [
-                    {"name": name, "count": counts.get(str(name), 0)}
-                    for name, _ in categories if counts.get(str(name), 0) > 0
-                ]
-                categories.sort(key=lambda c: c["count"], reverse=True)
-            elif CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
-                categories = self._filter_categories_by_reading_range(categories)
-
+            categories = await self.catalog_categories()
             # 分类没有原生图标（calibre 自定义列是自由文本），按名称规则补一个，
             # 未命中关键词的按名字哈希稳定取备选图标 —— 分类页每个 tab 前面才有东西可看。
             category_icons.decorate(categories)

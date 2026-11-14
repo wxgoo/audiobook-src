@@ -75,6 +75,17 @@ class FakeHandler:
     def is_admin(self):
         return self.admin_flag
 
+    async def catalog_categories(self):
+        """分类浏览页的骨架（全库 count 降序）。
+
+        顺序是「全库 count 降序」，故意让全库最多的「历史」在有声书里为 0、
+        全库最少的「文学」也为 0，而排中间的「科幻」才有 2 本——
+        这样若实现按有声书数重排，科幻会跑到第一、历史会被剔除，测试立刻炸。
+        """
+        return [{"name": "历史", "count": 9},
+                {"name": "科幻", "count": 2},
+                {"name": "文学", "count": 1}]
+
     # ---- @js 装饰器需要的面 ----
     def set_header(self, *args, **kwargs):
         pass
@@ -238,6 +249,25 @@ class TestTabCountsConsistency(unittest.TestCase):
         rsp = self._get_by_audio(lst_h)
         self.assertEqual(rsp["total"], 2)
         self.assertEqual([b["id"] for b in rsp["books"]], [2, 1])
+
+    def test_tab_order_follows_catalog_page(self):
+        """分类名与顺序必须与分类浏览页一致，不能按有声书数重排。"""
+        admin = FakeHandler(args={"all": "1"}, is_admin=True,
+                            current_user={"_eff": {"read_limit": 0}})
+        tab = self._categories_rsp(admin)
+        # 照抄分类页顺序（历史 → 科幻 → 文学），哪怕有声书最多的是科幻
+        self.assertEqual([c["name"] for c in tab["categories"]],
+                         ["历史", "科幻", "文学"])
+        self.assertEqual([c["count"] for c in tab["categories"]], [0, 2, 0])
+
+    def test_zero_count_hidden_by_default(self):
+        """默认剔除有声书为 0 的分类（点进去只能是空页），all=1 才保留。"""
+        admin = FakeHandler(args={}, is_admin=True,
+                            current_user={"_eff": {"read_limit": 0}})
+        tab = self._categories_rsp(admin)
+        self.assertEqual([c["name"] for c in tab["categories"]], ["科幻"])
+        # 每个 tab 都有图标（与分类页同一套命名规则）
+        self.assertTrue(tab["categories"][0].get("icon"))
 
     def test_empty_categories_removed(self):
         """count 为 0 的分类不进 tab（聚合里可能有已不可见的旧桶）。"""

@@ -1468,7 +1468,7 @@ class BaseHandler(web.RequestHandler):
             # For guests, only show books without categories and tags
             return not book.get("tags") and not book.get(constants.CALIBRE_COLUMN_CATEGORY)
         # 管理员永远全可见：分类列表那边原本就有 is_admin() 豁免
-        # （见 book.py 的 _filter_categories_by_reading_range），但这里漏了，
+        # （见本类 _filter_categories_by_reading_range），但这里漏了，
         # 导致管理员自己也被读者组拦下——详情页四个按钮全灰、书架缺书，
         # 表现出来非常像"权限系统坏了"，实际只是漏了这行。
         if self.is_admin():
@@ -1728,6 +1728,92 @@ class BaseHandler(web.RequestHandler):
             cached = BaseHandler._query_fallback_cache.get(cache_key, 0)
             logging.error("get_custom_category_count query failed: %s", str(e))
             return cached
+
+    def _filter_categories_by_reading_range(self, categories):
+        """按当前用户的阅读范围过滤分类列表，管理员和未登录用户不过滤。
+
+        迁自 book.py：有声书页的分类 tab 也用同一套分类，两处各写一份迟早
+        出现「分类浏览页没有的分类、有声书页却有」的割裂。
+        """
+        user = self.current_user
+        if not user:
+            # 未登录用户只能看到未设置分类的书籍，因此只能看到一个空分类
+            return []
+        if self.is_admin():
+            return categories
+        # v4.7 读者组：自身未显式设置时回退组配置
+        from webserver.services.reader_group import ReaderGroupService
+
+        eff = ReaderGroupService.effective_limits(user)
+        read_limit = eff["read_limit"]
+        if read_limit == 0:
+            return categories
+        limit_cats = set(filter(None, eff["limit_categories"].split(',')))
+        if not limit_cats:
+            return categories
+        if read_limit == 1:
+            return [c for c in categories if c["name"] in limit_cats]
+        # read_limit == 2: 黑名单
+        return [c for c in categories if c["name"] not in limit_cats]
+
+    async def catalog_categories(self):
+        """全库分类骨架 `[{name, count}]`：可见口径计数，count 降序。
+
+        §唯一口径§
+        「分类」这个维度在全站只在这里定义一次：
+          - /api/categories（分类浏览页）  → 直接用 + 补图标
+          - /api/audiobooks/categories     → 用它定**分类名与顺序**，
+            只把 count 换成「该分类下的有声书数」
+        两页共用一份骨架，分类名、排序、图标才会天然一致；各算各的迟早
+        对不上（用户实测反馈过「两个页面的分类不一样」）。
+        调用方负责 category_icons.decorate，这里只管 name/count。
+        """
+        from webserver.constants import CALIBRE_COLUMN_CATEGORY
+
+        if CALIBRE_COLUMN_CATEGORY not in self.calibre_db.field_metadata:
+            return []
+
+        meta = self.calibre_db.field_metadata[CALIBRE_COLUMN_CATEGORY]
+        table = f"custom_column_{meta['colnum']}"
+        link_table = f"books_{table}_link"
+
+        sql = f"""
+            SELECT t.value, count(l.book) as count
+            FROM {table} t
+            JOIN {link_table} l ON t.id = l.value
+            GROUP BY t.id
+            ORDER BY count DESC
+        """
+
+        version = self.library_version()
+        rows = BaseHandler._catalog_cache.get(("categories", sql), version)
+        if rows is None:
+            rows = [(row[0], row[1]) for row in await self.run_calibre_sql(sql)]
+            BaseHandler._catalog_cache.put(("categories", sql), version, rows)
+        categories = [{"name": row[0], "count": row[1]} for row in rows]
+
+        # 分类页每个 tab 后面的 (N) 以前是全库 SQL 的 count(l.book)，
+        # 只按名字过滤了条目、没重算数字；读者组成员点进去看到的书
+        # 远少于括号里的数。这里统一换成「可见口径」的计数。
+        key = self._scope_key()
+        scoped = (await self.run_calibre_read_async(self.scoped_counts, key)
+                  if key is not None else None)
+        if scoped:
+            counts = scoped.get("categories") or {}
+            # 注意：categories 里是 dict，不能用 `for name, _ in categories`——
+            # 那样解包到的是键名 "name"/"count"，counts.get 永远取不到，
+            # 受限用户的分类列表会被整段清空（历史 bug，测试 test_scoped_* 锁定）。
+            filtered = []
+            for item in categories:
+                name = item["name"]
+                n = counts.get(str(name), 0)
+                if n > 0:
+                    filtered.append({"name": name, "count": n})
+            filtered.sort(key=lambda c: c["count"], reverse=True)
+            categories = filtered
+        elif CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+            categories = self._filter_categories_by_reading_range(categories)
+        return categories
 
     def get_authors_book_ids_map(self):
         """返回 {author_name: set(book_id)}，基于calibre的authors表/link表。"""

@@ -25,10 +25,20 @@
 
 - 后端：`/api/audiobooks` 新增 `category` 参数（先过滤后分页，游标兼容）；
   新端点 `/api/audiobooks/categories` 返回 tab 数据（name/count/icon/color）。
+- **分类与「分类浏览」页完全一致**：tab 的分类名、顺序、图标全部取自
+  `BaseHandler.catalog_categories()`——与 `/api/categories` 同一份骨架（同一 SQL、
+  同一可见性口径、同一套 `category_icons` 命名规则），只是把 count 换成
+  「该分类下的有声书数」。有声书数为 0 的分类默认不显示（点进去只能是空页），
+  带 `?all=1` 可保留，用于核对两页分类是否一致。
 - **口径一致**：tab 的 count 与列表的 total 用同一个可见性判定
   （`book_matches_limits`，读者组白/黑名单同一函数）——tab 显示几本，点进去就是几本。
-- 顺带修复：受限用户此前在有声书页看到的 `total` 是全量数，
+- 顺带修复 ①：受限用户此前在有声书页看到的 `total` 是全量数，
   与每页实际书数对不上，现在 total 同样按可见口径计算。
+- 顺带修复 ②：**读者组成员打开「分类浏览」页时分类列表整段为空**。
+  原代码 `for name, _ in categories` 遍历的是 dict 列表，解包到的是键名
+  `"name"`/`"count"` 而不是分类名，`counts.get()` 永远取不到值、所有分类
+  被当作 0 计数剔除。改为按 `item["name"]` 取值，`test_catalog_categories`
+  的 `test_scoped_counts_*` 锁定该行为。
 - 性能：分类聚合（书 × `#category`）收敛到共享模块 `webserver/base/audio_category_agg.py`，
   podcast 的分类/标签/作者聚合改为复用同一份（消灭两份各自失效的缓存）；
   书集合小变更在请求线程增量补齐（毫秒级），冷启动/全库扫描后转后台线程重建，
@@ -42,7 +52,11 @@
 - `tests/test_audio_category_agg.py`：聚合形态口径（含 "A/B" 不拆分的历史锚）、
   版本短路、增量补齐、全量节流、meta 与分桶同源；
 - `tests/test_audiobooks_category_handler.py`：category 过滤、未知分类空页、
-  过滤集上游标翻页、**tab count ≡ 列表 total**、受限用户同步削减、空分类剔除；
+  过滤集上游标翻页、**tab count ≡ 列表 total**、受限用户同步削减、空分类剔除、
+  **tab 顺序照抄分类页（不按有声书数重排）**；
+- `tests/test_catalog_categories.py`：分类骨架契约（无自定义列、SQL 顺序、
+  访客/管理员/白名单/黑名单、scoped 可见口径替换与 0 剔除、书库版本失效缓存、
+  两个 handler 共用同一条缓存）；
 - `tests/test_audio_books_cache.py` 补缓存版本号随三个变化入口递增。
 
 ---

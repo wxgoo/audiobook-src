@@ -642,30 +642,40 @@ class AudioBooks(BaseHandler):
 
 
 class AudioBookCategories(BaseHandler):
-    """有声书页的分类 tab 数据：{err, total, categories:[{name,count,icon,color}]}。
+    """有声书页的分类 tab：{err, total, categories:[{name,count,icon,color}]}。
 
-    count 与 /api/audiobooks?category=X 的列表共用同一个 _visible_audio_ids
-    可见集——tab 显示几本，点进去就是几本，绝不允许两个口径。
-    空分类剔除；按 count 降序（最常用的分类排最前）；图标沿用
-    /api/categories 的命名规则（category_icons.decorate）。
+    §分类必须与分类浏览页一致§
+    分类名、顺序、图标全部来自 catalog_categories()——与 /api/categories
+    同一份骨架，两页 tab 长得一模一样，只有数字换成「该分类下的有声书数」。
+    各算各的（只统计有声书里出现过的分类）会让两页分类对不上，用户实测
+    反馈过「跟分类里面的分类不一致」，所以这里刻意不做二次排序。
+
+    count 与 /api/audiobooks?category=X 的列表共用同一个可见集（_visible_audio_ids），
+    tab 显示几本，点进去就是几本，绝不允许两个口径。
+    有声书数为 0 的分类默认不出（点进去只能是空页）；带 ?all=1 保留，
+    用于核对两页分类是否完全一致。
     """
 
     @js
-    def get(self):
+    async def get(self):
         try:
+            catalog = await self.catalog_categories()
             cat_map = audio_category_agg.get_audio_aggregation(
                 self.calibre_db_cache)["categories"]
             audio_ids = AudioBooksCache.get_audio_book_ids_set()
             visible = _visible_audio_ids(self)
-            if visible is not None:
-                rows = [{"name": n, "count": len([b for b in ids if b in visible])}
-                        for n, ids in cat_map.items()]
-                total = len(visible & audio_ids)
-            else:
-                rows = [{"name": n, "count": len(ids)} for n, ids in cat_map.items()]
-                total = len(audio_ids)
-            rows = [r for r in rows if r["count"] > 0]
-            rows.sort(key=lambda r: -r["count"])
+            keep_empty = str(self.get_argument("all", "")).lower() in ("1", "true", "yes")
+            total = len(visible & audio_ids) if visible is not None else len(audio_ids)
+
+            rows = []
+            for c in catalog:  # 顺序照抄分类浏览页，不按有声书数重排
+                ids = cat_map.get(c["name"]) or []
+                n = (len([b for b in ids if b in visible])
+                     if visible is not None else len(ids))
+                if n <= 0 and not keep_empty:
+                    continue
+                rows.append({"name": c["name"], "count": n})
+
             rows = category_icons.decorate(rows)
             return {"err": "ok", "total": total, "categories": rows}
         except Exception as e:
