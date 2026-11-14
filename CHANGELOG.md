@@ -16,6 +16,40 @@
 
 ---
 
+## 4.6.0-build.27-r33 联网全新安装支持（2026-11-14，**第二次同 revision 重出**）
+
+给第三方装机多一条「联网 git clone」路径，不必传 153MB 包。仍是 r33，
+`update/manifest.json` 字节未变，已装站点无需任何操作。
+
+### 实证
+
+匿名 clone `b8fdcf4` → 5764 个文件；`app/dist` 768、`myreader-dist` 2724 条 /
+119 根软链、断链 0；`docker compose config` 通过；builder 阶段真实构建日志
+`预构建 dist：有（跳过 npm ci / generate）`、768 个文件。
+所以联网只用于 clone 与拉基础镜像 / apt / pip，**不装前端依赖**。
+
+### 改动
+
+- `docker-compose.yml` 变量化：`DATA_DIR` / `PUID` / `PGID` / `HTTP_PORT` /
+  `HTTPS_PORT` / `TZ` 支持 `.env` 覆盖，默认值与原来完全一致（现有 NAS 无感）。
+  新增仓库根 `.env.example`。
+- 新增 `scripts/install-fresh.sh`：clone 后一条龙（校验 dist 与 119 根软链 →
+  打印清单基线 → 生成 `.env` 并排除提交 → 建数据目录 → 调 `deploy.sh`）。
+  `CHECK_ONLY=1` 实测通过；`.env` 被写进 `.git/info/exclude`，且 `pack.sh` 只打
+  `git ls-files` 跟踪文件，本地配置不会混进部署包。
+- `Dockerfile` 更正过时注释：`myreader-dist` 是**完整入库**的（2724 条 / 119 根软链），
+  不是「不入库、只有 .keep 占位」；clone 必须 `core.symlinks=true` 且只在 Linux 上做。
+- `docs/部署包说明.md` 重写「第三方全新安装」：三条路径对比、删掉
+  「出包会自动从 Gitee raw 拉清单覆盖包内那份」这句与 r33 闭环矛盾的 r8 旧口径、
+  版本号统一 r33、补「数据目录必须先建」与 PUID 说明。
+- `docs/部署方式速查.md` 新增 §5.5 与 §0 决策行。
+
+> ⚠️ `docker-compose.yml` / `Dockerfile` 属于镜像级文件，下次用
+> `gen-update-manifest.py` 生成清单时会判 `blocking` → `mode=redeploy`。
+> 这是预期的（别人装机本来就要重新构建镜像），不影响当前 r33 的判定。
+
+---
+
 ## 4.6.0-build.27-r33 重出（2026-11-14，**仅脚本加固，revision / 清单字节不变**）
 
 r33 包**同 revision 重出**（只有包 md5 变了）：`update/manifest.json` 一个字节没改，

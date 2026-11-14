@@ -296,14 +296,18 @@ COPY --from=builder /app-static/dist/logo/ /data/books/logo/
 COPY --from=builder /app-static/dist/avatar/ /data/books/avatar/
 
 # myreader-dist/ 是内嵌阅读器 MyReader 的 Next.js standalone 产物，来自
-# 独立仓库 PoxenStudio/MyReader（见下方「怎么生成」）。它是构建产物、不入库
-# （.gitignore 已排除），源码包里只有 .keep 占位，保证目录存在、COPY 不报错。
+# 独立仓库 PoxenStudio/MyReader（见下方「怎么生成」）。它是构建产物，但
+# **完整随本仓库入库**（2724 个条目、119 根相对符号链接）：.gitignore 末尾
+# 有专门的反解规则，把 node_modules/ / src/ / *.mp3 等通配排除逐条放行。
+# 所以联网 `git clone` 全新安装时它就在，不需要自己生成。
+# 旧注释说「构建产物不入库、源码包里只有 .keep 占位」是 r8 时代口径，已更正。
 #
-# 没有真实产物时：/readerx、/reader、/api/mybooks/* 这些路由全部 502——
+# 产物被压扁或删掉时：/readerx、/reader、/api/mybooks/* 这些路由全部 502——
 # supervisor 起 `node app/server.js` 找不到文件 → 9100 不监听 → nginx upstream
-# 拒绝连接。其余功能不受影响。
+# 拒绝连接。其余功能不受影响。Windows 检出 / 图形解压工具会把 119 根软链变成
+# 普通文件，所以 clone 必须带 `git -c core.symlinks=true`，且只在 Linux 上做。
 #
-# 怎么生成（在 MyReader 仓库里）：
+# 怎么生成（仅在上游 MyReader 仓库重新出产物时才需要，普通安装不用）：
 #   git submodule update --init packages/foliate-js packages/simplecc-wasm \
 #       packages/js-mdict packages/qcms \
 #       app/src-tauri/plugins/tauri-plugin-turso \
