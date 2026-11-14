@@ -1,17 +1,18 @@
 {
   "schema": 1,
-  "revision": "4.6.0-build.27-r37",
-  "base_revision": "4.6.0-build.27-r36",
+  "revision": "4.6.0-build.27-r38",
+  "base_revision": "4.6.0-build.27-r37",
   "version": "4.6.0-build.27",
   "date": "2026-11-14",
-  "summary": "修监控导入目录勾了不响应：有声书目录自动导入 + 两个死开关（纯后端，可热更）",
+  "summary": "修「明明改成教育了却没进教育分类」：改分类后分类 tab 与列表过滤立刻更新（纯后端，可热更）",
   "notes": [
-    "根因：monitor_service 明确跳过 imports/audiobooks/（只管电子书，且 CREATE 事件不入队、3s 防抖对 SMB 慢拷贝太短）；有声书归 AudioBookImporter 管，此前只有管理页「导入有声书」按钮一个触发入口，没有任何自动触发。所以勾了监控导入目录对有声书从来就不生效，不是 NAS 环境或权限问题。现场日志 [Monitor] started 正常，但有 Skipping imports folder 且一条 Event 都没有。",
-    "修复：新增 audio_auto_import.py 轮询服务，跟随 IMPORT_BY_INOTIFY 启停。指纹覆盖 audiobooks/ 一级子目录内所有音频文件的 (相对路径,size,mtime_ns)，忽略封面/字幕/@eaDir/临时文件；连续两轮一致才触发 AudioBookImporter.do_import，避开慢拷贝中途；触发前检查导入互斥，忙时不消费变化、下一轮补触发；幂等由 audiodir: 路径 MD5 判重保证（已导入目录只补同步新增音频，不会重复建书）。main.py 启动接线 + setting_saver 动态启停，改设置不用重启。",
-    "顺带修：把 AUDIO_LINK_TO_EXISTING_BOOK、ENABLE_KOREADER_SERVICE 补进 ADMIN_SETTING_KEYS（此前提交值被静默丢弃，表现为勾了不响应）；新增契约测试强制设置页所有 checkbox 键必须登记白名单。另修 r36 遗留：settings.py 的 AUDIO_CACHE_REFRESH_SECONDS 从 6 小时改为 5 分钟（此前它灌进 CONF 覆盖了 audio.py 的 fallback）。",
-    "行为：默认开启、轮询 60s、稳定 2 轮，放完文件约 2 分钟内自动入库。想只保留电子书监控，在 auto.py 加 'AUDIO_AUTO_IMPORT_ENABLED': False 后重启；调间隔改 AUDIO_AUTO_IMPORT_INTERVAL（最小 20s）。首次触发会跑一轮全量（幂等，耗时几分钟属正常）。本轮不动 app/dist，设置页状态显示留待下一轮。",
-    "验收：docker logs audiobook-mybooks-1 2>&1 | grep -iE 'AUDIO_AUTO|AUDIO_IMPORT' | tail -40，应见 [AUDIO_AUTO] started / fingerprint stable for 2 rounds / triggering AudioBookImporter。测试新增 13 例，回归 350 passed / 4 skipped（另有 1 例全角折叠语义用例在 r37 之前 HEAD 基线上同样失败，与本次改动无关）。",
-    "部署：r36 -> r37 为纯 webserver/**/*.py，页内「立即更新」后强刷即可；app/dist 与 r34/r35/r36 同指纹，不需要重新部署。热更改的是容器可写层，之后别 --force-recreate；真要重建先跑 sh scripts/sync-hotfix.sh 或装 r37 整包。"
+    "症状：详情页把有声书分类改成「教育」，tab 仍是 教育(2)、点进去也看不到那本书，强刷/重开无效，重启容器才自愈。不是前端、不是 dist、不是分类接口没数据、不是书没写进库。",
+    "根因：audio_category_agg 的模块级快照只跟随 AudioBooksCache.get_version() 失效，而 version 表示「有音频的书集合」是否变化。改 #category 是 calibre 元数据写入，集合一本没变、version 不变，快照一直旧；分类 tab 的 count 与 ?category=X 的列表过滤都读这份快照，所以两处同时不更新。分类名骨架 catalog_categories() 用 library_version() 做 key 是实时的，于是「tab 名字对、数字和归属旧」。实证：教育 [1,2] → DB 改成教育后仍 教育(2) → 强制重算立刻变 教育(3)，证明 DB 已写入。",
+    "修复：新增 on_category_changed()/on_categories_changed()，改分类成功后按调用方手上的新值直接挪桶（O(1)、不读 calibre 元数据、保留 tags/authors）；library_version()（metadata.db + -wal 的 mtime）兜底 + invalidate() 覆盖漏通知写入，触发后台全量重建（单飞 + 20s 节流），保持请求路径零阻塞；元数据脏时禁止走「集合增量空转」分支（原分支 diff 为空却会把 version 推到最新，把旧元数据永久钉死）。全仓 9 处 set_field(#category) 入口全部接线，并加 AST 契约测试防止以后新增入口漏通知。",
+    "边界：只有带音频的书才进有声书分类 tab，无音频的书改成任何分类都不会进（这是口径，不是 bug）；独立进程写入靠库版本兜底，允许秒级滞后，站内改分类零延迟。",
+    "验收：热更后强刷，把任意一本有声书改成「教育」，教育 tab 计数应立刻 +1 且点进去能看到该书；不改分类也不会再有旧桶残留。日志关键字 audio agg: rebuilt in background（仅漏通知路径会出现）。",
+    "部署：r37 -> r38 为纯 webserver/**/*.py，页内「立即更新」后强刷即可；app/dist 与 r34~r37 同指纹，不需要重新部署。热更改的是容器可写层，之后别 --force-recreate；真要重建先跑 sh scripts/sync-hotfix.sh 或装 r38 整包。",
+    "测试：新增 14 例单测 + 3 例契约；音频/分类/设置/扫描回归 316 passed / 4 skipped（test_scan_p0 全角折叠语义用例在 r37 之前 HEAD 基线上同样失败，与本次改动无关）。"
   ],
   "requires_dist": false,
   "hotfixable": true,
@@ -21,48 +22,55 @@
   "reason": "仅后端 Python 代码变更，可在线替换并重启服务，无需重建镜像",
   "files": [
     {
-      "path": "webserver/base/setting_saver.py",
-      "sha256": "109e25199f615e183b686414fbf42cd5842435df538dfe0fcac796904ea3613a",
-      "bytes": 17226
+      "path": "webserver/base/audio_category_agg.py",
+      "sha256": "1de2e6a59c07a9035feefe6c9ed309060ec884d752ad78cbc3e390e64ab023f9",
+      "bytes": 14927
     },
     {
-      "path": "webserver/main.py",
-      "sha256": "9e9510017546d174c9b4f3fe26a922a5bd98eb669f77b856d3d39b07d5bd7d71",
-      "bytes": 33356
+      "path": "webserver/handlers/book.py",
+      "sha256": "1094927e822ad4fc1989b3819c37b02ab27984f7eebf019c797827ab73c15502",
+      "bytes": 247849
     },
     {
-      "path": "webserver/services/audio_auto_import.py",
-      "sha256": "76e48c9d22f60fc41934dfa1c7bdb48a6eaf925c58777535038de5fdeebf0ab1",
-      "bytes": 8768
+      "path": "webserver/mcp/mcp_service.py",
+      "sha256": "ab0fd0423e3e54721c4520e9b81bd2e5c64d80fcfd2f19721532d1f4b0677755",
+      "bytes": 71271
     },
     {
-      "path": "webserver/settings.py",
-      "sha256": "3ce5103ce3c5d638c28902a1340e7a73e9a94843310c3484d9095af00192a0fc",
-      "bytes": 25283
+      "path": "webserver/services/ai_fillinfo.py",
+      "sha256": "ab3aa44b2088e78b81e079bb39f93b890deaa17c4418ce5b288b3ee3a8d43d37",
+      "bytes": 11525
+    },
+    {
+      "path": "webserver/services/scan_service.py",
+      "sha256": "8d0d9f4bb34f6dcdd732fe52bdb054314b94e15831e313c300013928f0ae3ed5",
+      "bytes": 146686
     }
   ],
   "changed": {
     "hotfix": [
-      "webserver/base/setting_saver.py",
-      "webserver/main.py",
-      "webserver/services/audio_auto_import.py",
-      "webserver/settings.py"
+      "webserver/base/audio_category_agg.py",
+      "webserver/handlers/book.py",
+      "webserver/mcp/mcp_service.py",
+      "webserver/services/ai_fillinfo.py",
+      "webserver/services/scan_service.py"
     ],
     "dist": [],
     "appsrc": [],
     "blocking": [],
     "docs": [
       "CHANGELOG.md",
-      "tests/test_audio_auto_import.py",
-      "tests/test_settings_checkbox_whitelist.py"
+      "tests/test_audio_agg_category_change.py",
+      "tests/test_audio_category_agg.py",
+      "tests/test_category_change_notify_contract.py"
     ]
   },
   "deploy_commands": [
     "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.6.0-build.27-r37.tar.gz.sha256",
+    "sha256sum -c audiobook-deploy-4.6.0-build.27-r38.tar.gz.sha256",
     "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
     "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.6.0-build.27-r37.tar.gz",
+    "tar -xzf audiobook-deploy-4.6.0-build.27-r38.tar.gz",
     "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }
