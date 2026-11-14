@@ -9,6 +9,7 @@
     "pack.sh 默认 SLIM=1，包体 215MB→153MB；--full 才保留，--slim 为兼容别名",
     "新增 docs/部署方式速查.md：热更/整包离线部署/现场前端构建/镜像 tar/回滚 按场景给命令",
     "scripts/pack-image.sh 收进仓库；全仓 dist 基线统一 768，清理过时注释与失效文档引用",
+    "修复包内清单基线被 Gitee raw 缓存污染（r33 首次打包曾把 r32 清单打进包）",
     "因 scripts/pack.sh 与 Dockerfile 变更，判定 redeploy，请用整包重新部署"
   ],
   "requires_dist": true,
