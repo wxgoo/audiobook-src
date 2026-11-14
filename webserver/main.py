@@ -613,6 +613,14 @@ def make_app():
         with substep("monitor_service"):
             get_monitor_service().start()
 
+    # 有声书导入目录 imports/audiobooks/ 被 monitor_service 明确跳过（它只管
+    # 电子书），且经 SMB 拷入整本有声书时 3s 防抖会截断文件，故跟随同一个
+    # 开关用「目录指纹 + 稳定两轮」的轮询兜底自动导入。
+    if CONF.get("IMPORT_BY_INOTIFY", False) and CONF.get("AUDIO_AUTO_IMPORT_ENABLED", True):
+        from webserver.services.audio_auto_import import get_audio_auto_import_service
+        with substep("audio_auto_import"):
+            get_audio_auto_import_service().start()
+
     from webserver.services.reading_stats_service import ReadingStatsService
     with substep("reading_stats"):
         ReadingStatsService.start()

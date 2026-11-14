@@ -16,6 +16,65 @@
 
 ---
 
+## 4.6.0-build.27-r37（2026-11-14，**修「监控导入目录勾了不响应」+ 有声书目录自动导入 + 两个死开关**，纯后端，可热更）
+
+- 症状：设置页「导入与存储 → 自动导入」勾了「监控导入目录，自动进行导入」，
+  经 SMB 往 `\\<NAS>\docker\audiobook-data\books\imports\audiobooks\` 放整本
+  有声书（每个子目录一本书、几十个音频分片），书库毫无反应。
+  现场诊断：`auto.py` 里 `IMPORT_BY_INOTIFY=True`、`scan_upload_path` 正确、
+  导入目录存在、`inotify_simple` 已装、日志有 `[Monitor] started`，
+  但**日志里一条 `[Monitor] Event:` 都没有**，且明确有一行
+  `[Monitor] Skipping imports folder: /data/books/imports/audiobooks`。
+- 根因（**勾选本身是生效的，是开关覆盖不到用户放的那个目录**）：
+  1. `monitor_service` 只管电子书，`_add_watch_recursive` 明确跳过
+     `constants.AUDIO_BOOK_IMPORTS`（即 `audiobooks`）目录；且事件过滤只认
+     `CLOSE_WRITE` / `MOVED_TO`，`CREATE` 一律不入队，3 秒防抖对经 SMB
+     拷贝几分钟的整本有声书也太短。有声书归 `AudioBookImporter` 管，
+     而它**只有管理页「导入有声书」按钮一个触发入口**（`AudioImportRun`），
+     既无定时也无文件事件 —— 所以「自动导入」对有声书从来不存在。
+  2. 审计设置页 51 个勾选框发现 **2 个死开关**：
+     `AUDIO_LINK_TO_EXISTING_BOOK`、`ENABLE_KOREADER_SERVICE` 未登记进
+     `ADMIN_SETTING_KEYS`。`AdminSettings.post` 用 `KEYS=list(ADMIN_SETTING_KEYS)`
+     过滤提交，漏登记的键被**静默丢弃**；前者连 `PERSISTABLE_KEYS` 都没登记，
+     保存设置时 `dumpfile()` 整份覆盖还会把手写进 `auto.py` 的值抹掉。
+     实测：前者根本不在 `auto.py` 里，后者在但永远是改不动的旧值 `True`。
+  3. r36 遗留：`settings.py` 里 `AUDIO_CACHE_REFRESH_SECONDS = 6*3600` 会被
+     `loader` 灌进 `CONF`，**覆盖** `audio.py` 里改成 300 的 fallback —— r36
+     声称的「兜底 6 小时 → 5 分钟」实际没生效（主修复 `sync_from_scan` 不受影响）。
+- 修复（**不动 `app/dist`，纯 py 可热更**）：
+  - 新增 `webserver/services/audio_auto_import.py`：跟随 `IMPORT_BY_INOTIFY`
+    启停的轮询服务。指纹覆盖 `imports/audiobooks/` 一级子目录内所有音频文件的
+    `(相对路径, size, mtime_ns)`，忽略封面/字幕/`@eaDir`/临时文件；
+    **指纹连续两轮一致**才触发 `AudioBookImporter.do_import`，避开慢拷贝中途；
+    触发前检查导入互斥，忙时**不「消费」这次变化**，下一轮补触发；
+    幂等由 `AudioBookImporter` 自身的 `audiodir:` + 路径 MD5 判重保证，
+    已导入目录只补同步新增音频、不会重复建书（最终一致）。
+  - `main.py` 启动接线；`setting_saver._apply_dynamic_settings()` 让开关改动
+    **即时启停**，不用重启容器。
+  - 把 `AUDIO_LINK_TO_EXISTING_BOOK`、`ENABLE_KOREADER_SERVICE` 补进白名单，
+    并登记 `AUDIO_AUTO_IMPORT_ENABLED` / `AUDIO_AUTO_IMPORT_INTERVAL`（暂无 UI，
+    可手工写进 `auto.py` 且不会被保存设置抹掉）。
+  - `settings.py`：兜底间隔对齐 r36 意图改为 **5 分钟**，并注明「改间隔要改这里，
+    它会覆盖 audio.py 的 fallback」；新增两个自动导入配置。
+  - 契约测试 `tests/test_settings_checkbox_whitelist.py`：强制设置页**所有**
+    `type: "checkbox"` 的键都在 `ADMIN_SETTING_KEYS` 里，防止再漏。
+- 行为与配置：默认开启、轮询 60 秒、稳定 2 轮 ⇒ **放完文件约 2 分钟内自动入库**。
+  想只保留电子书监控，在 `auto.py` 加 `'AUDIO_AUTO_IMPORT_ENABLED': False,`
+  后重启；调间隔改 `AUDIO_AUTO_IMPORT_INTERVAL`（最小 20 秒）。
+  本轮**没做设置页状态显示**（会动 `app/dist`，需重新构建，留待下一轮），
+  运行状态看日志 `[AUDIO_AUTO]` / `[AUDIO_IMPORT]`。
+- 测试：新增 `tests/test_settings_checkbox_whitelist.py`（3 例）与
+  `tests/test_audio_auto_import.py`（10 例，覆盖指纹稳定性、噪声文件忽略、
+  忙时不消费、禁用开关、启停幂等）；设置/音频/扫描相关回归
+  **350 passed / 4 skipped**。另有 1 例
+  `test_scan_p0.py::TestTitleDedupIndex::test_semantics_parity_with_icu_lower`
+  （全角字符折叠语义）在 **r37 之前的 HEAD 基线上同样失败**，与本次改动无关；
+  2 个测试文件因沙箱缺 `social_tornado` 无法收集，亦与本次改动无关。
+- 部署：r36 → r37 为纯 `webserver/**/*.py` + `tests/**`，页内「立即更新」→ 强刷；
+  `app/dist` 与 r34/r35/r36 同指纹，`hotfixable=true` / `requires_dist=false`。
+
+---
+
 ## 4.6.0-build.27-r36（2026-11-14，**修「手工加音频后统计 +1 但分类 tab 不更新」**，纯后端，可热更）
 
 - 症状：r35 装好后分类 tab 正常出现（默认「全部」+ 已有分类）。用户手工往某本书的

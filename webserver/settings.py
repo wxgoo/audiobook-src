@@ -28,9 +28,18 @@ settings = {
     # Phase2 是行 + Item 链接的短写事务；越大 fsync 越少、失控风险越大。
     "import_phase1_batch_size"  : 500,
     "import_phase2_batch_size"  : 20,
-    # 「有音频的书」缓存兜底全库扫描间隔（秒）。默认 6 小时；导入/转码/删除
-    # 都会走事件增量更新，这里只兜底手工往书库塞音频的情况。0 = 关闭兜底扫描。
-    "AUDIO_CACHE_REFRESH_SECONDS": 6 * 3600,
+    # 「有音频的书」缓存兜底全库扫描间隔（秒）。默认 5 分钟；导入/转码/删除
+    # 走事件增量更新，统计接口也会把实时扫盘结果同步进来，这里只兜底
+    # 「既没有统计请求、也没有事件」的极端情况。0 = 关闭兜底扫描。
+    # 注意：这里的值会灌进 CONF 并覆盖 audio.py 里的 fallback，改间隔请改这里。
+    "AUDIO_CACHE_REFRESH_SECONDS": 5 * 60,
+    # 有声书导入目录（imports/audiobooks/）自动导入轮询。inotify 监控明确跳过
+    # 该目录，且经 SMB 拷贝整本有声书时 3s 防抖会在没拷完时触发，故改用
+    # 「目录指纹 + 连续两轮稳定」轮询。跟随 IMPORT_BY_INOTIFY 开关启用；
+    # 置 False 可单独关掉有声书部分（电子书监控不受影响）。
+    "AUDIO_AUTO_IMPORT_ENABLED": True,
+    # 轮询间隔（秒），最小 20；稳定两轮后才触发，故最长约 2 倍间隔生效。
+    "AUDIO_AUTO_IMPORT_INTERVAL": 60,
     # 中文检索索引（SQLite FTS5）。关闭后搜索自动回退到 calibre 原生 search。
     "SEARCH_INDEX_ENABLED": True,
     "SEARCH_INDEX_PATH": "/data/books/search_index.db",

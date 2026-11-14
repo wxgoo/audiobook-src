@@ -123,6 +123,15 @@ ADMIN_SETTING_KEYS = (
     "DEFAULT_READ_RANGE",
     "ENABLE_AUTO_NEW_USER_APPROVAL",
     "IMPORT_BY_INOTIFY",
+    # 这两个曾漏登记：设置页有勾选框，但 AdminSettings.post 用
+    # KEYS=list(ADMIN_SETTING_KEYS) 过滤提交，漏登记的键被静默丢弃，
+    # 表现为「勾了不响应」。见 tests/test_settings_checkbox_whitelist.py。
+    "AUDIO_LINK_TO_EXISTING_BOOK",
+    "ENABLE_KOREADER_SERVICE",
+    # 有声书导入目录自动轮询：暂无 UI 开关，值可手工写进 auto.py。
+    # 必须登记，否则保存设置时 dumpfile() 整份覆盖会把手改的值抹掉。
+    "AUDIO_AUTO_IMPORT_ENABLED",
+    "AUDIO_AUTO_IMPORT_INTERVAL",
     "IMPORT_CATEGORY_WITH_FOLDER",
     "REMOVE_IMPORTED_FILE",
     "KEEP_UPLOAD_SOURCE_FILE",
@@ -238,10 +247,23 @@ class SettingsSaver:
         # IMPORT_BY_INOTIFY: start or stop the file-system monitor service on the fly.
         if "IMPORT_BY_INOTIFY" in args:
             from webserver.services.monitor_service import MonitorService
-            if CONF.get("IMPORT_BY_INOTIFY", False):
+            enabled = bool(CONF.get("IMPORT_BY_INOTIFY", False))
+            if enabled:
                 MonitorService().start()
             else:
                 MonitorService().stop()
+
+            # 有声书导入目录不在 inotify 监控范围（monitor_service 明确跳过
+            # AUDIO_BOOK_IMPORTS），跟随同一个开关启停轮询，避免改完设置还要重启。
+            try:
+                from webserver.services.audio_auto_import import get_audio_auto_import_service
+                svc = get_audio_auto_import_service()
+                if enabled and CONF.get("AUDIO_AUTO_IMPORT_ENABLED", True):
+                    svc.start()
+                else:
+                    svc.stop()
+            except Exception:
+                logging.error("audio_auto_import toggle failed", exc_info=True)
 
         # ENABLE_WEBDAV_SERVICE or WEBDAV_SYNC_FOLDER changed: discard the cached
         # WSGI app so it is recreated with up-to-date settings on the next request.
