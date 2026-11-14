@@ -16,6 +16,53 @@
 
 ---
 
+## 4.6.0-build.27-r34（2026-11-14，**修复详情页修改分类报错**，纯后端，可热更）
+
+### 根因：`_` 被当成局部变量，盖掉了 i18n 翻译函数
+
+`a1d6055`「取书权限前置收口」重构引入了 `_, err = self.require_book(book_id)`。
+Python 只要在函数内给 `_` 赋过值，**整个函数里的 `_` 都是局部变量**，于是
+`_("分类更新成功")` 调的是 `require_book` 返回的 book dict →
+`TypeError: 'dict' object is not callable`；异常分支里又调了一次 `_()`，
+所以 traceback 里出现两段同样的错误（这也是 `@js` 包装器 `base.py:213` 的来由）。
+
+**这不是版本问题，是仓库里一直存在的既存 bug，任何版本点该功能都会复现。**
+
+### 受影响的 5 个接口
+
+| 接口 | 触发动作 | 报错形态 |
+| --- | --- | --- |
+| `/api/book/<id>/category` | 详情页修改分类 | `'dict' object is not callable`（本次实测） |
+| `/api/book/<id>/location` | 修改位置 | 同上 |
+| `/api/book/<id>/catalog` | 重新提取目录 | 同上 |
+| `/api/book/<id>/ai-fill` | AI 填充书籍信息 | 同上 |
+| `/api/admin/token` | 生成 MCP token | `for _ in range(32)` → `UnboundLocalError` |
+
+「上次好像也有一次这个错误」就是同一个根因落在另一个接口上。
+
+### 修复
+
+- `webserver/handlers/book.py` 4 处 `_, err = ...` → `_book, err = ...`
+- `webserver/handlers/admin.py` 的 `for _ in range(32)` → `for _i in ...`
+- 新增 `tests/test_i18n_underscore_shadowing.py`：AST 扫描全仓 `webserver/`，
+  凡 import 了 `webserver.i18n._` 的模块，禁止在任何还调用 `_()` 的函数里把 `_`
+  用作赋值目标 / 循环推导变量 / 参数名。含 3 个「扫描器必须能抓到坏例」自测，
+  防止测试退化成永远通过。4 例全绿。
+
+### 部署方式
+
+纯 `webserver/**/*.py` + `tests/`（归 docs），`hotfixable=true` / `requires_dist=false`：
+页内 `/admin/version` →「立即更新」即可，装完强刷浏览器，**不需要重新部署**。
+
+> ⚠️ 但**「有声书」页没有分类 tab 是另一件事**：r31 才引入前端组件
+> `CategoryTabs.vue` 与 `ListBook.vue` 改动，产物在 `app/dist` 里；热更只替换 py，
+> 不碰 dist。若你的站点前端还停在 r30 之前，请用
+> `audiobook-deploy-4.6.0-build.27-r34.tar.gz` **整包重新部署一次**，
+> 可同时拿到「分类 tab」和本修复。判断是否旧 dist：
+> `sha256sum <源码目录>/app/dist/index.html` 应为 `2c02df40…`（768 个文件）。
+
+---
+
 ## 4.6.0-build.27-r33 联网全新安装支持（2026-11-14，**第二次同 revision 重出**）
 
 给第三方装机多一条「联网 git clone」路径，不必传 153MB 包。仍是 r33，

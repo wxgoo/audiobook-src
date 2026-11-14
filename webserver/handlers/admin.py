@@ -1427,7 +1427,7 @@ class AdminTokenHandler(BaseHandler):
         import string
 
         chars = string.ascii_letters + string.digits
-        token = "".join(secrets.choice(chars) for _ in range(32))
+        token = "".join(secrets.choice(chars) for _i in range(32))
 
         return {"err": "ok", "token": token}
 

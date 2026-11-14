@@ -569,7 +569,7 @@ class BookAIFill(BaseHandler):
     @auth
     async def post(self, id):
         book_id = int(id)
-        _, err = await self.require_book_async(book_id)
+        _book, err = await self.require_book_async(book_id)
         if err:
             return err
 
@@ -634,7 +634,7 @@ class BookCategory(BaseHandler):
     @auth
     def post(self, id):
         book_id = int(id)
-        _, err = self.require_book(book_id)
+        _book, err = self.require_book(book_id)
         if err:
             return err
 
@@ -657,7 +657,7 @@ class BookLocation(BaseHandler):
     @auth
     def post(self, id):
         book_id = int(id)
-        _, err = self.require_book(book_id)
+        _book, err = self.require_book(book_id)
         if err:
             return err
 
@@ -681,7 +681,7 @@ class BookCatalog(BaseHandler):
     @auth
     def post(self, id):
         book_id = int(id)
-        _, err = self.require_book(book_id)
+        _book, err = self.require_book(book_id)
         if err:
             return err
 
