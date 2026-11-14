@@ -7,12 +7,13 @@
 #   bash scripts/pack.sh --src 4.6.0-build.27-r27
 #                                        # 打源码整包 audiobook-src-<版本>-full.tar.gz
 #                                        # （与部署包同一套暂存/门禁，仅顶层结构与裁剪不同）
-#   bash scripts/pack.sh --slim 4.6.0-build.27-r27
-#                                        # 瘦身包：排除 app/node_modules（构建期依赖），
-#                                        # 产物名多一个 -slim 后缀，不会覆盖同名正式包。
-#                                        # 默认**不排除**，与历史上能跑通的 r26/r27 包同构。
-#                                        # --slim 产出的包必须先按 docs/真机验证清单.md
-#                                        # 在真机逐项点检通过，才允许用于发布。
+#   bash scripts/pack.sh --full 4.6.0-build.27-r27
+#                                        # 完整包：保留 app/node_modules（构建期依赖），
+#                                        # 产物名带 -full 后缀，不会覆盖同名正式包。
+#                                        # 只在「改了前端却没重新出 dist、需要现场
+#                                        # npm ci + generate」的开发场景才用得到。
+#                                        # 默认已排除这一层；--slim 保留为兼容别名
+#                                        # （等价于默认，不再产生 -slim 后缀）。
 #   bash scripts/pack.sh                 # 不传参时版本号取自 CHANGELOG 首条，只有基础版本
 #                                        # （形如 4.6.0-build.27，缺 -rN，会被清单断言拒绝）
 #   bash scripts/pack.sh --check xxx.tar.gz   # 只验一个已有包，不打包（自动识别部署包/源码包）
@@ -33,12 +34,16 @@
 #    少一条 .pnpm 里的文件，链接就全断，阅读器启动即 502。
 #    打包后必须实际数一遍有效链接（本脚本第 4 步）。
 #
-# 3. app/node_modules 只有构建期需要（Dockerfile 的 npm ci 用它），运行时不读；
-#    打包机没有这个目录时自然不入包，不必为此加排除规则，也不影响运行。
-#    r29 起源码整包（--src）改为只打 git 跟踪文件，app/node_modules 本就被 .gitignore
-#    忽略，因此不会出现；部署包仍保留当前机器上存在的 app/node_modules（见 --slim）。
-#    myreader-dist 的依赖自成闭环（自带 node_modules/.pnpm），由第 4 步断链门禁
-#    （断链必须为 0）保证，与 app/node_modules 有没有无关。
+# 3. app/node_modules 是构建期依赖，运行时不读。Dockerfile v3 只要 app/dist 齐全
+#    就走「跳过 npm ci / generate」快路，生产镜像里的 app/ 来自 /app-static（只含
+#    dist 与几个配置文件），从来不含 node_modules；.dockerignore 也本来就排除它。
+#    所以默认排除，包体 215MB → 153MB（实测），NAS 传输与构建上下文都更轻。
+#    真机证据：r29（TraeCode CN 出的包）就没带这一层，热更到 r30 后站点一直正常；
+#    r33 又在沙箱用 docker build --target builder 复验，日志明确打印
+#    「检测到预构建 dist，跳过 npm ci 与 generate」，768 个 dist 文件全部带上。
+#    只有 --full 才保留（供「改了前端却没重新出 dist」的开发场景）。
+#    注意：myreader-dist 下三层 node_modules 是 Next standalone 的运行期产物、
+#    不是可重装的依赖，任何模式都不动，由第 4 步断链门禁（断链必须为 0）保证。
 # ============================================================
 set -euo pipefail
 
@@ -75,7 +80,7 @@ if [ "${1:-}" = "--check" ]; then
 
         # 不该有的东西：版本库/构建缓存，两种模式都一样；
         # 归档、tests、skills、.claude 这些开发侧内容只在部署包里算杂物，源码整包必须保留。
-        # app/node_modules 不在此列：默认就是要保留的（--slim 才排除），见脚本头部说明。
+        # app/node_modules 默认排除（--full 才保留），两种口径都不判失败。
         # app/.nuxt / app/.next 是构建中间产物，任何模式都不该有。
         if [ "$IS_SRC" = "1" ]; then
             junk=".git .build-trash .pack-stage app/.nuxt app/.next"
@@ -86,11 +91,11 @@ if [ "${1:-}" = "--check" ]; then
         for j in $junk; do
             [ -e "$D/$j" ] && { echo "  !! 包里混入不该有的内容: $j"; fail=1; }
         done
-        # 只报数、不判失败：保留与排除都是合法口径，取决于打包时是否加了 --slim
+        # 只报数、不判失败：默认排除、--full 保留，两种口径都合法
         if [ -d "$D/app/node_modules" ]; then
-            echo "  app/node_modules: 在包内（$(find "$D/app/node_modules" \( -type f -o -type l \) | wc -l | tr -d ' ') 条，非瘦身包）"
+            echo "  app/node_modules: 在包内（$(find "$D/app/node_modules" \( -type f -o -type l \) | wc -l | tr -d ' ') 条，--full 完整包）"
         else
-            echo "  app/node_modules: 不在包内（--slim 瘦身包）"
+            echo "  app/node_modules: 不在包内（默认瘦身包）"
         fi
 
         # 换行纪律（fix2 事故防复发，2026-11-07）：容器/宿主要执行的文本必须 LF。
@@ -261,14 +266,15 @@ fi
 # 默认 deploy；--src 打源码整包。两者共用同一套暂存/清理/门禁，只有三处不同：
 #   1) 产物命名与顶层结构；2) 不裁开发侧目录（tools/tests/skills/.claude/归档）；
 #   3) 不覆盖 update/manifest.json（源码包要仓库原貌，不是发布清单）。
-# --slim 是独立的瘦身开关（两种模式都可用），默认关闭：不带它时保留 app/node_modules，
-# 产出与历史上能跑通的 r26/r27 包同构。
+# 默认瘦身（SLIM=1）：排除 app/node_modules。r29 真机 + r33 沙箱构建均已验证，
+# 见脚本头部第 3 条。--full 才保留；--slim 保留为兼容别名（等价于默认）。
 MODE=deploy
-SLIM=0
+SLIM=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --src)  MODE=src; shift ;;
         --slim) SLIM=1;   shift ;;
+        --full) SLIM=0;   shift ;;
         *) break ;;
     esac
 done
@@ -296,8 +302,8 @@ else
     NAME="audiobook-deploy-$VER"
     PFX="audiobook/"           # 部署包：统一收在 audiobook/ 下
 fi
-# 瘦身包单独命名，避免一次 --slim 试跑就覆盖掉同名正式包
-[ "$SLIM" = "1" ] && NAME="$NAME-slim"
+# 默认（瘦身）就是正式包，名字不带后缀；只有显式 --full 才另取名，避免覆盖
+[ "$SLIM" = "0" ] && NAME="$NAME-full"
 # 输出目录：显式 OUTDIR 优先；否则用可写的 /workspace（构建机常见），
 # 普通用户在家目录下跑时 /workspace 建不出来（根目录不可写），退回 ~/audiobook-out。
 if [ -n "${OUTDIR:-}" ]; then
@@ -490,19 +496,18 @@ fi
 # 注意：这两个目录被排除不影响 --check（它只认 app/dist）与首屏（首屏只读 dist 静态文件）。
 rm -rf "$STAGE/audiobook/app/.nuxt" "$STAGE/audiobook/app/.next"
 
-# app/node_modules 默认**保留**（与历史上能跑通的 r26/r27 包同构）。过去几次按「看着没用」
-# 删除都出现过运行异常，因此把排除收紧成显式开关：只有 --slim 才删。
-# 瘦身包必须先按 docs/真机验证清单.md 在真机逐项点检通过，才允许用于发布。
-# myreader-dist 下的三层 node_modules（含 app/node_modules 的 next/react/react-dom 三个
-# 相对符号链接）任何模式都不动 —— 它们是 MyReader 运行期的解析路径，不靠推理判断。
+# app/node_modules 是构建期依赖，默认排除（依据见脚本头部第 3 条）。
+# 早期「删了会出运行异常」的说法来自 r11 时代的旧构建链路，且常伴随误伤
+# myreader-dist 的依赖；v3 的「带 dist 就跳过 npm ci」已把它根除，勿再照抄。
+# myreader-dist 下三层 node_modules 是 MyReader 运行期解析路径，任何模式都不动。
 if [ "$SLIM" = "1" ]; then
     rm -rf "$STAGE/audiobook/app/node_modules"
-    echo "  --slim：已排除 app/node_modules（瘦身包，发布前须真机验证）"
+    echo "  app/node_modules 已排除（默认）：包体约 153MB，构建仍走预构建 dist 快路"
 else
     if [ -d "$STAGE/audiobook/app/node_modules" ]; then
-        echo "  app/node_modules 保留（默认行为）：$(find "$STAGE/audiobook/app/node_modules" \( -type f -o -type l \) | wc -l | tr -d ' ') 条"
+        echo "  app/node_modules 保留（--full）：$(find "$STAGE/audiobook/app/node_modules" \( -type f -o -type l \) | wc -l | tr -d ' ') 条"
     else
-        echo "  app/node_modules 不存在（该构建机未装前端依赖），包内自然没有"
+        echo "  --full 但构建机上没有 app/node_modules，包内自然没有"
     fi
 fi
 

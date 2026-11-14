@@ -247,11 +247,13 @@ docker compose logs -f mybooks          # 看启动日志
 
 * `build: .` 表示用当前目录源码构建；`image: mybooks-local:latest` 只是给本地构建出的镜像打的标签。
   **只写 `image:` 而不写 `build:` 会导致只拉远程镜像、忽略本地改动。**
-* 前端由 Dockerfile 内多阶段构建自动完成（`npm ci` + `npm run build-spa`），本地无需装 Node。
+* 部署包自带预构建 `app/dist`：Dockerfile 检测到它就**跳过 `npm ci` 与 `generate`**，
+  本地无需装 Node、构建也不联网装前端依赖。只有改了前端却没重新出 dist 时，
+  builder 才会现场 `npm ci && npm run generate`（此时需要能访问 npm 源）。
 * `app/package.json` 的 `nuxt` 必须保持在 `^2.18.x`（本项目是 Nuxt 2 + Vue 2）。
   误写成 `^4.x` 会装成 Nuxt 4 / Vue 3，构建时报
   `<template v-for> key should be placed on the <template> tag` 之类的错误。
-* Dockerfile 用 `npm ci` 严格按 `package-lock.json` 安装，杜绝版本漂移。
+* 现场构建时 Dockerfile 用 `npm ci` 严格按 `package-lock.json` 安装，杜绝版本漂移。
 * `app/.npmrc` 已指向 npmmirror 国内源；构建时传入 `BUILD_COUNTRY=CN` 可同时启用 apt/pip 国内源（compose 已默认传入）。
 
 ### 使用官方镜像

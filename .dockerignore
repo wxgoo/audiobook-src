@@ -5,7 +5,7 @@
 **/.git
 **/.github
 
-# ---- 前端依赖与构建缓存（镜像内会重新 npm ci / build）----
+# ---- 前端依赖与构建缓存（带预构建 dist 时镜像内不再 npm ci / generate）----
 # v3：app/dist 必须进构建上下文 —— 它是"带预构建 dist 就跳过 npm ci"的判定依据。
 # app/node_modules 依然排除：带了 dist 就不需要 node_modules，
 # 排除它能把构建上下文从 ~700MB 压到 ~250MB（NAS 上 build 快 3~5 分钟）。

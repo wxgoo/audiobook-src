@@ -16,6 +16,43 @@
 
 ---
 
+## 4.6.0-build.27-r33（2026-11-14，**打包口径收敛 + 部署文档整理**，需重新部署）
+
+### 打包：默认排除 `app/node_modules`
+
+- `scripts/pack.sh` 默认 `SLIM=1`，包体 **215MB → 153MB**；新增 `--full` 显式保留，
+  `--slim` 作为兼容别名（等价于默认，不再产生 `-slim` 后缀，默认包就是正式包）。
+- 依据：Dockerfile v3 只要 `app/dist` 齐全就跳过 `npm ci / generate`，生产镜像里的
+  `app/` 来自 `/app-static`（只含 dist 与几个配置文件），从来不含 node_modules；
+  `.dockerignore` 也本来就排除它。
+- 真机证据：**r29**（TraeCode CN 出的包就没带这一层）→ 热更 r30 后站点一直正常；
+  本次又在沙箱用 `docker build --target builder` 复验，日志明确
+  「检测到预构建 dist，跳过 npm ci 与 generate」，768 个 dist 文件全部带上。
+- 早期「删了会出运行异常」的说法来自 r11 时代的旧构建链路，且常伴随误伤
+  `myreader-dist` 依赖；相关注释、真机清单前提、失效文档引用（`docs/真机验证清单.md`
+  早已归档并入 `部署包说明.md`）全部改写或去除。
+- `myreader-dist` 下三层 `node_modules`（119 根相对符号链接）任何模式都不动，门禁不变。
+
+### 文档：一份按场景给命令的速查表 + 全仓口径对齐
+
+- 新增 [`docs/部署方式速查.md`](docs/部署方式速查.md)：页内热更、整包离线部署
+  （带 dist，连 `npm ci` 都不执行）、改了前端却没重新出 dist（builder 现场
+  `npm ci + npm run generate`，需联网）、镜像 tar 交付、源码包、回滚、通用自检，
+  每种情况给可直接复制的命令、判据与易误判项。
+- `scripts/pack-image.sh` 收进仓库（此前只在交付目录），镜像交付命令有对应文件。
+- dist 基线统一到 **768**；清掉 `Dockerfile`、`.dockerignore`、`README.md`、
+  `INSTALL_GUIDE.md`、`docs/部署包说明.md`、`docs/操作总纲.md`、NAS 手册里的
+  757/766、`build-spa`、「默认保留 node_modules」、「断链 8」、容器内
+  `/app-static` 路径等过时描述。历史修订摘要中的 757/766 保留原样（描述当时事实）。
+- `docs/README.md` 把速查表列为「每次部署前先看」的第一份文档。
+
+### 部署方式
+
+`scripts/pack.sh` 与 `Dockerfile` 变更落 `blocking` → 清单判定 `mode=redeploy`，
+**必须用整包重新部署**，页内「立即更新」不会出现。命令见 `docs/部署方式速查.md` §2。
+
+---
+
 ## 4.6.0-build.27-r32（2026-11-14，**修正：分类 tab 与分类浏览页同源**，仅后端 3 个 py，可热更）
 
 按验收反馈「跟分类里面的分类一致，进行分类最合适」，把 r31 里各算各的分类改成同一套：

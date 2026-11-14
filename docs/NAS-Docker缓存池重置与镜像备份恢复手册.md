@@ -413,8 +413,9 @@ cd /volume1/docker/audiobook && sh scripts/deploy.sh
 ### 源码与包
 
 - Gitee 仓库 `wxgoo/audiobook-src` 是**源码与发布清单的权威来源**，不再单独出 `audiobook-src-*.tar.gz` 源码包。
-- 部署包 `audiobook-deploy-4.6.0-build.27-r27.tar.gz` 仍必须完整分发：Gitee 不跟踪
-  `app/dist`、`app/node_modules`，且 Windows / GUI 解压会压扁 MyReader 的符号链接。
+- 部署包 `audiobook-deploy-<版本>.tar.gz` 仍必须完整分发：Gitee 不跟踪
+  `app/dist` 与 `myreader-dist/`（后者含 119 根符号链接），且 Windows / GUI 解压会压扁这些链接。
+  `app/node_modules` 自 r33 起默认不在包内，构建不需要它。
 - 三者口径冲突时，以「当前有效」表里前三份为准。
 
 ---

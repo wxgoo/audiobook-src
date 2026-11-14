@@ -101,7 +101,7 @@ RUN if [ ! -f /app-static/dist/static/pdfjs/web/viewer.html ]; then \
         echo "   检查：public/ 是否含 static/pdfjs、static/fonts、static/wallpaper、"; \
         echo "         static/images、static/js、static/toolbox-bridge.js、icons/、robots.txt；"; \
         echo "         且 app/nuxt.config.js 的 dir.static 指向 ../public。"; \
-        echo "   校验：sh scripts/check-dist.sh（app/dist 文件数应为 757）。"; \
+        echo "   校验：sh scripts/check-dist.sh（基线见该脚本 BASELINE，当前 768）。"; \
         echo "=================================================================="; \
         exit 1; \
     fi
