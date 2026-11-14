@@ -553,7 +553,7 @@ def _visible_audio_ids(handler):
 
 class AudioBooks(BaseHandler):
     @js
-    def get(self):
+    async def get(self):
         """获取有音频的书籍列表。
 
         键集分页：`after` 游标（兼容旧的 `start`/`size`），响应带 `next_cursor`。
@@ -577,6 +577,9 @@ class AudioBooks(BaseHandler):
             visible = _visible_audio_ids(self)
             if visible is not None:
                 audio_book_ids = [i for i in audio_book_ids if i in visible]
+
+            # 「全部」tab 的计数是全量可见有声书，不能用按 category 过滤后的 total
+            all_visible_total = len(audio_book_ids)
 
             if category:
                 allowed = set(audio_category_agg.get_audio_categories(
@@ -628,17 +631,55 @@ class AudioBooks(BaseHandler):
                 book_data["audio_count"] = audios_cnt_map.get(book["id"], 0)
                 books_result.append(book_data)
 
+            # 分类 tab 随书列表一起下发：SPA 模式下 asyncData 会把这两个 key merge 进
+            # 组件 data 的 audioCategories/audioTotal，tab 才有数据可渲染。
+            # 不能只放在 init()→fetchAudioCategories() 里——asyncData 成功会置
+            # ssr_loaded=true，mounted 的 !ssr_loaded 守卫会跳过 init()，分类请求
+            # 永远不发，tab 静默不显示（Console 干净、列表正常，极易误判成缓存）。
+            tab_categories = []
+            try:
+                catalog = await self.catalog_categories()
+                cat_map = audio_category_agg.get_audio_aggregation(
+                    self.calibre_db_cache)["categories"]
+                tab_categories = build_audio_tab_categories(catalog, cat_map, visible)
+            except Exception as e:
+                # 分类只是增强信息，失败不能拖垮书列表
+                logging.warning(f"AudioBooks: build category tabs failed: {e}")
+
             return {
                 "err": "ok",
                 "title": _("有声书"),
                 "books": books_result,
                 "total": total,
                 "next_cursor": next_cursor,
+                "audioCategories": tab_categories,
+                "audioTotal": all_visible_total,
             }
 
         except Exception as e:
             logging.error(f"Error in AudioBooks.get: {e}")
             return {"err": "server.error", "msg": str(e)}
+
+
+def build_audio_tab_categories(catalog, cat_map, visible, keep_empty=False):
+    """生成有声书页分类 tab 的 rows，供 /api/audiobooks 与
+    /api/audiobooks/categories 共用。
+
+    分类名与顺序照抄 catalog_categories()（分类浏览页骨架），count 用
+    _visible_audio_ids() 的可见口径，图标由 category_icons.decorate 补齐。
+    两处必须走同一份实现，否则「列表页 tab」和「独立分类接口」会漂移。
+
+    visible=None 表示无范围限制（快路）；keep_empty=True 用于 ?all=1 核对。
+    """
+    rows = []
+    for c in catalog:  # 顺序照抄分类浏览页，不按有声书数重排
+        ids = cat_map.get(c["name"]) or []
+        n = (len([b for b in ids if b in visible])
+             if visible is not None else len(ids))
+        if n <= 0 and not keep_empty:
+            continue
+        rows.append({"name": c["name"], "count": n})
+    return category_icons.decorate(rows)
 
 
 class AudioBookCategories(BaseHandler):
@@ -667,16 +708,7 @@ class AudioBookCategories(BaseHandler):
             keep_empty = str(self.get_argument("all", "")).lower() in ("1", "true", "yes")
             total = len(visible & audio_ids) if visible is not None else len(audio_ids)
 
-            rows = []
-            for c in catalog:  # 顺序照抄分类浏览页，不按有声书数重排
-                ids = cat_map.get(c["name"]) or []
-                n = (len([b for b in ids if b in visible])
-                     if visible is not None else len(ids))
-                if n <= 0 and not keep_empty:
-                    continue
-                rows.append({"name": c["name"], "count": n})
-
-            rows = category_icons.decorate(rows)
+            rows = build_audio_tab_categories(catalog, cat_map, visible, keep_empty)
             return {"err": "ok", "total": total, "categories": rows}
         except Exception as e:
             logging.error(f"Error in AudioBookCategories.get: {e}")

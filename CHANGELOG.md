@@ -16,6 +16,41 @@
 
 ---
 
+## 4.6.0-build.27-r35（2026-11-14，**修复有声书页分类 tab 一直不显示**，纯后端，可热更）
+
+- 症状：r34 热更 / `deploy.sh` / `upgrade.sh` 全试过，左侧「有声书」页右侧始终没有分类 tab。
+  但 **Console 无红字**、书列表正常（11 本、每本都带 `category`）、手动访问
+  `/api/audiobooks/categories` 也返回 4 个分类。前端 `46bb55f.js` 里
+  `fetchAudioCategories` 存在、HTTP 200、runtime 映射 `0:"46bb55f"` 也正确。
+- 根因（**与 dist 新旧、浏览器缓存、后端接口都无关**）：本前端是 SPA 模式，
+  `asyncData` 在客户端每次导航都会执行，成功返回 `err:ok` 后把 `ssr_loaded=true`
+  merge 进组件 data；`mounted()` 的守卫是 `if (!this.ssr_loaded && !this.inited) init()`，
+  于是 **`init()` 被整个跳过**。而 `fetchAudioCategories()` 只写在 `init()` 里 →
+  分类请求一次都没发 → `audioCategories` 恒为 `[]` → `audioTabs.length === 1` →
+  `v-if="isAudioPage && audioTabs.length > 1"` 静默不成立。
+  这正是「版本新、功能旧」里最难查的一种：所有排查项都是绿的，就是不发请求。
+  r31 引入 tab 时只覆盖了站内跳转（`beforeRouteUpdate → init`），首屏直入 / 强刷
+  这条 `asyncData` 路径从没走通过。
+- 修复（**不动 `app/dist`，纯 py 可热更**）：
+  `AudioBooks.get()` 改为 `async def`，在书列表响应里随 `books` 一起下发
+  `audioCategories` 与 `audioTotal`——`asyncData` 会把这两个 key merge 进组件 data
+  （两者都在 `data()` 里声明），tab 首屏就有数据，不再依赖 `init()` 那条链路。
+  抽出模块级 `build_audio_tab_categories()`，`/api/audiobooks` 与
+  `/api/audiobooks/categories` 共用同一份实现，保证两处 tab 顺序 / 计数 / 图标一致。
+  `audioTotal` 用**过滤前**的全量可见数，`?category=X` 时「全部」tab 不会缩水。
+- 实证：真实 r34 `app/dist` + 无头 Chromium + mock 后端，
+  **现状**分类请求 0 次 / tab 0 个；**书列表带分类数据后** tab 5 个
+  （All + 教育 + 科幻小说 + 播音:李慧敏 + 科幻），Console 无报错。
+  新增 `tests/test_audiobooks_list_tab_categories.py` 5 例，连同既有
+  `test_audiobooks_category_handler.py` 共 16 例全绿。
+- 部署：`hotfixable=true` / `requires_dist=false`，只需 2 个 py，
+  **页内 `/admin/version` →「立即更新」→ 强刷**即可（当前须为 r34）。
+  dist 768 文件与 `index.html` 指纹 `2c02df40…` 一个字节没动，不需要重新部署。
+  同时提供 r35 整包，供全新安装 / 想把源码目录固化到 r35 的站点使用。
+  热更改的是容器可写层，之后别 `--force-recreate`；真要重建先跑 `sh scripts/sync-hotfix.sh`。
+
+---
+
 ## 4.6.0-build.27-r34 后续修复（**upgrade.sh 数据挂载误报**，仅脚本，revision / 清单字节不变）
 
 - 症状：`sh scripts/upgrade.sh <r34 包>` 在 `[6/8]` 报
