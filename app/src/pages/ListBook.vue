@@ -26,6 +26,12 @@
         <v-divider class="mt-3 mb-0"></v-divider>
       </v-col>
 
+      <v-col v-if="isAudioPage && audioTabs.length > 1" cols="12" class="py-0">
+        <!-- 分类 tab：与「分类浏览」页同一组件；状态走路由 query，刷新/分享/翻页都能保持 -->
+        <category-tabs v-model="audioTabIndex" :categories="audioTabs"
+                       @input="onAudioTabChange"></category-tabs>
+      </v-col>
+
       <v-col v-if="isPrintBooksPage && books.length === 0" cols="12" class="text-center grey--text pb-10">
         <v-icon large class="mb-3 d-block">mdi-bookshelf</v-icon>
         {{ $t('listBook.importPrintEmptyHint') }}
@@ -135,6 +141,7 @@
 
 <script>
 import BookCards from "../components/BookCards.vue";
+import CategoryTabs from "../components/CategoryTabs.vue";
 import { clampPageSize } from "~/utils/pageSize";
 
 const SELECTABLE_ACTIONS = {
@@ -147,6 +154,7 @@ const SELECTABLE_ACTIONS = {
 export default {
   components: {
     BookCards,
+    CategoryTabs,
   },
   computed: {
     page_size() {
@@ -160,6 +168,18 @@ export default {
     },
     pageDisplayTitle() {
       return this.getPageTitle();
+    },
+    // 有声书页分类 tab：「全部」在最前，count 用 categories 端点的 total；
+    // 选中的分类有新数据时列表 total 会实时刷新它，避免与列表对不上
+    audioTabs() {
+      const all = { name: "", label: this.$t('listBook.all'), count: this.audioTotal, icon: "mdi-bookshelf" };
+      return [all].concat(this.audioCategories || []);
+    },
+    audioTabIndex() {
+      const cat = this.$route.query.category || "";
+      if (!cat) return 0;
+      const idx = this.audioTabs.findIndex(t => t.name === cat);
+      return idx >= 0 ? idx : 0;
     },
     isVisitsPage() {
       return this.$route.path === '/visits';
@@ -208,6 +228,8 @@ export default {
     ssr_loaded: false,
     load_error: "",
     isAudioPage: false,
+    audioCategories: [],
+    audioTotal: 0,
     multiSelectMode: false,
     selectedIds: [],
     confirmDialog: false,
@@ -358,6 +380,10 @@ export default {
       this._reqToken = token;
       const reqPath = route.fullPath;
 
+      if (route.path === '/audiobooks') {
+        this.fetchAudioCategories();
+      }
+
       this.$backend(reqPath, { timeout: 20000 })
         .then(rsp => {
           if (token !== this._reqToken || this.$route.fullPath !== reqPath) {
@@ -378,6 +404,10 @@ export default {
           this.books = rsp.books;
           this.total = rsp.total
           this.page_cnt = Math.max(1, Math.ceil(this.total / this.page_size));
+          // 「全部」tab 的 count 用列表的实时 total（它已含可见性口径，最准）
+          if (this.isAudioPage && !(this.$route.query.category)) {
+            this.audioTotal = rsp.total;
+          }
         })
         .catch(() => {
           if (token !== this._reqToken) {
@@ -390,6 +420,31 @@ export default {
           this.$alert("error", this.load_error);
         })
       if (next) next();
+    },
+    fetchAudioCategories() {
+      // 分类 tab 数据；失败静默（tab 不出现，列表行为不变），不打断主列表加载
+      this.$backend('/audiobooks/categories', { timeout: 10000 })
+        .then(rsp => {
+          if (rsp && rsp.err === 'ok') {
+            this.audioCategories = rsp.categories || [];
+            this.audioTotal = rsp.total || 0;
+          }
+        })
+        .catch(() => {});
+    },
+    onAudioTabChange(index) {
+      const tab = this.audioTabs[index];
+      if (!tab) return;
+      const q = Object.assign({}, this.$route.query);
+      // 切分类必须清掉旧页码，否则新集合按旧 start 取页会空白或错位
+      delete q.start;
+      delete q.size;
+      if (tab.name) {
+        q.category = tab.name;
+      } else {
+        delete q.category;
+      }
+      this.$router.push({ query: q });
     },
     reload() {
       this.init(this.$route);

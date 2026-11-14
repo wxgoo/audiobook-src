@@ -90,6 +90,7 @@
         }
     },
     "listBook": {
+        "all": "全部",
         "title": "書籍列表",
         "empty": "暫無書籍",
         "loadFailed": "載入失敗，請稍後重試",

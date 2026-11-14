@@ -91,6 +91,7 @@
         "booklistRecommendation": "Booklist Recommendations"
     },
     "listBook": {
+        "all": "All",
         "title": "Book List",
         "empty": "No books yet",
         "loadFailed": "Failed to load. Please try again.",

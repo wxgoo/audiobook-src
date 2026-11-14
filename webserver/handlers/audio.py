@@ -21,8 +21,11 @@ from tornado import web
 from tornado.iostream import StreamClosedError
 
 from webserver import loader
+from webserver import constants
 from webserver.base.formatter import BookFormatter
 from webserver.base.pagination import encode_cursor, parse_id_cursor
+from webserver.base import audio_category_agg
+from webserver.base import category_icons
 from webserver.base.audio_dir import (
     audio_dir_for_read,
     audio_dir_for_write,
@@ -108,6 +111,15 @@ class AudioBooksCache:
     _need_update = True
     _refreshing = False
     _pending_refresh = False
+    # 缓存内容版本号：集合每次实际变化 +1。
+    # 供下游派生缓存（如 audio_category_agg 的分类聚合）做失效判断，
+    # 派生方只比对版本号即可，不必各自维护 TTL（双缓存漂移的教训见 podcast）。
+    _version = 0
+
+    @classmethod
+    def get_version(cls):
+        """当前缓存内容版本号（读方用于派生缓存失效判断）。"""
+        return cls._version
 
     @classmethod
     def _scan_audio_directory(cls):
@@ -161,6 +173,7 @@ class AudioBooksCache:
                 cls._book_ids = book_ids
                 cls._last_update_time = time.time()
                 cls._need_update = False
+                cls._version += 1
             logging.info("Audio cache updated with %d books", len(book_ids))
         except Exception:
             # 扫描失败保留旧缓存，避免把「有音频」误降级成「没有音频」
@@ -182,6 +195,7 @@ class AudioBooksCache:
         with cls._state_lock:
             if bid not in cls._book_ids:
                 cls._book_ids = cls._book_ids | {bid}
+                cls._version += 1
                 logging.info("Audio cache +1 book: %s", bid)
 
     @classmethod
@@ -191,6 +205,7 @@ class AudioBooksCache:
         with cls._state_lock:
             if bid in cls._book_ids:
                 cls._book_ids = cls._book_ids - {bid}
+                cls._version += 1
                 logging.info("Audio cache -1 book: %s", bid)
 
     @classmethod
@@ -507,6 +522,35 @@ class AudioDetail(BaseHandler):
             return {"err": "server.error", "msg": str(e)}
 
 
+def _visible_audio_ids(handler):
+    """当前用户可见的有声书 id 集；返回 None 表示无范围限制（快路，全可见）。
+
+    口径必须与 get_books → _merge_books → is_book_visible 完全一致：
+      - 阅读范围开关关闭 / 管理员 → None（调用方按全可见处理）；
+      - 未登录 → 只有无 tags 且无 #category 的书（与 is_book_visible 的访客分支同规）；
+      - 受限用户 → 逐本 book_matches_limits（统计侧与列表侧共用的唯一口径来源），
+        判定所需的 tags/#category 来自共享聚合的 book_meta，不再逐本取元数据。
+    冷启动聚合未建完时受限用户可能短暂看到空列表，聚合后台建好后自愈——
+    这是「请求路径零阻塞」的既定代价，见 audio_category_agg 模块注释。
+    """
+    if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+        return None
+    user = handler.current_user
+    meta = audio_category_agg.get_audio_aggregation(handler.calibre_db_cache)["book_meta"]
+    if not user:
+        return {
+            bid for bid, m in meta.items()
+            if not m.get("tags") and not m.get(constants.CALIBRE_COLUMN_CATEGORY)
+        }
+    if handler.is_admin():
+        return None
+    from webserver.services.reader_group import ReaderGroupService, book_matches_limits
+    eff = ReaderGroupService.effective_limits(user)
+    if not eff.get("read_limit"):
+        return None
+    return {bid for bid, m in meta.items() if book_matches_limits(m, eff)}
+
+
 class AudioBooks(BaseHandler):
     @js
     def get(self):
@@ -515,14 +559,30 @@ class AudioBooks(BaseHandler):
         键集分页：`after` 游标（兼容旧的 `start`/`size`），响应带 `next_cursor`。
         书籍 ID 来自 AudioBooksCache（事件驱动 + 兜底刷新），请求路径不再全库扫盘；
         每个请求只对当前页的书目录做 listdir 统计音频数量。
+
+        可选 `category` 参数：按 #category 自定义列过滤（值来自
+        /api/audiobooks/categories 的分类 tab），先过滤后分页，游标机制不受影响。
+        total 现在按当前用户可见口径计算——此前受限用户看到的 total 是全量数，
+        每页实际书数却少于 size，两处数字对不上。
         """
         try:
             start = self.get_argument_start()
             size = int(self.get_argument("size", 60))
             size = max(size, 1)
             cursor = self.get_argument("after", "") or self.get_argument("cursor", "")
+            category = (self.get_argument("category", "") or "").strip()
 
             audio_book_ids = sorted(AudioBooksCache.get_audio_book_ids(), reverse=True)
+
+            visible = _visible_audio_ids(self)
+            if visible is not None:
+                audio_book_ids = [i for i in audio_book_ids if i in visible]
+
+            if category:
+                allowed = set(audio_category_agg.get_audio_categories(
+                    self.calibre_db_cache).get(category, []))
+                audio_book_ids = [i for i in audio_book_ids if i in allowed]
+
             total = len(audio_book_ids)
 
             pos = start
@@ -578,6 +638,38 @@ class AudioBooks(BaseHandler):
 
         except Exception as e:
             logging.error(f"Error in AudioBooks.get: {e}")
+            return {"err": "server.error", "msg": str(e)}
+
+
+class AudioBookCategories(BaseHandler):
+    """有声书页的分类 tab 数据：{err, total, categories:[{name,count,icon,color}]}。
+
+    count 与 /api/audiobooks?category=X 的列表共用同一个 _visible_audio_ids
+    可见集——tab 显示几本，点进去就是几本，绝不允许两个口径。
+    空分类剔除；按 count 降序（最常用的分类排最前）；图标沿用
+    /api/categories 的命名规则（category_icons.decorate）。
+    """
+
+    @js
+    def get(self):
+        try:
+            cat_map = audio_category_agg.get_audio_aggregation(
+                self.calibre_db_cache)["categories"]
+            audio_ids = AudioBooksCache.get_audio_book_ids_set()
+            visible = _visible_audio_ids(self)
+            if visible is not None:
+                rows = [{"name": n, "count": len([b for b in ids if b in visible])}
+                        for n, ids in cat_map.items()]
+                total = len(visible & audio_ids)
+            else:
+                rows = [{"name": n, "count": len(ids)} for n, ids in cat_map.items()]
+                total = len(audio_ids)
+            rows = [r for r in rows if r["count"] > 0]
+            rows.sort(key=lambda r: -r["count"])
+            rows = category_icons.decorate(rows)
+            return {"err": "ok", "total": total, "categories": rows}
+        except Exception as e:
+            logging.error(f"Error in AudioBookCategories.get: {e}")
             return {"err": "server.error", "msg": str(e)}
 
 
@@ -1681,6 +1773,7 @@ def routes():
         (r"/api/audio/([0-9]+)/delete", AudioDelete),
         (r"/api/audio/([0-9]+)/purchase", AudioPurchase),  # 音频购买接口
         (r"/api/audio/([0-9]+)/progress", AudioPlaybackProgress),  # 播放进度（跨设备续播）
+        (r"/api/audiobooks/categories", AudioBookCategories),  # 有声书页分类 tab（须在 /api/audiobooks 之前注册）
         (r"/api/audiobooks", AudioBooks),  # 音频书籍列表
         (r"/api/audio/([0-9]+)/([^/]+)", AudioFile),
         (r"/api/audios/([0-9]+)/collection", AudioCollection),  # 音频合集下载接口

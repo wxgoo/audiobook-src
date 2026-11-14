@@ -9,21 +9,12 @@ to only include books that have audio files.
 
 import logging
 import os
-import time
 from urllib.parse import quote
 
 from webserver import loader
 from webserver import constants
 
 CONF = loader.get_settings()
-
-_aggregate_cache = {
-    "timestamp": 0,
-    "categories": {},
-    "tags": {},
-    "authors": {},
-}
-
 
 class PodcastProvider:
     """
@@ -258,58 +249,28 @@ class PodcastProvider:
         return entries
 
     def _refresh_aggregations(self):
-        """Update aggregation cache if older than 3 minutes."""
-        now = time.time()
-        if (
-            now - _aggregate_cache["timestamp"] < 180
-            and _aggregate_cache["timestamp"] > 0
-        ):
-            return
+        """聚合缓存：书源/失效/节流统一由 webserver.base.audio_category_agg 管理。
 
-        categories = {}
+        force=True 保持本模块「请求即有数据」的原语义；180s 节流在共享层
+        （REBUILD_MIN_INTERVAL），不再各自维护 TTL（原双缓存漂移的教训）。
+        categories 直接用共享聚合结果；tags/authors 是 podcast 特有口径
+        （如 len(t) < 2 的过滤），从同一份 book_meta 纯内存聚合，
+        不再对全量音频书二次 get_metadata。
+        """
+        from webserver.base.audio_category_agg import get_audio_aggregation
+        agg = get_audio_aggregation(self.cache, force=True)
+
+        categories = {k: list(v) for k, v in agg["categories"].items()}
         tags = {}
         authors = {}
-
-        audio_ids = self._get_audio_book_ids()
-        if not audio_ids:
-            return
-
-        for book_id in audio_ids:
-            try:
-                mi = self.cache.get_metadata(
-                    book_id, get_cover=False, get_user_categories=False
-                )
-                if not mi:
+        for bid, m in agg["book_meta"].items():
+            for t in m["tags"]:
+                if not t or len(t) < 2:
                     continue
-
-                # Category caching
-                cat_val = mi.get("#category")
-                cat_list = []
-                if isinstance(cat_val, (list, tuple)):
-                    cat_list = [str(c) for c in cat_val]
-                elif cat_val:
-                    cat_list = [str(cat_val)]
-                for c in cat_list:
-                    categories.setdefault(c, []).append(book_id)
-
-                # Tags caching
-                if mi.tags:
-                    for t in mi.tags:
-                        if not t or len(t) < 2:
-                            continue
-                        tags.setdefault(t, []).append(book_id)
-
-                # Authors caching
-                if mi.authors:
-                    for a in mi.authors:
-                        authors.setdefault(a, []).append(book_id)
-            except Exception as e:
-                logging.error(f"Error fetching metadata for audiobook {book_id}: {e}")
-
-        _aggregate_cache["categories"] = categories
-        _aggregate_cache["tags"] = tags
-        _aggregate_cache["authors"] = authors
-        _aggregate_cache["timestamp"] = now
+                tags.setdefault(t, []).append(bid)
+            for a in m["authors"]:
+                authors.setdefault(a, []).append(bid)
+        return {"categories": categories, "tags": tags, "authors": authors}
 
     # ------------------------------------------------------------------
     # Reading-range helpers（与 base.py is_book_visible 同一套口径）
@@ -382,9 +343,9 @@ class PodcastProvider:
         Returns:
             dict of {category_name: [book_ids]}
         """
-        self._refresh_aggregations()
+        agg = self._refresh_aggregations()
 
-        categories = dict(_aggregate_cache["categories"])
+        categories = agg["categories"]
         if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
             return categories
         if not user:
@@ -406,8 +367,8 @@ class PodcastProvider:
         Returns:
             dict of {tag_name: [book_ids]}
         """
-        self._refresh_aggregations()
-        tags = dict(_aggregate_cache["tags"])
+        agg = self._refresh_aggregations()
+        tags = agg["tags"]
         if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
             return tags
         if not user:
@@ -426,8 +387,8 @@ class PodcastProvider:
         Returns:
             dict of {author_name: [book_ids]}
         """
-        self._refresh_aggregations()
-        authors = dict(_aggregate_cache["authors"])
+        agg = self._refresh_aggregations()
+        authors = agg["authors"]
         if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
             return authors
         if not user:

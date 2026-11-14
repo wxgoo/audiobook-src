@@ -16,6 +16,37 @@
 
 ---
 
+## 4.6.0-build.27-r31（2026-11-14，**功能：有声书页分类 tab**，含前端产物，可热更）
+
+### 有声书页支持按分类浏览（与「分类浏览」页同款交互）
+
+左侧菜单点「有声书」进入后，列表顶部新增一排分类 tab（首个是「全部」），
+点击只看该分类的有声书；分类与数量来自 calibre 自定义列 `#category`。
+
+- 后端：`/api/audiobooks` 新增 `category` 参数（先过滤后分页，游标兼容）；
+  新端点 `/api/audiobooks/categories` 返回 tab 数据（name/count/icon/color）。
+- **口径一致**：tab 的 count 与列表的 total 用同一个可见性判定
+  （`book_matches_limits`，读者组白/黑名单同一函数）——tab 显示几本，点进去就是几本。
+- 顺带修复：受限用户此前在有声书页看到的 `total` 是全量数，
+  与每页实际书数对不上，现在 total 同样按可见口径计算。
+- 性能：分类聚合（书 × `#category`）收敛到共享模块 `webserver/base/audio_category_agg.py`，
+  podcast 的分类/标签/作者聚合改为复用同一份（消灭两份各自失效的缓存）；
+  书集合小变更在请求线程增量补齐（毫秒级），冷启动/全库扫描后转后台线程重建，
+  请求路径零阻塞。podcast 原有的 180s TTL 语义由共享层节流承担，行为不变。
+- 前端：tab UI 抽成公共组件 `CategoryTabs.vue`，「分类浏览」页与有声书页共用
+  （原来模板与样式各写一份）；有声书页的选中状态走路由 query（`?category=`），
+  刷新、分享、翻页都能保持；「全部」tab 的数字直接用列表实时 total。
+
+### 新增测试
+
+- `tests/test_audio_category_agg.py`：聚合形态口径（含 "A/B" 不拆分的历史锚）、
+  版本短路、增量补齐、全量节流、meta 与分桶同源；
+- `tests/test_audiobooks_category_handler.py`：category 过滤、未知分类空页、
+  过滤集上游标翻页、**tab count ≡ 列表 total**、受限用户同步削减、空分类剔除；
+- `tests/test_audio_books_cache.py` 补缓存版本号随三个变化入口递增。
+
+---
+
 ## 4.6.0-build.27-r27（2026-11-12，**安全修复 + 文档**，无运行期代码变更，检测仅提示）
 
 > 本版**没有前端/后端运行期代码变更**，只改运维脚本与文档；已重出 deploy 与 src-full 两张整包。

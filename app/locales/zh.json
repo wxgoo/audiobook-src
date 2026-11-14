@@ -91,6 +91,7 @@
         "booklistRecommendation": "书单推荐"
     },
     "listBook": {
+        "all": "全部",
         "title": "书籍列表",
         "empty": "暂无书籍",
         "loadFailed": "加载失败，请稍后重试",
