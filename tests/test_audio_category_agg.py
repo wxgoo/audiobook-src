@@ -48,8 +48,11 @@ def _reset_state():
             "ids": set(),
             "categories": {},
             "book_meta": {},
+            "lib_version": None,
+            "meta_dirty": False,
+            "built_at": 0.0,
+            "last_kick": 0.0,
         })
-        agg._state.pop("built_at", None)
 
 
 @pytest.fixture(autouse=True)

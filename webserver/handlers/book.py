@@ -27,6 +27,7 @@ from sqlalchemy import case, func
 from webserver import loader, perf, site_time, utils
 from webserver.base import accel
 from webserver.base import category_icons
+from webserver.base import audio_category_agg
 from webserver.base.formatter import BookFormatter, ReadingStateFormatter
 from webserver.base.image_generator import ImageGenerator
 from webserver.base.image_helper import ImageHelper
@@ -646,6 +647,10 @@ class BookCategory(BaseHandler):
         try:
             # Use set_field directly on the cache to avoid Metadata object issues
             self.calibre_db_cache.set_field(CALIBRE_COLUMN_CATEGORY, {book_id: category})
+            # 分类 tab 与 ?category=X 过滤读的是 audio_category_agg 的模块级快照，
+            # 它只按「有音频的书集合版本」失效；改 #category 不改集合，必须显式
+            # 通知，否则书永远留在旧分类桶里（重启容器才自愈）。
+            audio_category_agg.on_category_changed(book_id, category)
             return {"err": "ok", "msg": _("分类更新成功")}
         except Exception as e:
             logging.error(f"Error updating category for book {book_id}: {e}")
@@ -791,6 +796,7 @@ class BookCategoryBatch(BaseHandler):
             # set_field can handle a dict of {id: value}
             updates = {bid: category for bid in book_ids}
             self.calibre_db_cache.set_field(CALIBRE_COLUMN_CATEGORY, updates)
+            audio_category_agg.on_categories_changed(updates)
             count = len(book_ids)
 
             return {"err": "ok", "msg": _("成功更新 %d 本书籍分类") % count, "count": count}
@@ -1151,6 +1157,7 @@ class BookRefer(BaseHandler):
         org_mi.timestamp = nowf()
         self.calibre_db.set_metadata(book_id, org_mi, force_changes=True)
         self.calibre_db_cache.set_field(CALIBRE_COLUMN_CATEGORY, {book_id: ""})
+        audio_category_agg.on_category_changed(book_id, "")
         self.calibre_db_cache.set_field(CALIBRE_COLUMN_DYNAMIC_COVER, {book_id: 1 if dynamic_cover else 0})
         if _translators:
             translators = ",".join(_translators)
@@ -2272,6 +2279,7 @@ class BookEdit(BaseHandler):
                     category = ''
                 mi.set(CALIBRE_COLUMN_CATEGORY, category)
                 self.calibre_db_cache.set_field(CALIBRE_COLUMN_CATEGORY, {bid: category})
+                audio_category_agg.on_category_changed(bid, category)
             else:
                 logging.error("Too many characters in the category, ignore it!")
         if COLUMN_EXT_LINK in data:

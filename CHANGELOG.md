@@ -16,6 +16,53 @@
 
 ---
 
+## 4.6.0-build.27-r38（2026-11-14，**修「明明改成教育了却没进教育分类」**，纯后端，可热更）
+
+- 症状：详情页把一本有声书的分类改成「教育」，有声书页的 tab 仍是
+  `全部(100) / 教育(2) / 文学(1) / 科幻小说(4) / 社科(1)`；点进「教育」
+  也看不到那本书。强刷、重开页面无效，**重启容器才自愈**。
+- 根因（**不是前端、不是 dist、不是分类接口没数据、不是书没写进库**）：
+  `audio_category_agg` 的模块级快照只跟随
+  `AudioBooksCache.get_version()` 失效，而那个 version 表示「**有音频的书
+  集合**」是否变化。改 `#category` 是 calibre 元数据写入，集合一本没变，
+  version 纹丝不动 → 快照一直旧。分类 tab 的 count
+  （`build_audio_tab_categories`）与 `?category=X` 的列表过滤
+  （`AudioBooks.get` 里的 `allowed`）**都读这份快照**，所以两处同时不更新。
+  反差佐证：分类名骨架 `catalog_categories()` 用 `library_version()` 做缓存
+  key，是实时的——所以 tab 名字/顺序对，只有数字和归属旧。
+  实证：缓存 10 本时教育为 `[1,2]`；DB 改成教育后 tab 仍 `教育(2)`；
+  强制重算一次立刻变 `教育(3)`，证明 DB 已写入、只是缓存没失效。
+  另有一处隐患：即使 version 变了但集合没变，原「集合增量」分支
+  `added/removed` 都为空，会**什么都不重算却把 version 推到最新**，
+  把旧元数据永久钉死。
+- 修复（**不动 `app/dist`，纯 py 可热更**）：
+  - `audio_category_agg.on_category_changed()` / `on_categories_changed()`：
+    改分类成功后**按调用方手上的新值直接挪桶**，O(1)、不读 calibre 元数据
+    （绕开 `new_api` 在 `set_field` 之后未必即时反映新值的缓存层），保留
+    该书 `tags`/`authors`（受限用户可见性 `_visible_audio_ids` 读的就是这份
+    `book_meta`）。只处理已在有声书集合里的书，集合未建好/该书无音频时忽略。
+  - `library_version()`（metadata.db + -wal 的 mtime）兜底 + `invalidate()`：
+    漏通知的写入（`set_metadata`、外部 calibre 工具、导入脚本、独立进程的
+    AI 填信息）会推进库版本，触发**后台全量重建**（单飞 + 20s 节流），
+    保持「请求路径零阻塞」的既定约定，秒级自愈。
+  - 元数据脏时**禁止**走集合增量空转分支；`force` 同步重建与后台重建都会
+    写回 `lib_version`、清 `meta_dirty`，不会反复重算。
+  - 全仓 9 处 `set_field(#category, ...)` 入口全部接线：详情页改分类、
+    批量改分类、清空分类、批量元数据编辑、MCP 改书信息、AI 自动填信息、
+    导入按目录名设分类、重命名分类目录、移动文件。
+  - 新增 AST 契约测试 `tests/test_category_change_notify_contract.py`：
+    强制**每个**写分类的函数内必须出现 `audio_category_agg` 的通知调用，
+    以后新增入口忘了通知会直接让测试失败，而不是等用户在 NAS 上发现。
+- 边界：只有**带音频的书**才会出现在有声书分类 tab；无音频的书改成任何
+  分类都不会进（这是口径，不是 bug）。独立进程写入靠库版本兜底，允许秒级
+  滞后；站内改分类走即时通知，零延迟。
+- 测试：新增 `tests/test_audio_agg_category_change.py`（14 例）与契约测试
+  （3 例）；音频/分类/设置/扫描相关回归 **316 passed / 4 skipped**。
+  （`test_scan_p0.py` 的全角折叠语义用例在 r37 之前 HEAD 基线上同样失败，
+  与本次改动无关；2 个测试文件因沙箱缺 `social_tornado` 无法收集。）
+
+---
+
 ## 4.6.0-build.27-r37（2026-11-14，**修「监控导入目录勾了不响应」+ 有声书目录自动导入 + 两个死开关**，纯后端，可热更）
 
 - 症状：设置页「导入与存储 → 自动导入」勾了「监控导入目录，自动进行导入」，

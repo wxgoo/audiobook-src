@@ -358,6 +358,12 @@ class MCPService:
                 # 同步更新calibre的category列（如果有传入category参数）
                 category_val = arguments[COLUMN_CATEGORY]
                 self.base_handler.calibre_db_cache.set_field(CALIBRE_COLUMN_CATEGORY, {book_id: category_val})
+                # 分类 tab 聚合快照按「有音频的书集合版本」失效，改分类必须显式通知
+                try:
+                    from webserver.base import audio_category_agg
+                    audio_category_agg.on_category_changed(book_id, category_val)
+                except Exception:
+                    pass
 
             result = {
                 "status": "success",

@@ -71,6 +71,7 @@ from webserver.constants import BOOK_TYPE_EBOOK, BOOK_TYPE_PHYSICAL, CALIBRE_COL
 from webserver.constants import SCANNED_DOCUMENT_FORMATS
 from webserver.base.book_files import InvalidBookFileError, read_book_metadata, validate_book_file
 from webserver.base.audio_dir import audio_dir_for_write
+from webserver.base import audio_category_agg
 from webserver.services.background_service import BackgroundService, BackgroundTask
 from webserver import loader
 
@@ -1660,6 +1661,9 @@ class ScanService(AsyncService):
                         try:
                             self.db.new_api.set_field(CALIBRE_COLUMN_CATEGORY, {row.book_id: first_dir})
                             logging.info("[IMPORT] Set category '%s' for book_id=%d", first_dir, row.book_id)
+                            # 导入时按目录名设分类，也要同步分类 tab 的聚合快照；
+                            # 独立进程写入时由 library_version() 兜底重建。
+                            audio_category_agg.on_category_changed(row.book_id, first_dir)
                         except Exception as cat_err:
                             logging.warning("[IMPORT] Failed to set category for book_id=%d: %s", row.book_id, cat_err)
                     else:
@@ -2488,6 +2492,7 @@ class ScanService(AsyncService):
         for item in affected:
             try:
                 self.db.new_api.set_field(CALIBRE_COLUMN_CATEGORY, {item.book_id: new_category})
+                audio_category_agg.on_category_changed(item.book_id, new_category)
                 # 同步更新 src_path 为新路径，方便后续重命名链式追踪
                 suffix = os.path.realpath(item.src_path)[len(old_dir_path):]
                 item.src_path = new_dir_path + suffix
@@ -2548,6 +2553,7 @@ class ScanService(AsyncService):
         for item in affected:
             try:
                 self.db.new_api.set_field(CALIBRE_COLUMN_CATEGORY, {item.book_id: new_category})
+                audio_category_agg.on_category_changed(item.book_id, new_category)
                 item.src_path = new_file_path
                 logging.info("[RENAME FILE] book_id=%d category->%s, src_path->%s", item.book_id, new_category, item.src_path)
             except Exception as e:

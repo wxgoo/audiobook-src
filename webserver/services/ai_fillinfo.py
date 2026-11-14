@@ -80,6 +80,14 @@ class AIFillInfoService(AsyncService):
                         book_id,
                         cache_err,
                     )
+                else:
+                    # 写库成功才通知分类聚合；本服务若在独立进程，通知到的是
+                    # 该进程的缓存，主进程由 library_version() 兜底后台重建。
+                    try:
+                        from webserver.base import audio_category_agg
+                        audio_category_agg.on_category_changed(book_id, info.category)
+                    except Exception:
+                        pass
 
             logging.info(
                 "[AIFill] Updated book id=%d: category=%s, tags=%s, authors=%s",
