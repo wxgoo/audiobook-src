@@ -1,16 +1,16 @@
 {
   "schema": 1,
-  "revision": "4.6.0-build.27-r35",
-  "base_revision": "4.6.0-build.27-r34",
+  "revision": "4.6.0-build.27-r36",
+  "base_revision": "4.6.0-build.27-r35",
   "version": "4.6.0-build.27",
   "date": "2026-11-14",
-  "summary": "修复有声书页分类 tab 一直不显示（纯后端，可热更）",
+  "summary": "修复手工加音频后统计+1但分类tab不更新（纯后端，可热更）",
   "notes": [
-    "根因：SPA 模式 asyncData 在客户端跑并置 ssr_loaded=true，mounted 的守卫跳过 init()，而 fetchAudioCategories() 只在 init() 里，分类请求一次都不发，audioTabs.length===1 导致 tab 静默不渲染。与 dist 新旧、浏览器缓存、后端接口都无关。",
-    "修复：/api/audiobooks 响应随书列表下发 audioCategories / audioTotal，asyncData 直接 merge 进组件 data；抽出 build_audio_tab_categories() 让两处 tab 同源；audioTotal 用过滤前全量数。",
-    "实证：真实 dist + 无头 Chromium，现状 0 个 tab、修复后 5 个 tab，Console 无报错；16 例测试全绿。",
-    "部署：纯 webserver/**/*.py，页内「立即更新」→ 强刷即可（当前须为 r34）。app/dist 768 文件与 index.html 指纹 2c02df40… 未变，不需要重新部署。",
-    "注意：热更改的是容器可写层，之后别 --force-recreate；真要重建先跑 sh scripts/sync-hotfix.sh 固化。"
+    "根因：左侧菜单「有声书 N」来自 get_audio_books_count()，每次实时全库扫盘；而 /api/audiobooks 的书列表与分类 tab 读 AudioBooksCache（事件驱动 + 6 小时兜底）。手工往 .audio/ 塞文件不经过任何应用事件，于是统计立刻 +1、列表与 tab 纹丝不动，文学分类始终不出现。不是前端、不是 dist、不是分类接口。",
+    "修复：新增 AudioBooksCache.sync_from_scan()，把统计接口已扫出的结果同步进缓存（集合真变化才 +version，下游 audio_category_agg 增量补齐；空结果/坏 id 保护）；get_audio_books_count() 扫完盘顺手调用，同步失败不影响统计；AUDIO_CACHE_REFRESH_SECONDS 默认 6 小时改为 5 分钟（可配置、0 可关闭）。",
+    "实证：缓存 11 本时 tab 为 教育2/科幻小说3/演播3/科幻1；把实时扫盘的 12 本同步进缓存后 tab 立刻多出「文学 1」。新增 6 例契约测试，audio 相关 139 passed / 3 skipped。",
+    "部署：r35 -> r36 纯 webserver/**/*.py，页内「立即更新」后强刷即可；app/dist 与 r34/r35 同指纹，不需要重新部署。手工加音频后刷新一次页面即可看到新分类，不必再等 6 小时或重启容器。",
+    "注意：热更改的是容器可写层，之后别 --force-recreate；真要重建先跑 sh scripts/sync-hotfix.sh 固化，或直接装 r36 整包。"
   ],
   "requires_dist": false,
   "hotfixable": true,
@@ -21,28 +21,34 @@
   "files": [
     {
       "path": "webserver/handlers/audio.py",
-      "sha256": "b1a76938f5e8f74d7d2c7981d81881d03870e30664b07d1644138328c01e59eb",
-      "bytes": 79290
+      "sha256": "89f7c168aefc46b7e9c2794f7525a257156e4241886d427c3f8d0d8398ae830c",
+      "bytes": 81390
+    },
+    {
+      "path": "webserver/handlers/base.py",
+      "sha256": "607fd28802712f1dd240d59b4060a8ea667fcd34ee9a80a0617053691e57beb6",
+      "bytes": 115378
     }
   ],
   "changed": {
     "hotfix": [
-      "webserver/handlers/audio.py"
+      "webserver/handlers/audio.py",
+      "webserver/handlers/base.py"
     ],
     "dist": [],
     "appsrc": [],
     "blocking": [],
     "docs": [
       "CHANGELOG.md",
-      "tests/test_audiobooks_list_tab_categories.py"
+      "tests/test_audio_stats_cache_sync.py"
     ]
   },
   "deploy_commands": [
     "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.6.0-build.27-r35.tar.gz.sha256",
+    "sha256sum -c audiobook-deploy-4.6.0-build.27-r36.tar.gz.sha256",
     "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
     "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.6.0-build.27-r35.tar.gz",
+    "tar -xzf audiobook-deploy-4.6.0-build.27-r36.tar.gz",
     "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }
