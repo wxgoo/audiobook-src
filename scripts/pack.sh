@@ -522,54 +522,52 @@ find "$STAGE/audiobook" -name '.pytest_cache' -type d -prune -exec rm -rf {} + 2
 find "$STAGE/audiobook" \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null
 echo "  已清掉 __pycache__ / .pytest_cache / *.pyc（开发残留）"
 
-# ---------- 同步远端发布清单（必须在暂存之后、归档之前；仅部署包） ----------
-# 分工：`update/manifest.json` 由 workbuddy 在 Gitee 上生成并提交，容器只认远端那份；
-# 本仓库的 update/manifest.json 往往落后（r27 这次就停在 r26/r21），照它出包会让页面
-# 装完仍报「有新版本」。所以出包前用远端 raw 那份覆盖包内清单。
-# 与 webserver/services/version_check.py 读的是同一路径（公开仓库，无需令牌）。
-# 失败不阻断：回退基线清单并显式告警，绝不静默通过。
+# ---------- 包内发布清单基线（仅部署包） ----------
+# 旧做法：出包前从 Gitee raw 拉清单覆盖包内那份，理由是「本仓库清单往往落后」。
+# 但 Gitee raw 有缓存：r27 与 r33 都出现过「仓库已是新清单、raw 还停在上一版」，
+# 结果把旧 revision 打进包里，装完页面一直误报有新版本 / 反复要求重新部署。
+# 现在的口径：本脚本前面的断言已确认仓库里的 update/manifest.json 的 revision == $VER，
+# 它就是本次要发布的清单，直接以它为准；远端只打印一个「是否已同步」的提示，
+# 绝不覆盖产物。这样也避免重出清单时远端的旧字节混进包里。
 if [ "$MODE" = deploy ]; then
-echo "==> [3b/4] 同步远端发布清单"
-MANIFEST_URL="${MANIFEST_URL:-https://gitee.com/wxgoo/audiobook-src/raw/master/update/manifest.json}"
-MF_TMP="$STAGE/.manifest.remote.json"
-mf_get() {
-    python3 -c 'import json,sys
+    echo "==> [3b/4] 包内发布清单基线"
+    MANIFEST_URL="${MANIFEST_URL:-https://gitee.com/wxgoo/audiobook-src/raw/master/update/manifest.json}"
+    MF_TMP="$STAGE/.manifest.remote.json"
+    mf_get() {
+        python3 -c 'import json,sys
 d=json.load(open(sys.argv[1], encoding="utf-8"))
 print(d.get(sys.argv[2], ""))' "$1" "$2" 2>/dev/null || true
-}
-mf_fetch() {
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --max-time 20 "$MANIFEST_URL" -o "$MF_TMP" 2>/dev/null && return 0
-    fi
-    if command -v wget >/dev/null 2>&1; then
-        wget -q -T 20 -O "$MF_TMP" "$MANIFEST_URL" 2>/dev/null && return 0
-    fi
-    return 1
-}
-if command -v python3 >/dev/null 2>&1 && mf_fetch && [ -s "$MF_TMP" ] \
-        && python3 -c 'import json,sys
+    }
+    mf_fetch() {
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL --max-time 20 "$MANIFEST_URL" -o "$MF_TMP" 2>/dev/null && return 0
+        fi
+        if command -v wget >/dev/null 2>&1; then
+            wget -q -T 20 -O "$MF_TMP" "$MANIFEST_URL" 2>/dev/null && return 0
+        fi
+        return 1
+    }
+    if command -v python3 >/dev/null 2>&1 && mf_fetch && [ -s "$MF_TMP" ] \
+            && python3 -c 'import json,sys
 d=json.load(open(sys.argv[1], encoding="utf-8"))
 sys.exit(0 if isinstance(d, dict) and d.get("revision") else 1)' "$MF_TMP" 2>/dev/null; then
-    cp "$MF_TMP" "$STAGE/audiobook/update/manifest.json"
-    MF_REV=$(mf_get "$MF_TMP" revision)
-    MF_VER=$(mf_get "$MF_TMP" version)
-    echo "  ✓ 已用远端清单覆盖包内基线: revision=$MF_REV base=$(mf_get "$MF_TMP" base_revision)"
-    # revision 是完整的「基础版本-rN」，必须与本次发布版本逐字相等
-    case "$MF_REV" in
-        "$VER") ;;
-        *) echo "  !! 告警：包内清单 revision=$MF_REV 与本次发布版本 $VER 不一致（仍按远端清单打包）" ;;
-    esac
-    # version 只是基础版本（不含 -rN），只能和 $VER 去掉 -rN 后的部分比
-    VER_BASE="${VER%-r*}"
-    if [ -n "$MF_VER" ] && [ "$MF_VER" != "$VER_BASE" ]; then
-        echo "  !! 告警：包内清单 version=$MF_VER 与本次发布版本的基础版本 $VER_BASE 不一致（仍按远端清单打包）"
+        MF_REV=$(mf_get "$MF_TMP" revision)
+        if [ "$MF_REV" = "$VER" ]; then
+            echo "  · 远端清单已是 $MF_REV（仅作参考，不覆盖包内产物）"
+        else
+            echo "  · 远端清单 revision=$MF_REV 落后于本次 $VER（Gitee raw 缓存），跳过"
+        fi
+    else
+        echo "  · 远端清单不可读（网络/缓存/JSON），不影响出包：以仓库内清单为准"
     fi
-else
-    echo "  !! 告警：未能从远端同步 update/manifest.json（网络/404/JSON 非法或缺 revision）"
-    echo "     $MANIFEST_URL"
-    echo "     本次包内清单沿用基线版本: revision=$(mf_get "$STAGE/audiobook/update/manifest.json" revision) —— 页面可能误报新版本"
-fi
-rm -f "$MF_TMP"
+    rm -f "$MF_TMP"
+
+    # 一律用仓库里已通过断言的那份，并在写进包后再校验一次（防止今后又被人改成远端覆盖）
+    cp update/manifest.json "$STAGE/audiobook/update/manifest.json"
+    STAGE_REV=$(mf_get "$STAGE/audiobook/update/manifest.json" revision)
+    [ "$STAGE_REV" = "$VER" ] || {
+        echo "  !! 包内清单 revision=$STAGE_REV != 本次版本 $VER，禁止出包"; exit 1; }
+    echo "  ✓ 包内清单基线: revision=$STAGE_REV（取自仓库，字节与提交一致）"
 fi
 
 
