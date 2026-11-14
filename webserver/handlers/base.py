@@ -1028,10 +1028,23 @@ class BaseHandler(web.RequestHandler):
         return env
 
     def get_audio_books_count(self):
-        """Get the total count of books with audio files (书目录内 .audio/)."""
+        """Get the total count of books with audio files (书目录内 .audio/).
+
+        这里是「实时全库扫盘」口径（左侧菜单的「有声书 N」）。书列表与分类 tab
+        用的是 AudioBooksCache（事件驱动 + 兜底扫描），两者不同步时会出现
+        「手工往 .audio/ 加了音频、统计立刻 +1、分类 tab 却不变」。盘既然已经
+        扫过了，顺手把结果同步进缓存即可：集合真变化才 +version，下游聚合会
+        跟着增量补齐，用户刷新一次页面就能看到新分类。同步失败不影响统计本身。
+        """
         try:
             from webserver.base.audio_dir import find_audios_by_scanning_library
-            return len(find_audios_by_scanning_library())
+            found = find_audios_by_scanning_library()
+            try:
+                from webserver.handlers.audio import AudioBooksCache
+                AudioBooksCache.sync_from_scan(found.keys())
+            except Exception:
+                logging.debug("sync audio cache from stats failed", exc_info=True)
+            return len(found)
         except Exception:
             logging.exception("count audio books failed")
             return 0

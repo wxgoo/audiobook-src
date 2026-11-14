@@ -61,10 +61,12 @@ def _record_daily_download(user_id, book_id):
 ALLOW_MAX_RUNNING_WORKERS = CONF.get("BOOK2AUDIO_MAX_WORKERS", 2)
 SKIP_AUDIO_FILE_PREFIX = "图书在版编目CIP数据"
 MAX_FREE_AUDIO_FILES = 6
-# 全库兜底扫描间隔。默认 6 小时：正常情况下导入/转码/删除都会通过事件
-# 增量更新缓存，兜底扫描只用于「用户手工往书库塞了 .audio/ 目录」这类
-# 绕过应用的改动。设为 0 可彻底关闭兜底扫描（只剩启动预热 + 事件更新）。
-AUDIO_CACHE_REFRESH_SECONDS = int(CONF.get("AUDIO_CACHE_REFRESH_SECONDS", 6 * 3600))
+# 全库兜底扫描间隔。默认 5 分钟：正常情况下导入/转码/删除都会通过事件
+# 增量更新缓存；此外统计接口（左侧菜单「有声书 N」计数）每次实时扫盘后会把
+# 结果同步进来（见 sync_from_scan），所以用户手工往 .audio/ 塞文件通常
+# 刷新一次页面就生效。这条只兜底「既没有统计请求、也没有事件」的极端情况。
+# 设为 0 可关闭（只剩启动预热 + 事件更新 + 统计同步）；超大书库可调大。
+AUDIO_CACHE_REFRESH_SECONDS = int(CONF.get("AUDIO_CACHE_REFRESH_SECONDS", 300))
 
 
 def natural_sort_key(filename):
@@ -207,6 +209,42 @@ class AudioBooksCache:
                 cls._book_ids = cls._book_ids - {bid}
                 cls._version += 1
                 logging.info("Audio cache -1 book: %s", bid)
+
+    @classmethod
+    def sync_from_scan(cls, book_ids):
+        """把一次「实时全库扫盘」的结果同步进缓存（统计接口调用）。
+
+        §统计与列表同源§
+        左侧菜单的「有声书 N」来自 BaseHandler.get_audio_books_count()，它每次
+        都 find_audios_by_scanning_library() 实时扫盘；而书列表和分类 tab 读的是
+        本缓存（事件驱动 + 兜底扫描）。用户手工往书目录 .audio/ 塞文件时没有任何
+        事件通知，于是「统计立刻 +1，列表 / 分类 tab 纹丝不动」，最长要等兜底
+        扫描才自愈——用户实测反馈过「加了音频、统计加了 1、文学分类还是不出来」。
+
+        统计接口反正已经扫过盘了，顺手把结果喂进来即可：集合真变化才 +version，
+        下游 audio_category_agg 会跟着增量补齐，分类 tab 立刻反映新书。
+        空结果不同步，避免一次偶发 listdir 失败把缓存清空（与 _update_cache
+        的「扫描失败保留旧缓存」同规）。
+        """
+        try:
+            ids = {int(b) for b in book_ids}
+        except (TypeError, ValueError):
+            logging.warning("Audio cache: bad ids from live scan, skip sync")
+            return
+        if not ids and cls._book_ids:
+            logging.warning("Audio cache: live scan is empty, skip sync to keep old cache")
+            return
+        with cls._state_lock:
+            if ids == cls._book_ids:
+                return
+            added = ids - cls._book_ids
+            removed = cls._book_ids - ids
+            cls._book_ids = ids
+            cls._version += 1
+            cls._last_update_time = time.time()
+            cls._need_update = False
+            logging.info("Audio cache synced from live scan: %d books (+%d/-%d)",
+                         len(ids), len(added), len(removed))
 
     @classmethod
     def _ensure_background_refresh(cls):

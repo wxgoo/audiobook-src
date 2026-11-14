@@ -16,6 +16,38 @@
 
 ---
 
+## 4.6.0-build.27-r36（2026-11-14，**修「手工加音频后统计 +1 但分类 tab 不更新」**，纯后端，可热更）
+
+- 症状：r35 装好后分类 tab 正常出现（默认「全部」+ 已有分类）。用户手工往某本书的
+  `.audio/` 目录补了音频后，**左侧菜单「有声书 N」立刻 +1**，但页面右侧的分类 tab
+  纹丝不动，新加那本书所属的「文学」分类始终不出现。强刷、重开页面都无效。
+- 根因（**不是前端、不是 dist、不是分类接口**）：站内「有声书」这个维度有两套互不知晓的口径。
+  左侧菜单计数来自 `BaseHandler.get_audio_books_count()`，它**每次请求都
+  `find_audios_by_scanning_library()` 实时全库扫盘**，所以手工塞文件立刻 +1；
+  而 `/api/audiobooks` 的书列表、分类 tab 读的是 `AudioBooksCache` +
+  `audio_category_agg`（**事件驱动 + 兜底扫描**）。手工往书目录塞文件不经过任何应用
+  事件（`mark_has_audio` 只在导入 / TTS / 扫描服务里调用），缓存最长要等
+  **6 小时**兜底扫描才更新。于是「统计实时、列表与 tab 陈旧」——用户看到的
+  「统计加了 1、文学还是不出来」正是这两套口径的差值。
+  （对照实证：缓存 11 本时 tab 为 教育2/科幻小说3/演播3/科幻1；把实时扫盘的
+  12 本同步进缓存后，`audio_category_agg` 随 version 增量补齐，tab 立刻多出「文学 1」。）
+- 修复（**不动 `app/dist`，纯 py 可热更**）：
+  - `AudioBooksCache.sync_from_scan(book_ids)`：把一次实时扫盘结果喂进缓存，
+    集合**真变化**才 `+version`，下游 `audio_category_agg` 自动增量补齐；空结果
+    不同步（避免偶发 `listdir` 失败清空缓存），坏 id 忽略。
+  - `BaseHandler.get_audio_books_count()`：盘既然已经扫过了，扫完顺手调
+    `sync_from_scan(found.keys())`；同步失败只 `logging.debug`，绝不影响统计本身。
+  - 全库兜底扫描间隔默认值 **6 小时 → 5 分钟**（`AUDIO_CACHE_REFRESH_SECONDS`，
+    仍可配置、`0` 可关闭），兜住「既没有统计请求、也没有事件」的极端情况。
+  - 净效果：手工加音频后**刷新一次页面**即可看到新分类；不必再等 6 小时或重启容器。
+- 测试：新增 `tests/test_audio_stats_cache_sync.py` 6 例，锁定「统计扫盘同步 → tab
+  立刻出现新分类」「重复同步不抖动 version」「空扫盘不清空缓存」「坏 id 忽略」
+  「统计入口确实调用同步」「同步失败不影响统计」。
+- 部署：r35 → r36 为纯 `webserver/**/*.py`，页内「立即更新」→ 强刷即可；
+  `app/dist` 与 r34/r35 同指纹，`hotfixable=true` / `requires_dist=false`。
+
+---
+
 ## 4.6.0-build.27-r35（2026-11-14，**修复有声书页分类 tab 一直不显示**，纯后端，可热更）
 
 - 症状：r34 热更 / `deploy.sh` / `upgrade.sh` 全试过，左侧「有声书」页右侧始终没有分类 tab。
