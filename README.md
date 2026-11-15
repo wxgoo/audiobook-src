@@ -10,6 +10,7 @@
 > GitHub [`wxgoo/audiobook-src`](https://github.com/wxgoo/audiobook-src) 是自动镜像，
 > 由 `.github/workflows/sync-from-gitee.yml` 每半小时把 `master` 与标签单向对齐一次。
 > **请只往 Gitee 推代码**；在线热更清单 `update/manifest.json` 的 raw 源同样以 Gitee 为准。
+> 想立刻同步，可在 GitHub 仓库的 **Actions → Sync from Gitee → Run workflow** 手动点一次。
 
 ---
 
