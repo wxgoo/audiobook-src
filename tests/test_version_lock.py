@@ -75,17 +75,51 @@ def test_version_py_bare_upstream_tag_is_rejected(tmp_path):
     assert "防版本回退" in r.stdout
 
 
-def test_empty_git_version_is_rejected(tmp_path):
+def test_compose_image_tag_rollback_is_rejected(tmp_path):
+    """compose 是纯镜像形态（无 build 段）时：镜像 tag 的构建号回退必须被拦住。
+
+    旧形态（compose 带 build: 段）查的是 GIT_VERSION；新形态下版本由**镜像内**的
+    version.py 决定，compose 不参与注入——但 image tag 仍必须指向本版构建号，
+    否则用户会拉起一个旧镜像却以为自己是新版。这里把 tag 改回旧构建号，
+    检查器必须拦下。
+    """
     root = make_fixture(tmp_path)
-    mutate(root, "docker-compose.yml", 'GIT_VERSION: "%s"' % LOCK, 'GIT_VERSION: ""')
+    mutate(root, "docker-compose.yml",
+           "ghcr.io/wxgoo/audiobooks:%s-r42" % LOCK,
+           "ghcr.io/wxgoo/audiobooks:4.6.0-build.27-r41")
     r = run(root)
     assert r.returncode == 1, r.stdout
-    assert "GIT_VERSION 为空" in r.stdout
+    assert "docker-compose.yml" in r.stdout
+    assert "构建号" in r.stdout
 
 
-def test_compose_mismatch_is_rejected(tmp_path):
+def test_compose_image_tag_without_build_number_is_rejected(tmp_path):
+    """镜像 tag 里没有构建号段 = 无法校验版本口径，必须拦下。"""
     root = make_fixture(tmp_path)
-    mutate(root, "docker-compose.yml", 'GIT_VERSION: "%s"' % LOCK, 'GIT_VERSION: "4.6.0"')
+    mutate(root, "docker-compose.yml",
+           "ghcr.io/wxgoo/audiobooks:%s-r42" % LOCK,
+           "ghcr.io/wxgoo/audiobooks:latest")
+    r = run(root)
+    assert r.returncode == 1, r.stdout
+    assert "docker-compose.yml" in r.stdout
+
+
+def test_compose_with_build_section_still_checks_git_version(tmp_path):
+    """compose 若带 build: 段（开发者本机构建形态），GIT_VERSION 必须校验。
+
+    两种形态都要守住：带 build 段查 GIT_VERSION，只带 image 查 tag 构建号。
+    """
+    root = make_fixture(tmp_path)
+    p = root / "docker-compose.yml"
+    text = p.read_text(encoding="utf-8")
+    # 塞一个 build 段进去，且故意把 GIT_VERSION 写成旧构建号
+    text = text.replace(
+        "    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:%s-r42}" % LOCK,
+        "    build:\n      context: .\n      args:\n        GIT_VERSION: \"4.6.0-build.27\"\n"
+        "    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:%s-r42}" % LOCK,
+        1,
+    )
+    p.write_text(text, encoding="utf-8")
     r = run(root)
     assert r.returncode == 1, r.stdout
     assert "docker-compose.yml" in r.stdout

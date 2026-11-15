@@ -224,22 +224,10 @@ if [ "${1:-}" = "--check" ]; then
             fi
         done
 
-        # 脚本与文档清单：包里只剩长期脚本，不能出现 8 个散脚本那套
-        # 注意 *.py 也要列 —— watch-upstream.py 是日常运维要用的，别漏看
+        # 脚本与文档清单：包里只剩长期脚本，不能出现散脚本那套
+        # 注意 *.py 也要列 —— 纯 Python 工具（检索索引、音频迁移、清单生成）也要在包里
         echo "  脚本: $(cd "$D/scripts" 2>/dev/null && ls *.sh *.py 2>/dev/null | tr '\n' ' ')"
         echo "  文档: $(cd "$D/docs" 2>/dev/null && ls *.md 2>/dev/null | tr '\n' ' ')"
-
-        # 盯上游的工具必须能在部署机上跑（只用标准库，不需要装依赖）
-        [ -e "$D/scripts/watch-upstream.py" ] || {
-            echo "  !! 缺 scripts/watch-upstream.py（盯上游的工具不完整）"; fail=1; }
-
-        # 基线文件是**运行状态**（记录上次盯到哪个提交），首次 `--baseline` 时
-        # 自动生成。不能当打包硬性要求 —— 否则清一次状态文件就出不了包。
-        if [ -e "$D/docs/upstream-baseline.json" ]; then
-            echo "  基线: docs/upstream-baseline.json（$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('date','?'))" "$D/docs/upstream-baseline.json" 2>/dev/null || echo '?')）"
-        else
-            echo "  基线: 无（首次跑 watch-upstream.py --baseline 时自动生成，不影响使用）"
-        fi
 
         # 下面两条是部署包专属断言：源码整包保留仓库原貌，srt-tool/tools 的开发侧文件
         # 本来就该在（要打包成 exe、要抓书源），不能按部署包口径判它「混入」。
@@ -560,7 +548,7 @@ echo "  已清掉 __pycache__ / .pytest_cache / *.pyc（开发残留）"
 # 逻辑，理由是「本仓库清单往往落后」。但 raw 有缓存，仓库已推新清单、远端还停在
 # 上一版，结果把旧 revision 打进新包；装完 /admin/version 一直误报有新版本。
 # 「远端是否已同步」是发布流程的**后置检查**（推完清单后轮询 raw 确认），
-# 由 CI / scripts/check-remote-manifest.sh 负责，绝不进出包链路、绝不覆盖产物。
+# 由人工用 curl 核对，绝不进出包链路、绝不覆盖产物。
 # 本次连「仅作提示」的网络请求也一并删除：留着就是给后人留一个改回覆盖的口子。
 if [ "$MODE" = deploy ]; then
     echo "==> [3b/4] 包内发布清单基线（单一事实源：仓库工作区，零网络请求）"

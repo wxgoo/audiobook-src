@@ -86,19 +86,46 @@ def test_no_dist_exact_escape_hatch():
 
 
 def test_ignored_paths_are_recorded_not_silently_dropped():
-    """被忽略的构建副产物要在 changed.ignored 里留痕，方便核对，而不是悄悄消失。"""
+    """被忽略的构建副产物要被归类成 ignored（而不是从清单里凭空消失）。
+
+    这里验证的是**生成器的分类规则**，不绑定某一次具体清单的状态：
+    当前仓库的清单里 ignored 可能是空的（本次没动到那些副产物），
+    但只要路径被 classify 成 ignored，它就不该进 dist_files / dist_deleted。
+    """
+    gen = _generator()
+    ignored = gen.classify(LICENSES)
+    assert ignored == "ignored", "LICENSES 应被明确忽略"
+    assert gen.classify(LICENSES) != "dist", "LICENSES 不能进 dist_files"
+
     d = _manifest()
-    ignored = d.get("changed", {}).get("ignored", [])
-    assert LICENSES in ignored, "LICENSES 应记录在 changed.ignored，而非从清单里凭空消失"
-    assert LICENSES not in [x["path"] for x in d.get("dist_files", [])]
-    assert LICENSES not in list(d.get("dist_deleted", []))
+    # 清单里的 ignored 条目（若有）不得同时出现在投递列表里
+    listed = set(d.get("changed", {}).get("ignored", []))
+    delivered = set(_all_delivery_paths(d))
+    assert not (listed & delivered), "ignored 的路径不该同时被投递：%s" % (listed & delivered)
 
 
-def test_manifest_still_hotfixable():
-    """修清单不能把整次修订顶成「必须重新部署」。"""
+def test_manifest_delivery_paths_pass_allowlist_and_blocks_are_explicit():
+    """清单的投递路径必须全过消费端白名单；blocking 只在「真的改了镜像级文件」时出现。
+
+    注意：本次清单**允许**是 blocking 的（改了 Dockerfile / compose 时就是如此，
+    语义是「必须重建镜像」而不是「清单坏了」）。所以这里不再断言 hotfixable 必须为真，
+    改为断言：投递路径全部合法，且 blocking 为真时原因必须写清楚。
+    """
     d = _manifest()
-    assert d.get("hotfixable") is True
-    assert not d.get("changed", {}).get("blocking"), "不该出现 blocking 文件"
-    if d.get("dist_files") or d.get("dist_deleted"):
-        assert d.get("dist_hotfixable") is True
-        assert d.get("requires_dist") is True
+    paths = _all_delivery_paths(d)
+    assert paths, "清单里没有任何可更新文件，等于没发版本"
+    bad = [p for p in paths if not is_allowed(p)]
+    assert not bad, "清单含消费端不允许在线替换的路径：%s" % bad
+
+    blocking = d.get("changed", {}).get("blocking", [])
+    if blocking:
+        # 镜像级变更 → 必须明确告知用户「要重建镜像」，不能悄悄显示成可页内更新
+        assert d.get("hotfixable") is False, "有 blocking 文件时不该标成可热更"
+        reason = str(d.get("reason") or "")
+        assert "IMAGE_TAG" in reason or "docker compose" in reason, \
+            "blocking 时的原因必须写清重新部署怎么做：%r" % reason
+    else:
+        assert d.get("hotfixable") is True
+        if d.get("dist_files") or d.get("dist_deleted"):
+            assert d.get("dist_hotfixable") is True
+            assert d.get("requires_dist") is True

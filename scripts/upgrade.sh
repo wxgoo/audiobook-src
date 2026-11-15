@@ -348,8 +348,8 @@ else
       else
           docker compose build $CACHE_FLAG --build-arg "GIT_VERSION=$PKG_VER"
       fi ) || {
-        echo "!! 构建失败。收尾建议：cd $SRC && sh scripts/recover.sh build"
-        echo "   （只到构建+校验、不动容器；只诊断不改动用：sh scripts/recover.sh check）"
+        echo "!! 构建失败。收尾建议：先看 docker build 的完整日志定位是哪一层失败"
+        echo "   （老 NAS 报 layer does not exist 时：docker builder prune 清缓存池后重试）"
         exit 1
     }
     host_sha=$(sha256sum "$SRC/app/dist/index.html" | awk '{print $1}')
@@ -357,7 +357,7 @@ else
     if [ "$host_sha" != "$img_sha" ]; then
         echo "!! 镜像内 index.html 与包内不一致：$img_sha != $host_sha"
         echo "   （上下文快照复用的典型症状）处理：docker builder prune -f 后重跑本脚本；"
-        echo "    仍不行跑 sh scripts/recover.sh check 做逐步诊断（不要关闭 BuildKit）"
+        echo "    仍不行就 docker builder prune 清缓存池后重试（不要关闭 BuildKit）"
         exit 1
     fi
     echo "==> 镜像内 index.html: $img_sha"
