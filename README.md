@@ -6,6 +6,11 @@
 > **当前版本：`4.6.0-build.27`**，当前部署包修订 **`4.6.0-build.27-r27`**
 > （上游 tag `4.6.0` + 第 27 次本地构建；新版本检测与在线更新见 `/admin/version`）
 
+> **仓库镜像**：Gitee [`wxgoo/audiobook-src`](https://gitee.com/wxgoo/audiobook-src) 是**主仓库**，
+> GitHub [`wxgoo/audiobook-src`](https://github.com/wxgoo/audiobook-src) 是自动镜像，
+> 由 `.github/workflows/sync-from-gitee.yml` 每半小时把 `master` 与标签单向对齐一次。
+> **请只往 Gitee 推代码**；在线热更清单 `update/manifest.json` 的 raw 源同样以 Gitee 为准。
+
 ---
 
 ## 文档地图
