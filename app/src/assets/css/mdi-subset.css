@@ -1330,6 +1330,10 @@
   content: "\F0552";
 }
 
+.mdi-upload-outline::before {
+  content: "\F0E07";
+}
+
 .mdi-video::before {
   content: "\F0567";
 }

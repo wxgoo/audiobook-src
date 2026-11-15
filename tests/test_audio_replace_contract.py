@@ -1,17 +1,22 @@
-"""契约 + 行为：音频章节替换（r39）。
+"""契约 + 行为：音频章节替换（r39 引入，r40 改为按序号定位）。
 
 背景：某本书某一章音频损坏时，站点此前只能「删整本音频」或「重新导入」，
 而导入对同名文件是纯增量（``_copy_or_convert_file`` 遇到已存在目标直接
 return），用户只能去 NAS 的 FileStation 里手动覆盖。r39 补上站内入口：
 ``POST /api/audio/<id>/replace``，只覆盖内容、文件名与章节顺序保持不变。
 
+r40 现场：替换时后端报「无效的音频文件名」——目标文件名作为 multipart
+普通文本字段没能可靠送达（Tornado 对中文 multipart 字段解析实测正常，
+问题在请求链的字段传递）。改为前端只传列表序号 ``index``（URL query），
+后端用 ``chapter_by_index`` 自己枚举 .audio/ 定位目标。
+
 不变式：
 1. 路由必须注册在 ``/api/audio/<id>/([^/]+)``（AudioFile）之前，否则 ``/replace``
    会被 AudioFile 抢走；
-2. 只允许管理员，目标必须是 .audio/ 里**已存在**的文件名且不含任何路径成分；
+2. 只允许管理员；目标由后端按序号枚举得到，绝不接收前端传来的文件名/路径；
 3. 上传文件扩展名必须与原文件一致，大小在 1KB~300MB；
 4. 原子覆盖、保留原属主/权限、不留 .tmp；
-5. 前端用 FormData 提交，并给播放 url 加 ``?v=`` 破浏览器 1 小时缓存
+5. 前端用 FormData 提交（只放文件），并给播放 url 加 ``?v=`` 破浏览器 1 小时缓存
    （AudioFile 带 ``Cache-Control: private, max-age=3600``）。
 """
 
@@ -59,12 +64,14 @@ def test_post_is_admin_and_js():
 
 
 def test_path_traversal_guard():
-    """目标只认 .audio/ 下已存在的 basename，拒绝任何路径成分。"""
+    """目标由后端按序号枚举，前端无法传入任何文件名/路径。"""
     s = _replace_class_source()
-    for token in ("os.path.basename(target)", '".." in target',
-                  '"/" in target', "os.path.isfile(dst)",
+    for token in ("_parse_chapter_index(self)", "chapter_by_index(audio_dir, index)",
                   "tuple(SUPPORTED_AUDIO_FORMATS)"):
         assert token in s, "缺少防护: " + token
+    # r40 现场教训：绝不能再把文件名当 form 文本字段传
+    assert 'get_argument("filename"' not in s
+    assert "form.append('filename'" not in _text(VUE)
 
 
 def test_upload_validation():
@@ -100,8 +107,7 @@ def test_frontend_replace_wiring():
     t = _text(VUE)
     assert "openReplaceDialog(index, audio)" in t
     assert "mdi-file-replace-outline" in t
-    assert "`/audio/${this.bookId}/replace`" in t
-    assert "form.append('filename', this.replaceFilename)" in t
+    assert "`/audio/${this.bookId}/replace?index=${this.replaceIndex}`" in t
     assert "form.append('file', this.replaceFile)" in t
     assert "?v=${Date.now()}" in t
 

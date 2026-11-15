@@ -61,6 +61,16 @@
               {{ currentTrackIndex + 1 }}/{{ audioFiles.length }}
             </v-chip>
             <v-btn
+              v-if="isAdmin"
+              small
+              outlined
+              class="upload-chapter-btn"
+              @click="openUploadDialog"
+            >
+              <v-icon small left>mdi-upload-outline</v-icon>
+              上传章节
+            </v-btn>
+            <v-btn
               v-if="!isPaid && audioFiles.length > 0"
               small
               color="orange darken-4"
@@ -137,6 +147,16 @@
               @click.stop="openReplaceDialog(index, audio)"
             >
               <v-icon small>mdi-file-replace-outline</v-icon>
+            </v-btn>
+            <v-btn
+              v-if="isAdmin"
+              icon
+              x-small
+              class="delete-track-btn"
+              title="删除此音频章节"
+              @click.stop="openDeleteChapterDialog(index, audio)"
+            >
+              <v-icon small>mdi-delete-outline</v-icon>
             </v-btn>
           </div>
         </div>
@@ -438,6 +458,67 @@
       </v-card>
     </v-dialog>
 
+    <!-- 删除单个音频章节：只删一集，不是删整本 -->
+    <v-dialog v-model="showDeleteChapterDialog" max-width="460" :persistent="deleteChapterLoading">
+      <v-card>
+        <v-card-title class="headline">删除音频 · 第 {{ deleteChapterIndex + 1 }} 集</v-card-title>
+        <v-card-text>
+          <p class="mb-2">
+            将永久删除 <strong>{{ deleteChapterName }}</strong>，此操作不可撤销。
+          </p>
+          <p class="mb-0 grey--text">
+            只删这一集，其余章节、播放进度与书库信息不变。删掉最后一集后，
+            这本书将不再计入有声书列表。
+          </p>
+          <p v-if="deleteChapterError" class="red--text mt-3 mb-0">{{ deleteChapterError }}</p>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text :disabled="deleteChapterLoading" @click="closeDeleteChapterDialog">取消</v-btn>
+          <v-btn color="error" :loading="deleteChapterLoading" @click="submitDeleteChapter">删除</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- 上传新音频章节：文件名决定播放顺序 -->
+    <v-dialog v-model="showUploadDialog" max-width="520" :persistent="uploadLoading">
+      <v-card>
+        <v-card-title class="headline">上传音频章节</v-card-title>
+        <v-card-text>
+          <p class="mb-2">选择音频文件，并确认章节文件名。</p>
+          <p class="mb-2 grey--text">
+            文件名决定播放顺序与 VIP 免费章位置，请与现有章节保持同一命名风格，
+            例如 <strong>平凡的世界11.m4a</strong>。同名已存在时请改用「替换」。
+          </p>
+          <v-text-field
+            v-model="uploadName"
+            label="章节文件名"
+            dense
+            outlined
+            hide-details
+            class="mb-3"
+          />
+          <input
+            ref="uploadFileInput"
+            type="file"
+            accept=".mp3,.m4a,.m4b,.wav,.wma,.opus"
+            @change="onUploadFilePicked"
+          />
+          <p v-if="uploadError" class="red--text mt-3 mb-0">{{ uploadError }}</p>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text :disabled="uploadLoading" @click="closeUploadDialog">取消</v-btn>
+          <v-btn
+            color="primary"
+            :loading="uploadLoading"
+            :disabled="!uploadFile || !uploadName"
+            @click="submitUpload"
+          >上传</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- 重新生成：语音选择 + 确认 -->
     <AppDialog
       v-model="showRegenerateDialog"
@@ -601,7 +682,21 @@ export default {
       replaceFilename: '',
       replaceFile: null,
       replaceError: '',
-      replaceLoading: false
+      replaceLoading: false,
+
+      // 删除单个章节
+      showDeleteChapterDialog: false,
+      deleteChapterIndex: -1,
+      deleteChapterName: '',
+      deleteChapterError: '',
+      deleteChapterLoading: false,
+
+      // 上传新章节
+      showUploadDialog: false,
+      uploadFile: null,
+      uploadName: '',
+      uploadError: '',
+      uploadLoading: false
     };
   },
 
@@ -2061,28 +2156,163 @@ export default {
       this.replaceError = '';
       try {
         const form = new FormData();
-        form.append('filename', this.replaceFilename);
         form.append('file', this.replaceFile);
-        const response = await this.$backend(`/audio/${this.bookId}/replace`, {
-          method: 'POST',
-          body: form
-        });
+        // 定位只走 URL query：目标文件由后端按播放页列表序号自己枚举，
+        // 不再把中文文件名塞进 multipart 文本字段（r40 现场「无效的音频文件名」）。
+        const response = await this.$backend(
+          `/audio/${this.bookId}/replace?index=${this.replaceIndex}`,
+          { method: 'POST', body: form }
+        );
         if (!response || response.err !== 'ok') {
           this.replaceError = (response && response.msg) || '替换失败';
           return;
         }
+        this.showReplaceDialog = false;
         const item = this.audioFiles[this.replaceIndex];
         if (item) {
           const base = String(item.url || '').split('?')[0];
           this.$set(item, 'url', `${base}?v=${Date.now()}`);
         }
-        this.showReplaceDialog = false;
         this.$alert('success', '音频已替换，请按 Ctrl+Shift+R 强制刷新');
       } catch (error) {
         console.error('Replace audio error:', error);
         this.replaceError = '替换请求失败，请检查文件大小与网络';
       } finally {
         this.replaceLoading = false;
+      }
+    },
+
+    // ===== 章节管理：刷新 / 删除 / 上传 =====
+    // 增删改后重新拉一次列表，页面不用整页刷新；列表序号与后端
+    // list_chapter_files 一一对应，删除/上传后 index 会自动重新对齐。
+    async refreshAudioFiles() {
+      if (!this.bookId) return;
+      try {
+        const rsp = await this.$backend(`/audio/${this.bookId}`);
+        if (rsp && Array.isArray(rsp.audios)) {
+          this.audioFiles = rsp.audios;
+          this.audioStatus = rsp.status || 'converted';
+          if (this.audioFiles.length > 0 && this.currentTrackIndex >= this.audioFiles.length) {
+            this.currentTrackIndex = 0;
+          }
+        }
+      } catch (error) {
+        console.error('Refresh audio files error:', error);
+      }
+    },
+
+    chapterNameOf(audio) {
+      const path = String((audio && audio.url) || '').split('?')[0];
+      try {
+        return decodeURIComponent(path.split('/').pop() || '');
+      } catch (e) {
+        return path.split('/').pop() || '';
+      }
+    },
+
+    openDeleteChapterDialog(index, audio) {
+      this.deleteChapterIndex = index;
+      this.deleteChapterName = this.chapterNameOf(audio) || (audio && audio.filename) || '';
+      this.deleteChapterError = '';
+      this.showDeleteChapterDialog = true;
+    },
+
+    closeDeleteChapterDialog() {
+      if (this.deleteChapterLoading) return;
+      this.showDeleteChapterDialog = false;
+    },
+
+    async submitDeleteChapter() {
+      if (this.deleteChapterIndex < 0 || !this.bookId) return;
+      this.deleteChapterLoading = true;
+      this.deleteChapterError = '';
+      try {
+        const rsp = await this.$backend(
+          `/audio/${this.bookId}/delete-chapter?index=${this.deleteChapterIndex}`,
+          { method: 'POST' }
+        );
+        if (!rsp || rsp.err !== 'ok') {
+          this.deleteChapterError = (rsp && rsp.msg) || '删除失败';
+          return;
+        }
+        this.showDeleteChapterDialog = false;
+        await this.refreshAudioFiles();
+        this.$alert('success', '该章节已删除');
+      } catch (error) {
+        console.error('Delete chapter error:', error);
+        this.deleteChapterError = '删除请求失败，请稍后重试';
+      } finally {
+        this.deleteChapterLoading = false;
+      }
+    },
+
+    // 依据现有最后一集推导下一个章节文件名，保持命名风格一致
+    // （「平凡的世界10」→「平凡的世界11」，避免中文/纯数字混排）
+    suggestNextChapterName() {
+      const last = this.audioFiles.length > 0
+        ? String(this.audioFiles[this.audioFiles.length - 1].filename || '')
+        : '';
+      const m = last.match(/^(.*?)(\d+)$/);
+      if (m) {
+        const width = m[2].length;
+        const next = String(parseInt(m[2], 10) + 1).padStart(width, '0');
+        return `${m[1]}${next}`;
+      }
+      return last ? `${last}_new` : '0001';
+    },
+
+    openUploadDialog() {
+      this.uploadFile = null;
+      this.uploadName = `${this.suggestNextChapterName()}.m4a`;
+      this.uploadError = '';
+      this.showUploadDialog = true;
+      this.$nextTick(() => {
+        if (this.$refs.uploadFileInput) this.$refs.uploadFileInput.value = '';
+      });
+    },
+
+    closeUploadDialog() {
+      if (this.uploadLoading) return;
+      this.showUploadDialog = false;
+    },
+
+    onUploadFilePicked(event) {
+      const files = (event.target && event.target.files) || [];
+      const file = files[0] || null;
+      this.uploadFile = file;
+      this.uploadError = '';
+      if (file) {
+        // 选文件后自动带上它的扩展名，用户只需改章节序号部分
+        const ext = String(file.name).match(/\.[^.]+$/);
+        if (ext) {
+          this.uploadName = String(this.uploadName).replace(/\.[^.]+$/, '') + ext[0].toLowerCase();
+        }
+      }
+    },
+
+    async submitUpload() {
+      if (!this.uploadFile || !this.uploadName || !this.bookId) return;
+      this.uploadLoading = true;
+      this.uploadError = '';
+      try {
+        const form = new FormData();
+        form.append('file', this.uploadFile);
+        // 目标文件名走 URL query（中文经 encodeURIComponent 可靠送达），
+        // 文件本体走 multipart；与替换同源的「文本字段不可靠」问题就此避开。
+        const url = `/audio/${this.bookId}/upload-chapter?name=${encodeURIComponent(this.uploadName)}`;
+        const rsp = await this.$backend(url, { method: 'POST', body: form });
+        if (!rsp || rsp.err !== 'ok') {
+          this.uploadError = (rsp && rsp.msg) || '上传失败';
+          return;
+        }
+        this.showUploadDialog = false;
+        await this.refreshAudioFiles();
+        this.$alert('success', '章节已上传');
+      } catch (error) {
+        console.error('Upload chapter error:', error);
+        this.uploadError = '上传请求失败，请检查文件大小与网络';
+      } finally {
+        this.uploadLoading = false;
       }
     },
 
@@ -2557,6 +2787,19 @@ export default {
 .replace-track-btn {
   flex-shrink: 0;
   margin-left: 4px;
+}
+
+.delete-track-btn {
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.delete-track-btn:hover .v-icon {
+  color: #ff5252 !important;
+}
+
+.upload-chapter-btn {
+  flex-shrink: 0;
 }
 
 .playlist-item.active {

@@ -70,7 +70,21 @@ AUDIO_CACHE_REFRESH_SECONDS = int(CONF.get("AUDIO_CACHE_REFRESH_SECONDS", 300))
 
 
 def natural_sort_key(filename):
-    return [int(chunk) if chunk.isdigit() else chunk.lower() for chunk in re.split(r"(\d+)", filename)]
+    """自然排序 key，且保证任意两个 key 都能相互比较。
+
+    原实现直接返回 [str, int, str, ...] 混合列表，Python 3 下若同一位置一个
+    是数字段、一个是文字段（例如 ``0001.mp3`` 与 ``平凡的世界10.m4a`` 出现在
+    同一本书里），sorted() 会抛 TypeError，整个播放页 500。允许上传章节后
+    这种混合很容易出现，所以给每段打类型标签 ``(tag, value)``：tag 相同才
+    比较 value，同风格文件名的排序结果与原实现完全一致。
+    """
+    key = []
+    for chunk in re.split(r"(\d+)", filename):
+        if chunk.isdigit():
+            key.append((1, int(chunk)))
+        else:
+            key.append((0, chunk.lower()))
+    return key
 
 
 def resolve_audio_dir(db, book_id):
@@ -1179,6 +1193,104 @@ def _atomic_write_file(dst, body):
             pass
 
 
+# ===== 章节管理公共设施（替换 / 删除 / 上传共用）=====
+# r40 现场：替换接口原先把目标文件名当作 multipart 的普通文本字段从前端传，
+# 用户实际使用时后端收到的是空值，报「无效的音频文件名」。Tornado 对中文
+# multipart 字段解析本身没问题（实测），问题出在这条请求链的字段传递上。
+# 现在三个接口统一改为：前端只传「播放页列表序号 index」（URL query），
+# 后端用与 get_audios() 完全相同的口径自己枚举 .audio/ 定位目标文件。
+# 好处：中文/编码/字段丢失全部消失；目标由后端决定，杜绝路径穿越。
+
+def list_chapter_files(audio_dir):
+    """按播放页同一口径枚举章节文件：自然排序、忽略 <=1KB 的残缺文件。
+
+    get_audios() 先 sorted(..., key=natural_sort_key) 再跳过 <=1KB 的文件，
+    这里先过滤后排序，相对顺序完全一致，所以 index 与页面列表严格一一对应。
+    """
+    names = []
+    for name in os.listdir(audio_dir):
+        if not name.lower().endswith(tuple(SUPPORTED_AUDIO_FORMATS)):
+            continue
+        full = os.path.join(audio_dir, name)
+        try:
+            if os.path.isfile(full) and os.path.getsize(full) > 1024:
+                names.append(name)
+        except OSError:
+            continue
+    return sorted(names, key=natural_sort_key)
+
+
+def chapter_by_index(audio_dir, index):
+    """按播放页列表序号取章节文件名；越界返回 None。"""
+    names = list_chapter_files(audio_dir)
+    if index < 0 or index >= len(names):
+        return None
+    return names[index]
+
+
+def _parse_chapter_index(handler):
+    """从 URL query 读章节序号。定位信息只走 URL，不依赖 form 文本字段。"""
+    raw = handler.get_argument("index", "")
+    try:
+        idx = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return idx if idx >= 0 else None
+
+
+def _atomic_create_file(dst, body):
+    """原子新建音频文件（目标必须不存在），沿用父目录属主/权限。
+
+    用 os.link 发布而非 os.replace：目标已存在时抛 FileExistsError，
+    绝不覆盖用户已有文件；tmp 与 dst 同目录，link/unlink 之间不会出现
+    「写了一半」的可见状态（get_audios 会忽略 <=1KB，但仍要防截断文件）。
+    """
+    parent = os.path.dirname(dst)
+    st = os.stat(parent)
+    tmp = os.path.join(parent, ".upload-%s.tmp" % uuid.uuid4().hex)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp, st.st_mode & 0o7777)
+        except OSError:
+            pass
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except (OSError, AttributeError):
+            pass
+        os.link(tmp, dst)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _sync_audio_set(book_id, has_audio):
+    """章节增删后同步「有音频的书集合」与分类聚合。
+
+    删掉最后一章 / 给无音频的书上传第一章时集合会变；书列表与分类 tab 读的是
+    AudioBooksCache 事件缓存，必须显式通知，否则统计(+1/-1) 与 tab 长时间对不上
+    （r36 统计漂移、r38 分类快照的教训）。mark_has_audio/mark_no_audio 内部
+    自带存在性判断，重复调用不会让 version 空转。
+    """
+    try:
+        if has_audio:
+            AudioBooksCache.mark_has_audio(book_id)
+        else:
+            AudioBooksCache.mark_no_audio(book_id)
+    except Exception:
+        logging.exception("[AUDIO] sync AudioBooksCache failed for book %s", book_id)
+    try:
+        audio_category_agg.invalidate()
+    except Exception:
+        logging.exception("[AUDIO] invalidate audio agg failed for book %s", book_id)
+
+
 class AudioReplace(BaseHandler):
     """替换单个音频章节：只覆盖文件内容，文件名保持不变。
 
@@ -1186,8 +1298,10 @@ class AudioReplace(BaseHandler):
     （``_copy_or_convert_file`` 遇到已存在目标直接 return），某一章文件损坏时
     用户只能去 NAS 的文件管理器里手动覆盖。这里补上站内入口。
 
-    安全口径：目标必须是 .audio/ 里**已存在**的音频文件名，且上传文件扩展名
-    与之一致；不接受任何路径成分，避免构造 ../../ 覆盖书库里的其它文件。
+    安全口径（r40 起）：前端只传播放页列表序号 ``index``（URL query），后端用
+    ``chapter_by_index`` 自己枚举 .audio/ 定位目标，不接受任何文件名/路径输入，
+    因此既不会因中文文件名传输出错，也彻底杜绝构造 ../../ 覆盖书库其它文件。
+    上传文件扩展名必须与原章节一致，只覆盖内容、不改文件名与播放顺序。
     """
     # 单章一般几十 MB；设上限防止误传超大文件把数据盘写满。
     MAX_BYTES = 300 * 1024 * 1024
@@ -1202,20 +1316,20 @@ class AudioReplace(BaseHandler):
         except (TypeError, ValueError):
             return {"err": "params.invalid", "msg": _("无效的书籍ID")}
 
-        target = urllib.parse.unquote(self.get_argument("filename", ""))
-        if (not target or target != os.path.basename(target)
-                or ".." in target or "/" in target or "\\" in target):
-            return {"err": "params.invalid", "msg": _("无效的音频文件名")}
-        ext = os.path.splitext(target)[1].lower()
-        if ext not in tuple(SUPPORTED_AUDIO_FORMATS):
-            return {"err": "file.invalid_format", "msg": _("目标不是支持的音频格式")}
+        index = _parse_chapter_index(self)
+        if index is None:
+            return {"err": "params.invalid", "msg": _("无效的章节序号")}
 
         audio_dir, _legacy = resolve_audio_dir(self.calibre_db, book_id)
         if not audio_dir or not os.path.isdir(audio_dir):
             return {"err": "audio.not_found", "msg": _("未找到音频目录")}
+        target = chapter_by_index(audio_dir, index)
+        if target is None:
+            return {"err": "audio.not_found", "msg": _("未找到该章节的音频文件")}
         dst = os.path.join(audio_dir, target)
-        if not os.path.isfile(dst):
-            return {"err": "audio.not_found", "msg": _("未找到要替换的音频文件")}
+        ext = os.path.splitext(target)[1].lower()
+        if ext not in tuple(SUPPORTED_AUDIO_FORMATS):
+            return {"err": "file.invalid_format", "msg": _("目标不是支持的音频格式")}
 
         files = self.request.files.get("file")
         if not files:
@@ -1247,6 +1361,129 @@ class AudioReplace(BaseHandler):
         return {
             "err": "ok",
             "msg": _("音频已替换，请强制刷新页面（Ctrl+Shift+R）"),
+            "data": {"filename": target, "size": len(body)},
+        }
+
+
+class AudioChapterDelete(BaseHandler):
+    """删除单个音频章节（只删一个文件，不是删整本 .audio/）。
+
+    与 AudioDelete 的区别：AudioDelete 会 shutil.rmtree 整本音频，且
+    ScanFile 里的 audiodir: 判重记录还在，删完再导入会被 skipped 跳过；
+    这里只移除一集，其余章节、书库元数据、播放进度都不动。
+    """
+
+    @js
+    @is_admin
+    def post(self, book_id):
+        if not self.is_admin():
+            return {"err": "permission.not_admin", "msg": _("只有管理员可以删除音频章节")}
+        try:
+            book_id = int(book_id)
+        except (TypeError, ValueError):
+            return {"err": "params.invalid", "msg": _("无效的书籍ID")}
+
+        index = _parse_chapter_index(self)
+        if index is None:
+            return {"err": "params.invalid", "msg": _("无效的章节序号")}
+        audio_dir, _legacy = resolve_audio_dir(self.calibre_db, book_id)
+        if not audio_dir or not os.path.isdir(audio_dir):
+            return {"err": "audio.not_found", "msg": _("未找到音频目录")}
+        target = chapter_by_index(audio_dir, index)
+        if target is None:
+            return {"err": "audio.not_found", "msg": _("未找到该章节的音频文件")}
+        dst = os.path.join(audio_dir, target)
+        try:
+            os.remove(dst)
+        except OSError as err:
+            logging.error("[AUDIO_DELETE_CHAPTER] failed for %s: %s", dst, err)
+            return {"err": "server.error", "msg": _("删除音频章节失败: %s") % err}
+
+        logging.info("[AUDIO_DELETE_CHAPTER] book=%s file=%s", book_id, target)
+        # 删掉最后一章后这本书不再「有音频」，必须通知事件缓存，
+        # 否则左侧统计、书列表与分类 tab 会继续把它算作有声书。
+        if not list_chapter_files(audio_dir):
+            _sync_audio_set(book_id, False)
+        return {"err": "ok", "msg": _("已删除该章节"), "data": {"filename": target}}
+
+
+class AudioChapterUpload(BaseHandler):
+    """上传新章节：文件名由 URL query 指定，绝不覆盖已有文件。
+
+    文件名决定播放顺序（natural_sort_key 自然排序）与 VIP 免费章判定位置，
+    因此要与这本书现有章节保持同一命名风格（例如「平凡的世界11.m4a」）。
+    文本参数只走 URL query（中文经 URL 编码可靠送达），文件本体走 multipart；
+    不传 name 时退回上传文件自带的文件名。同名已存在请用「替换」，避免误覆盖。
+    """
+
+    MAX_BYTES = 300 * 1024 * 1024
+
+    @js
+    @is_admin
+    def post(self, book_id):
+        if not self.is_admin():
+            return {"err": "permission.not_admin", "msg": _("只有管理员可以上传音频章节")}
+        try:
+            book_id = int(book_id)
+        except (TypeError, ValueError):
+            return {"err": "params.invalid", "msg": _("无效的书籍ID")}
+
+        audio_dir, _legacy = resolve_audio_dir(self.calibre_db, book_id)
+        if not audio_dir or not os.path.isdir(audio_dir):
+            return {"err": "audio.not_found", "msg": _("未找到音频目录，请先生成或导入音频")}
+
+        files = self.request.files.get("file")
+        if not files:
+            return {"err": "params.missing", "msg": _("未找到上传的音频文件")}
+        uploaded = files[0]
+        ext = os.path.splitext(uploaded.get("filename") or "")[1].lower()
+        if ext not in tuple(SUPPORTED_AUDIO_FORMATS):
+            return {
+                "err": "file.invalid_format",
+                "msg": _("只支持 %s 格式") % ", ".join(SUPPORTED_AUDIO_FORMATS),
+            }
+        body = uploaded.get("body") or b""
+        if len(body) <= 1024:
+            return {"err": "file.too_small", "msg": _("音频文件过小，可能不完整")}
+        if len(body) > self.MAX_BYTES:
+            return {"err": "file.too_large", "msg": _("音频文件不能超过 300MB")}
+
+        # 目标文件名只从 URL query 取（中文经 encodeURIComponent 可靠送达），
+        # 不依赖 multipart 普通文本字段——r40 现场「无效的音频文件名」的教训。
+        name = urllib.parse.unquote(self.get_argument("name", ""))
+        if not name:
+            name = uploaded.get("filename") or ""
+        if (not name or name != os.path.basename(name)
+                or ".." in name or "/" in name or "\\" in name
+                or name.startswith(".")):
+            return {"err": "params.invalid", "msg": _("无效的音频文件名")}
+        target_ext = os.path.splitext(name)[1].lower()
+        if target_ext not in tuple(SUPPORTED_AUDIO_FORMATS):
+            return {
+                "err": "file.invalid_format",
+                "msg": _("只支持 %s 格式") % ", ".join(SUPPORTED_AUDIO_FORMATS),
+            }
+        target = name
+        dst = os.path.join(audio_dir, target)
+        exists_msg = _("同名章节 %s 已存在，请用「替换」覆盖或改名") % target
+        if os.path.exists(dst):
+            return {"err": "file.exists", "msg": exists_msg}
+        try:
+            _atomic_create_file(dst, body)
+        except FileExistsError:
+            return {"err": "file.exists", "msg": exists_msg}
+        except OSError as err:
+            logging.error("[AUDIO_UPLOAD_CHAPTER] failed for %s: %s", dst, err)
+            return {"err": "server.error", "msg": _("上传音频章节失败: %s") % err}
+
+        logging.info("[AUDIO_UPLOAD_CHAPTER] book=%s file=%s size=%s",
+                     book_id, target, len(body))
+        # 给原本没有音频的书上传第一章时，书集合新增一本；已有音频的书
+        # mark_has_audio 内部会跳过，不会让 version 空转。
+        _sync_audio_set(book_id, True)
+        return {
+            "err": "ok",
+            "msg": _("已上传章节 %s") % target,
             "data": {"filename": target, "size": len(body)},
         }
 
@@ -1953,7 +2190,9 @@ def routes():
         (r"/api/audio/([0-9]+)/conversion", AudioConversion),
         (r"/api/audio/([0-9]+)/cancel", AudioConversionCancel),
         (r"/api/audio/([0-9]+)/delete", AudioDelete),
-        (r"/api/audio/([0-9]+)/replace", AudioReplace),  # 替换单个损坏章节（须在 /([^/]+) 之前）
+        (r"/api/audio/([0-9]+)/replace", AudioReplace),  # 章节管理：替换（须在 /([^/]+) 之前）
+        (r"/api/audio/([0-9]+)/delete-chapter", AudioChapterDelete),  # 删除单集
+        (r"/api/audio/([0-9]+)/upload-chapter", AudioChapterUpload),  # 上传新章节
         (r"/api/audio/([0-9]+)/purchase", AudioPurchase),  # 音频购买接口
         (r"/api/audio/([0-9]+)/progress", AudioPlaybackProgress),  # 播放进度（跨设备续播）
         (r"/api/audiobooks/categories", AudioBookCategories),  # 有声书页分类 tab（须在 /api/audiobooks 之前注册）
