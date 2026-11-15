@@ -17,7 +17,19 @@
 和上游一致：**成品镜像 + 只有 `image:` 的 compose**。不构建、不 clone、不传大包。
 老 NAS 上 `layer does not exist`（legacy builder + btrfs）因此根本不会出现。
 
-拿到 `docker-compose.yml` 和 `.env.example` 两个文件，放进同一个空目录：
+### 需要哪些文件
+
+| 文件 | 干什么用 | 必须吗 |
+| --- | --- | --- |
+| `docker-compose.yml` | 启动配置：用什么镜像、数据挂哪、端口开多少 | 是 |
+| `.env.example` | 启动配置模板，改完改名成 `.env` | 是 |
+| 镜像 | 程序本体。**GitHub 上直接拉，或用离线包 `docker load` 导入** | 是（来源二选一） |
+
+> **`docker load` 只装镜像，不启动任何东西。** 启动永远要靠上面那两个配置文件。
+> 所以不管走哪条路线，`docker-compose.yml` 和 `.env.example` 都要跟着一起拿走
+> （离线包里就有，一起传过去即可）。
+
+### 路线 A：从 GitHub 拉（推荐）
 
 ```sh
 cp .env.example .env
@@ -29,6 +41,27 @@ docker compose up -d
 不需要登录或令牌。浏览器打开 `http://<机器IP>:9800`。**首次启动要初始化数据库，
 1~3 分钟内 502 / 空白是正常的**（`docker logs -f mybooks` 看进度）。
 
+### 路线 B：离线导入（连不上 ghcr.io 时）
+
+第 1 步导入镜像。`gunzip -c ... | docker load` 是「解压 + 导入」一步做完，
+别先 `gunzip` 出 2.4GB 中间文件白占磁盘：
+
+```sh
+gunzip -c mybooks-image-4.6.0-build.28-r42.tar.gz | docker load
+```
+
+第 2 步**照常**改 `.env`（这一步不能省），第 3 步照常 `docker compose up -d`：
+
+```sh
+cp .env.example .env
+vi .env
+docker compose up -d
+```
+
+包里已带好 `ghcr.io/wxgoo/audiobooks:4.6.0-build.28-r42` 与 `latest` 两个标签，
+**不用再 `docker tag`**；本地有同名 tag，Docker 就不再联网拉，
+compose 和 `.env` **一个字都不用改**（还是写着那个 GHCR 名字，但走的是本地镜像）。
+
 ### `.env` 只改三项
 
 | 项 | 填什么 |
@@ -39,25 +72,24 @@ docker compose up -d
 
 端口冲突改 `HTTP_PORT`（默认 9800）；不需要 HTTPS 就删掉 compose 里 8443 那行。
 
-### 连不上 ghcr.io 时（同一个镜像的离线导入，不是第二条路线）
+### 没有 `docker compose` 命令时
 
-```sh
-gunzip -c mybooks-image-4.6.0-build.28-r42.tar.gz | docker load
-```
-
-包里已带好 `ghcr.io/wxgoo/audiobooks:4.6.0-build.28-r42` 与 `latest` 两个标签，
-**不用再 `docker tag`**；本地有同名 tag，Docker 就不再联网拉，compose 和 `.env` 一个字都不用改。
-
-不用 docker compose 也可以直接跑：
+老版本群晖 DSM、部分精简 Linux、只装了 Docker CLI 的机器上，`docker compose` 会报
+`command not found`。这时用等价的 `docker run`，**不需要 compose，也不需要 `.env`**——
+参数一行行写在命令行上：
 
 ```sh
 docker run -d --name mybooks --restart always \
-  --security-opt seccomp=unconfined \
+  --security-opt seccomp:unconfined \
   -v /你的/数据目录:/data -p 9800:80 -p 8443:443 \
   -e PUID=$(id -u) -e PGID=$(id -g) -e TZ=Asia/Shanghai \
   ghcr.io/wxgoo/audiobooks:4.6.0-build.28-r42
 ```
 
+参数与 compose 一一对应：`-v ...:/data` ↔ `volumes`、`-p` ↔ `ports`、`-e` ↔ `environment`。
+
+> `docker run` 和 `docker compose` **不要混用**：同一台机器上若已用 compose 起了容器，
+> 再用 `docker run` 会因容器名 `mybooks` 重复而失败。先 `docker compose down` 再换方式。
 ### 装完必做
 
 1. **改管理员默认密码**（初始化会建默认账号，不改等于把站敞开）。
