@@ -1,12 +1,15 @@
 #!/bin/sh
 # ============================================================
-# install-fresh.sh —— 联网全新安装（在 git clone 之后的仓库根目录执行）
+# install-fresh.sh —— 全新安装统一入口（两种来源都支持）
 #
-# 前置：
+# 来源 A：git clone 出来的仓库（有 .git）
 #   git -c core.symlinks=true clone https://gitee.com/wxgoo/audiobook-src.git audiobook
-#   cd audiobook
+#   cd audiobook && sh scripts/install-fresh.sh
+# 来源 B：tar 解压出来的部署包（无 .git，不需要装 git）
+#   tar -xzf audiobook-deploy-<版本>.tar.gz && cd audiobook
+#   sh scripts/install-from-tar.sh       # 薄封装，转交本脚本
 #
-# 用法：
+# 用法（在根目录执行）：
 #   DATA_DIR=/你的/数据目录 PUID=$(id -u) PGID=$(id -g) sh scripts/install-fresh.sh
 #   CHECK_ONLY=1 sh scripts/install-fresh.sh   # 只校验+生成 .env，不构建不启动
 #
@@ -19,7 +22,7 @@
 # 本脚本做的事：
 #   1) 前置检查（docker / compose v2 / Linux 软链）
 #   2) 校验 app/dist（768）与 myreader-dist 的 119 根软链，打印包内清单基线
-#   3) 生成仓库根 .env 并写进 .git/info/exclude（避免误提交）
+#   3) 生成仓库根 .env；有 .git 时写进 .git/info/exclude（避免误提交）
 #   4) 建数据目录
 #   5) 调 scripts/deploy.sh 完成构建、指纹校验、启动与进程验证
 #
@@ -35,10 +38,13 @@ say() { echo ""; echo "==> $*"; }
 # ---------- 1. 前置 ----------
 say "[1/5] 前置检查"
 [ -f Dockerfile ] && [ -f docker-compose.yml ] && [ -f scripts/deploy.sh ] || {
-    echo "!! 请在仓库根目录运行（缺 Dockerfile / docker-compose.yml / scripts/deploy.sh）"; exit 1; }
+    echo "!! 请在仓库/包根目录运行（缺 Dockerfile / docker-compose.yml / scripts/deploy.sh）"; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "!! 缺 docker"; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "!! 缺 docker compose v2（docker compose 子命令）"; exit 1; }
-command -v git >/dev/null 2>&1 || { echo "!! 缺 git"; exit 1; }
+# git 只在「clone 出来的仓库」才需要；tar 解压包无 .git，不装 git 也能装。
+if [ -d .git ] && ! command -v git >/dev/null 2>&1; then
+    echo "!! 这是 git 仓库但缺 git 命令（后续 git pull 升级会用）"; exit 1
+fi
 
 DATA_DIR="${DATA_DIR:-/volume1/docker/audiobook-data}"
 PUID="${PUID:-1026}"
@@ -61,13 +67,15 @@ echo "    docker: $(docker version --format '{{.Server.Version}}' 2>/dev/null ||
 echo "    compose: $(docker compose version 2>/dev/null | head -1)"
 echo "    数据目录: $DATA_DIR"
 echo "    PUID/PGID: $PUID/$PGID   端口: $HTTP_PORT / $HTTPS_PORT"
+echo "    提示: PUID/PGID 用 SSH 里 id 用户名 查；填错会「上传不了书 / 设置存不下」。"
 
 # ---------- 2. 产物校验 ----------
 say "[2/5] 校验预构建产物"
 sh scripts/check-dist.sh || { echo "!! app/dist 不完整，停止安装"; exit 1; }
 sh scripts/check-myreader-links.sh --fix || {
     echo "!! MyReader 119 根软链修复失败。多半是 Windows 检出 / 图形解压压扁了链接，"
-    echo "   请在 Linux 上重新 clone：git -c core.symlinks=true clone <仓库> audiobook"; exit 1; }
+    echo "   请用 Linux 命令行重新获取：tar -xzf <包名>.tar.gz（解压包）"
+    echo "   或 git -c core.symlinks=true clone <仓库> audiobook（git 仓库）"; exit 1; }
 
 MF_REV=$(sed -n 's/.*"revision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
              update/manifest.json 2>/dev/null | head -1)
@@ -93,7 +101,8 @@ TZ=$TZ
 EOF
     echo "    已生成 .env"
 fi
-# clone 出来的仓库有 .git，把 .env 排除掉，避免以后 git status 一直提示 / 误提交
+# clone 出来的仓库有 .git，把 .env 排除掉，避免以后 git status 一直提示 / 误提交。
+# tar 解压包没有 .git，这一步自然跳过（不会有 git 命令依赖）。
 if [ -d .git/info ]; then
     grep -qxF '.env' .git/info/exclude 2>/dev/null || printf '\n.env\n' >> .git/info/exclude
     echo "    .env 已写入 .git/info/exclude（不会被提交）"
@@ -119,13 +128,16 @@ say "[5/5] 调用 deploy.sh 构建并启动"
 echo "    会走「预构建 dist」快路，跳过 npm ci / generate；"
 echo "    联网只用于拉取 Docker 基础镜像与 apt / pip 依赖，首次约几分钟。"
 DATA="$DATA_DIR" sh scripts/deploy.sh || {
-    echo "!! 部署失败，看上面的具体步骤。常见：网络拉不到基础镜像、PUID/PGID 不对、端口被占。"; exit 1; }
+    echo "!! 部署失败，看上面的具体步骤。常见：网络拉不到基础镜像、PUID/PGID 不对、端口被占。";
+    echo "   若是老 NAS 上报 layer does not exist，请改用镜像离线包（零构建）。"; exit 1; }
 
 say "安装完成"
 echo "    HTTP : http://<这台机器IP>:$HTTP_PORT"
 echo "    HTTPS: https://<这台机器IP>:$HTTPS_PORT （自签证书，浏览器会告警）"
 echo "    首次启动要初始化数据库，1-3 分钟内访问可能 502，看日志: docker logs -f audiobook-mybooks-1"
 echo ""
-echo "    以后升级：git pull && docker compose up -d --build"
-echo "    或小改动走页内热更：/admin/version → 立即更新"
+echo "    进去第一件事：改管理员默认密码。"
+echo "    以后升级：管理 → 版本与更新 → 立即更新（纯后端改动页内热更即可）；"
+echo "              需要换整包/镜像时再重新解压或 docker load。"
+echo "    git 仓库也可用 git pull && docker compose up -d --build，但不必为热更这么做。"
 exit 0

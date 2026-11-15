@@ -16,6 +16,27 @@
 
 ---
 
+## 交付补充（2026-11-15，**不新增 revision**，同 `r38` 重出整包 + 新增镜像离线包）
+
+改动只在**部署方式**，站点运行代码一行没动，所以 `/admin/version` 仍是 r38、不需要热更、线上站点无感。`update/manifest.json` 字节不变。
+
+- 新增 `scripts/install-from-tar.sh`：解压部署包后的**一键全新安装入口**，不需要 git、不需要 clone。
+- `scripts/install-fresh.sh` 收敛为**唯一一份安装逻辑**：去掉「缺 git 就退出」的硬依赖（tar 包机器可能没装 git），只有存在 `.git` 时才要求 git；`.git/info/exclude` 写入改为条件执行；升级提示从 `git pull` 改为页内「立即更新」/换包。
+  两个入口是「薄封装 → 统一入口」关系，避免两套逻辑以后改一处忘另一处（r36/r38 的教训）。新增 `tests/test_install_entrypoints_contract.py` 12 例锁定这个关系。
+- `scripts/pack.sh --check` 增加**成对校验**：包里只要出现两个安装入口之一，就必须两个都在；老包两个都没有照样放行，不会误报。
+- `scripts/pack-image.sh`：`docker save -o` 受 umask 影响常生成 `600` 权限，拷给别人（尤其经 Windows/网盘）会读不到，压缩后钉成 `644`。
+
+**两条全新部署路线（新老兼顾）**：
+
+| 路线 | 给谁 | 交付物 | 是否构建 |
+| --- | --- | --- | --- |
+| A 镜像离线包 | 老 NAS（btrfs/legacy builder）、离线、想最省事 | `mybooks-image-4.6.0-build.27-r38/`（923MB：`docker load` 即用 + 只有 `image` 没有 `build` 的 compose + `.env.example` + README + SHA256SUMS） | **零构建、零联网** |
+| B 整包一键安装 | 新 NAS / 普通 Linux、可联网 | `audiobook-deploy-4.6.0-build.27-r38.tar.gz`（153MB，含新入口）+ `sh scripts/install-from-tar.sh` | 走预构建 dist 快路，仍需拉基础镜像 |
+
+两条路线装完，r39+ 都走页内「立即更新」，不必重发大包。镜像离线包已在本机做过端到端自检：删 tag → `docker load` → 用交付 compose 起容器 → 4 个进程 RUNNING / 首页 200 / API 200 / 数据目录自动初始化。
+
+---
+
 ## 4.6.0-build.27-r38（2026-11-14，**修「明明改成教育了却没进教育分类」**，纯后端，可热更）
 
 - 症状：详情页把一本有声书的分类改成「教育」，有声书页的 tab 仍是

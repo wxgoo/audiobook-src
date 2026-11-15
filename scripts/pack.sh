@@ -78,6 +78,18 @@ if [ "${1:-}" = "--check" ]; then
             [ -e "$D/$f" ] || { echo "  !! 缺 $f"; fail=1; }
         done
 
+        # 全新安装的两个入口必须成对出现。用「成对」而不是「无条件必需」：
+        # 老包（r37 及以前）两个都没有，照样能通过校验；只有带了其中一个、
+        # 却漏了另一个的新包才会被拦下 —— 那正是「解压包用户找不到一键入口」
+        # 或「clone 用户拿到旧逻辑」的成因。
+        if [ -e "$D/scripts/install-fresh.sh" ] || [ -e "$D/scripts/install-from-tar.sh" ]; then
+            [ -e "$D/scripts/install-fresh.sh" ] || {
+                echo "  !! 有 install-from-tar.sh 却缺 install-fresh.sh（薄封装没有转发目标）"; fail=1; }
+            [ -e "$D/scripts/install-from-tar.sh" ] || {
+                echo "  !! 有 install-fresh.sh 却缺 install-from-tar.sh（解压包用户没有一键入口）"; fail=1; }
+            echo "  全新安装入口: install-fresh.sh + install-from-tar.sh 成对齐全"
+        fi
+
         # 包内发布清单（r27 / r33 事故防线）：直接对 .tar.gz 说话，不靠解压后的目录。
         # 常见用法是「拿新仓库的 pack.sh 验旧包」，所以优先用本仓库的校验脚本；
         # 若是拿包里自带的 pack.sh 验包，则退回包内那份。

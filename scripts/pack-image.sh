@@ -161,6 +161,9 @@ docker save -o "$TAR" "$DELIVER_IMG" || die "docker save 失败" 3
 say "压缩（gzip -$GZIP_LEVEL）"
 gzip -"$GZIP_LEVEL" -f "$TAR" || die "gzip 失败" 3
 [ "$KEEP_TAR" = "1" ] || rm -f "$TAR"
+# docker save -o 受 umask 影响常生成 600，拷给别人（尤其经 Windows/网盘）会读不到。
+# 交付件必须可读，直接钉成 644。
+chmod 644 "$GZ" || die "chmod 交付包失败" 3
 
 RAW_IMG_MB=$(docker image inspect "$DELIVER_IMG" --format '{{.Size}}' 2>/dev/null | awk '{printf "%.0f", $1/1048576}')
 PKG_MB=$(du -m "$GZ" 2>/dev/null | awk '{print $1}')
