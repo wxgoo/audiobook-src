@@ -32,6 +32,7 @@
 | [`test-audio-dirs.py`](test-audio-dirs.py) | 音频路径逻辑自测（假 cache + 临时目录） | 不改数据，只在 /tmp 里折腾 |
 | [`test-integration.sh`](test-integration.sh) | 跑 `tests/test_main.py` 那批真起站点的用例。**它负责搭 calibre 库 + python3.12 环境** | 只在临时夹具目录里折腾 |
 | [`search_index.py`](search_index.py) | 中文检索索引的命令行入口（不依赖 Web 服务） | 只读 |
+| [`upstream/follow-upstream.py`](upstream/follow-upstream.py) | **跟随上游**。`fetch` 拉上游 → `assess` 评估规模 → `compare` 逐文件三方比对出冲突矩阵 | 只读（报告写到 `--out`） |
 | [`upstream/patch_tool.py`](upstream/patch_tool.py) | **把本地改动按主题导出成上游补丁**：`export <主题> --upstream <上游检出> --out <目录>`；`status` 检查上游是否已修 | 只读，写 patch 文件 |
 
 ---
