@@ -1,76 +1,870 @@
 {
   "schema": 1,
-  "revision": "4.6.0-build.27-r38",
-  "base_revision": "4.6.0-build.27-r37",
+  "revision": "4.6.0-build.27-r39",
+  "base_revision": "4.6.0-build.27-r38",
   "version": "4.6.0-build.27",
-  "date": "2026-11-14",
-  "summary": "修「明明改成教育了却没进教育分类」：改分类后分类 tab 与列表过滤立刻更新（纯后端，可热更）",
+  "date": "2026-11-15",
+  "summary": "有声书章节替换：管理员可在播放页直接覆盖损坏的音频文件",
   "notes": [
-    "症状：详情页把有声书分类改成「教育」，tab 仍是 教育(2)、点进去也看不到那本书，强刷/重开无效，重启容器才自愈。不是前端、不是 dist、不是分类接口没数据、不是书没写进库。",
-    "根因：audio_category_agg 的模块级快照只跟随 AudioBooksCache.get_version() 失效，而 version 表示「有音频的书集合」是否变化。改 #category 是 calibre 元数据写入，集合一本没变、version 不变，快照一直旧；分类 tab 的 count 与 ?category=X 的列表过滤都读这份快照，所以两处同时不更新。分类名骨架 catalog_categories() 用 library_version() 做 key 是实时的，于是「tab 名字对、数字和归属旧」。实证：教育 [1,2] → DB 改成教育后仍 教育(2) → 强制重算立刻变 教育(3)，证明 DB 已写入。",
-    "修复：新增 on_category_changed()/on_categories_changed()，改分类成功后按调用方手上的新值直接挪桶（O(1)、不读 calibre 元数据、保留 tags/authors）；library_version()（metadata.db + -wal 的 mtime）兜底 + invalidate() 覆盖漏通知写入，触发后台全量重建（单飞 + 20s 节流），保持请求路径零阻塞；元数据脏时禁止走「集合增量空转」分支（原分支 diff 为空却会把 version 推到最新，把旧元数据永久钉死）。全仓 9 处 set_field(#category) 入口全部接线，并加 AST 契约测试防止以后新增入口漏通知。",
-    "边界：只有带音频的书才进有声书分类 tab，无音频的书改成任何分类都不会进（这是口径，不是 bug）；独立进程写入靠库版本兜底，允许秒级滞后，站内改分类零延迟。",
-    "验收：热更后强刷，把任意一本有声书改成「教育」，教育 tab 计数应立刻 +1 且点进去能看到该书；不改分类也不会再有旧桶残留。日志关键字 audio agg: rebuilt in background（仅漏通知路径会出现）。",
-    "部署：r37 -> r38 为纯 webserver/**/*.py，页内「立即更新」后强刷即可；app/dist 与 r34~r37 同指纹，不需要重新部署。热更改的是容器可写层，之后别 --force-recreate；真要重建先跑 sh scripts/sync-hotfix.sh 或装 r38 整包。",
-    "测试：新增 14 例单测 + 3 例契约；音频/分类/设置/扫描回归 316 passed / 4 skipped（test_scan_p0 全角折叠语义用例在 r37 之前 HEAD 基线上同样失败，与本次改动无关）。"
+    "修复：某一章音频损坏时只能进 NAS FileStation 手动覆盖；重新导入对同名文件是纯增量、不会覆盖",
+    "新增：播放页每集右侧的替换按钮（仅管理员），选同格式文件上传，后端校验后原子覆盖，文件名与章节顺序不变",
+    "更新完成后请 Ctrl+Shift+R 强制刷新；替换成功时播放器 url 会自动加 ?v= 绕过 1 小时缓存"
   ],
-  "requires_dist": false,
+  "requires_dist": true,
   "hotfixable": true,
-  "dist_hotfixable": false,
-  "dist_files": [],
-  "dist_deleted": [],
-  "reason": "仅后端 Python 代码变更，可在线替换并重启服务，无需重建镜像",
+  "dist_hotfixable": true,
+  "dist_files": [
+    {
+      "path": "app/dist/200.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/ListBook/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/ListMeta/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/_nuxt/060e196.js",
+      "sha256": "8d19efbe36d252817ecb18d3880f6a2f9ee555b86c4fce5929c2aa420a6d6dd4",
+      "bytes": 18073
+    },
+    {
+      "path": "app/dist/_nuxt/1031ff2.js",
+      "sha256": "4687d081cf60745cb9b9197af7262a76e22ad7c2a7e41bb0172f6dd747cf575c",
+      "bytes": 20206
+    },
+    {
+      "path": "app/dist/_nuxt/1d08e83.js",
+      "sha256": "f43ca9bbaa3acd2119c3dd223afc1fa6a2b3fc2ba893b1ae13548c69a3f0befd",
+      "bytes": 19804
+    },
+    {
+      "path": "app/dist/_nuxt/2a1d528.js",
+      "sha256": "4a6f0a08c2441907c312e7f914834bee91559bd61133201be6fb859e3d15be38",
+      "bytes": 20548
+    },
+    {
+      "path": "app/dist/_nuxt/2d885b8.js",
+      "sha256": "80050cabc54e2255146a1b8afa290c359c349d6bd794de731e7b0c0d70d3df56",
+      "bytes": 7781
+    },
+    {
+      "path": "app/dist/_nuxt/2dba3af.js",
+      "sha256": "d1c3cfdcdcad31078c0ceeba589774488c5834d3581c8c38c930cb3e3942a23b",
+      "bytes": 203020
+    },
+    {
+      "path": "app/dist/_nuxt/39fce60.js",
+      "sha256": "dac8e9d4b8660fc878a1e47ff090be137a6c7c44318022bbb97887b36a4dc1bf",
+      "bytes": 9465
+    },
+    {
+      "path": "app/dist/_nuxt/3d00932.js",
+      "sha256": "9ea6f7621cd1042a05115725691190bac72ebc40d0f15165167cb64d18a75c41",
+      "bytes": 6374
+    },
+    {
+      "path": "app/dist/_nuxt/3d9a0b2.js",
+      "sha256": "820f63e3ec6f6d2a693010e3374015a813a47d0ddfa8aae23e02aa3c124dea23",
+      "bytes": 858
+    },
+    {
+      "path": "app/dist/_nuxt/3eae639.js",
+      "sha256": "7bcbf9b5cbbcd1888815b6c98e0a8fb0fbb83b987941251e78e556f6ed93ad98",
+      "bytes": 5721
+    },
+    {
+      "path": "app/dist/_nuxt/4408628.js",
+      "sha256": "58ab046cb73c5312a2235c3ad9931a7ae40d5142a0556775f5407766cffeaf05",
+      "bytes": 11490
+    },
+    {
+      "path": "app/dist/_nuxt/4bd5f9a.js",
+      "sha256": "c59cff8e2df13e74147872fd6bcddce38fffb3d098f967aacef66dc48e2288d9",
+      "bytes": 10607
+    },
+    {
+      "path": "app/dist/_nuxt/518d11f.js",
+      "sha256": "4b1d9331834a6a370ff039b74069bed46da4f67fe8374203f7c9668f671c41a5",
+      "bytes": 25617
+    },
+    {
+      "path": "app/dist/_nuxt/5acf081.js",
+      "sha256": "36434d2e65c7d99c0722f9b3ddb850303a16146524b9110744adac5cf19fb82f",
+      "bytes": 14058
+    },
+    {
+      "path": "app/dist/_nuxt/61639b3.js",
+      "sha256": "c04dcf440efc2fb593ff74828157a3311dc3c2aadf9e706c1153aee24d2c6dee",
+      "bytes": 19731
+    },
+    {
+      "path": "app/dist/_nuxt/6651a3e.js",
+      "sha256": "f62735bb908c86eac8fc8f3471cb6e4d22e8357463413407b3db308eae668f3c",
+      "bytes": 179532
+    },
+    {
+      "path": "app/dist/_nuxt/677d8c4.js",
+      "sha256": "df78c2ad9f15b505346ff7146e240fd982af18e830f77b785e2fd23156fde841",
+      "bytes": 9655
+    },
+    {
+      "path": "app/dist/_nuxt/6ae6970.js",
+      "sha256": "982a493a601138e1d7d0488138b7d46793423786dfebb12e8e96d944b55472fd",
+      "bytes": 3714
+    },
+    {
+      "path": "app/dist/_nuxt/6b08255.js",
+      "sha256": "ded02ea6741c258bc0f928523b2ee61c64c7bb75c2cd3b3e6a10cdb65eba9e88",
+      "bytes": 55706
+    },
+    {
+      "path": "app/dist/_nuxt/77a69a7.js",
+      "sha256": "374a051179cc46d3663b3760b6e19a49961a56c9798dc1a2403410f05b13cbd0",
+      "bytes": 23781
+    },
+    {
+      "path": "app/dist/_nuxt/7bdbc8d.js",
+      "sha256": "abce15914a03cbb1d8260dde8114c368363cea444cfe6a8a4f1a69077c9bbe41",
+      "bytes": 7742
+    },
+    {
+      "path": "app/dist/_nuxt/8350c46.js",
+      "sha256": "347f4db0c4114ceaecbe38a2f7bb1fdd909c9345fffe4e63364175cc4e7ad244",
+      "bytes": 7827
+    },
+    {
+      "path": "app/dist/_nuxt/858ab95.js",
+      "sha256": "48af25668934705724c223534b388affa61f5c4b7a4fb746015119b397f8417f",
+      "bytes": 12777
+    },
+    {
+      "path": "app/dist/_nuxt/8654dc4.js",
+      "sha256": "e866898ab5f94b6768d95ed36b3d74d7009b53e003ee9b244285f2ba631ac3bf",
+      "bytes": 38467
+    },
+    {
+      "path": "app/dist/_nuxt/87e8701.js",
+      "sha256": "07cc6cdd99df7441b444ad8a59ee6f1702b5949a952d756e01832c283dfe56db",
+      "bytes": 9842
+    },
+    {
+      "path": "app/dist/_nuxt/9035f98.js",
+      "sha256": "275cd976173e96e5eec7a36627ddff3fecc0cca480289d78fb72bd34d7c39583",
+      "bytes": 196248
+    },
+    {
+      "path": "app/dist/_nuxt/94f57f2.js",
+      "sha256": "39967647d410943bfed824704c35f36f9214ee952743d78c28299ffb882e6160",
+      "bytes": 21891
+    },
+    {
+      "path": "app/dist/_nuxt/9fd444d.js",
+      "sha256": "49359f03a8a53f4bdb70d1aadaba74df8cbe1de5fead9b3da97221a5865ccf68",
+      "bytes": 7759
+    },
+    {
+      "path": "app/dist/_nuxt/LICENSES",
+      "sha256": "e4b5a7df260789b431044345cc33392d46ba161c9e975a739350792aff3bf870",
+      "bytes": 1256
+    },
+    {
+      "path": "app/dist/_nuxt/a2dab91.js",
+      "sha256": "76cf6d5c297c3a0865c74979ef4c3d6b3f91371e4b972d66c64ba93ad53c5b6e",
+      "bytes": 16712
+    },
+    {
+      "path": "app/dist/_nuxt/a3bcba1.js",
+      "sha256": "1155fd81670537a5a0fcf7356027be6afcc5605372b52b1241d36657306ded60",
+      "bytes": 21040
+    },
+    {
+      "path": "app/dist/_nuxt/a3cf4cd.js",
+      "sha256": "c3cb6970e2d2e37ef5346a77965c594b5b92cfa4562ea3224f2fdfa6f72496de",
+      "bytes": 298473
+    },
+    {
+      "path": "app/dist/_nuxt/b4e5f3b.js",
+      "sha256": "221904e4ab0f00919b158825d6fceb043280beaa49afc9c15e5587633918d12e",
+      "bytes": 27658
+    },
+    {
+      "path": "app/dist/_nuxt/b8803cb.js",
+      "sha256": "9be84e336d709c0683c04904e30d3da86f187d8b8380872fafccdaa5d24cf89b",
+      "bytes": 27374
+    },
+    {
+      "path": "app/dist/_nuxt/bbeefce.js",
+      "sha256": "af204f95596c71edc892c955b1d35b464dab296dda6fc64aa78ebc791a2b2415",
+      "bytes": 59904
+    },
+    {
+      "path": "app/dist/_nuxt/css/8964118.css",
+      "sha256": "292baf02af9ae76a958e3045b13432f52d93d6ad8836b969e4c688000168dddc",
+      "bytes": 16832
+    },
+    {
+      "path": "app/dist/_nuxt/css/c5e5d4f.css",
+      "sha256": "29a7e58af045ddb8f6ec39cb07ea16d4c5e33acbd5c32595e304c055e4822156",
+      "bytes": 37881
+    },
+    {
+      "path": "app/dist/_nuxt/de77a1a.js",
+      "sha256": "d0d2cd3a4b80baf204914f1b70ea3fc21902851fa8afbcc9deb3e1d1e9367374",
+      "bytes": 32949
+    },
+    {
+      "path": "app/dist/_nuxt/e0f34f2.js",
+      "sha256": "47c9b7281dd8387917e4c3d21d9f81039043f3515f2cc32b46dd1d645178a912",
+      "bytes": 12529
+    },
+    {
+      "path": "app/dist/_nuxt/e64ced5.js",
+      "sha256": "bb80d5998946d27db9d46a43a2952c9f4b59e473a3f2881e22f030e40be4be44",
+      "bytes": 9450
+    },
+    {
+      "path": "app/dist/_nuxt/e83657f.js",
+      "sha256": "b92f98809d4dfb667281daa2f62b2e4f2b4063bf9b6887cb6578b3199296d551",
+      "bytes": 13938
+    },
+    {
+      "path": "app/dist/_nuxt/e983f5e.js",
+      "sha256": "8d8431143ed024012f2df205c08a151324941968a01853e59d82fc321a83ef37",
+      "bytes": 28481
+    },
+    {
+      "path": "app/dist/_nuxt/eb77643.js",
+      "sha256": "4d0a2dfdcf01cee4981be8691e06d0f28d8c9991778fe78f19e6d237649e0155",
+      "bytes": 45967
+    },
+    {
+      "path": "app/dist/_nuxt/ed68d57.js",
+      "sha256": "c2535fbe0dd9fd35c90688259f85ccbed0116cdd83bcc07e6fe40e85cf5c9f4e",
+      "bytes": 13126
+    },
+    {
+      "path": "app/dist/_nuxt/f358181.js",
+      "sha256": "658c96f7895d8cc14b4f1467fc13bca9adabd1d93f22e74fc49dcbf8bf411008",
+      "bytes": 40804
+    },
+    {
+      "path": "app/dist/_nuxt/f78c3d1.js",
+      "sha256": "024134d1820c8be83bf39f59e0e248004500558c1d25921fec7716d3e8a8e58b",
+      "bytes": 11541
+    },
+    {
+      "path": "app/dist/_nuxt/fonts/materialdesignicons-subset.dbf2f4a.woff2",
+      "sha256": "b0ac5fd0b5d3c3e1d11c90c3c445c5f42e23f68f992a98799be0225bef187f79",
+      "bytes": 19384
+    },
+    {
+      "path": "app/dist/active/success/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/all-expected/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/book-reviews/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/books/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/imports/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/resources/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/settings/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/shares/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/syslog/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/takedowns/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/toolbox/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/trash/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/user-memos/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/users/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/admin/version/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/all/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/audiobooks/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/author/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/booklists/liked/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/booklists/mylists/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/booklists/publics/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/categories/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/expected/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/favorites/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/folder/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/history/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/install/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/language/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/login/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/logout/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/memos/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/opds-readme/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/printbooks/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/publisher/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/rating/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/read-done/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/reading/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/search/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/series/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/signup/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/soledbooks/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/starting/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/tag/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/audio_transcode/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/author_clean/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/author_norm/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/author_tools/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/book_dedup/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/bookbarn_acceptor/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/chinese_converter/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/epub_beautify/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/epub_fixer/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/epub_merge/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/epub_split/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/format_tools/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/formats_pruning/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/merge_formats_tool/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/mimo_tts/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/minify_pdf/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/rare_book_downloader/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/review_book_language/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/srt_tool/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/text_processor/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/text_replace/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/toolbox/txt_encoding_fixer/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/user/usersettings/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/visits/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/wants/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/webdav-readme/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    },
+    {
+      "path": "app/dist/welcome/index.html",
+      "sha256": "7688c245dd4abbae7c94562177176e4266cd21376206d4446ab7daaba269f0d5",
+      "bytes": 4901
+    }
+  ],
+  "dist_deleted": [
+    "app/dist/_nuxt/0159518.js",
+    "app/dist/_nuxt/088059c.js",
+    "app/dist/_nuxt/0ce0723.js",
+    "app/dist/_nuxt/0d5d35d.js",
+    "app/dist/_nuxt/0da8c81.js",
+    "app/dist/_nuxt/0f60a6d.js",
+    "app/dist/_nuxt/106116f.js",
+    "app/dist/_nuxt/15bb768.js",
+    "app/dist/_nuxt/187d697.js",
+    "app/dist/_nuxt/2148d24.js",
+    "app/dist/_nuxt/264288f.js",
+    "app/dist/_nuxt/2e0c7e4.js",
+    "app/dist/_nuxt/367e649.js",
+    "app/dist/_nuxt/37125b4.js",
+    "app/dist/_nuxt/3786716.js",
+    "app/dist/_nuxt/49e6afc.js",
+    "app/dist/_nuxt/4acc70d.js",
+    "app/dist/_nuxt/4bb9a4c.js",
+    "app/dist/_nuxt/5415305.js",
+    "app/dist/_nuxt/57fa72d.js",
+    "app/dist/_nuxt/6be67e1.js",
+    "app/dist/_nuxt/6fee79f.js",
+    "app/dist/_nuxt/771e015.js",
+    "app/dist/_nuxt/8ca0be0.js",
+    "app/dist/_nuxt/9c55493.js",
+    "app/dist/_nuxt/ac5e5fa.js",
+    "app/dist/_nuxt/acb2aac.js",
+    "app/dist/_nuxt/afbcf9d.js",
+    "app/dist/_nuxt/b266382.js",
+    "app/dist/_nuxt/bc8882b.js",
+    "app/dist/_nuxt/bd46ad1.js",
+    "app/dist/_nuxt/be70aa2.js",
+    "app/dist/_nuxt/bfae369.js",
+    "app/dist/_nuxt/c7c5ce7.js",
+    "app/dist/_nuxt/cca3d26.js",
+    "app/dist/_nuxt/css/56e3356.css",
+    "app/dist/_nuxt/css/e2d72f1.css",
+    "app/dist/_nuxt/d47bd1d.js",
+    "app/dist/_nuxt/df6a45a.js",
+    "app/dist/_nuxt/dfb7c0c.js",
+    "app/dist/_nuxt/e2cf14b.js",
+    "app/dist/_nuxt/e756273.js",
+    "app/dist/_nuxt/e849855.js",
+    "app/dist/_nuxt/e9cd461.js",
+    "app/dist/_nuxt/ec26e01.js",
+    "app/dist/_nuxt/fonts/materialdesignicons-subset.6f54acf.woff2"
+  ],
+  "reason": "包含前端产物与后端 Python 代码，可在线替换并重启服务；完成后请 Ctrl+Shift+R 强制刷新",
   "files": [
     {
-      "path": "webserver/base/audio_category_agg.py",
-      "sha256": "1de2e6a59c07a9035feefe6c9ed309060ec884d752ad78cbc3e390e64ab023f9",
-      "bytes": 14927
-    },
-    {
-      "path": "webserver/handlers/book.py",
-      "sha256": "1094927e822ad4fc1989b3819c37b02ab27984f7eebf019c797827ab73c15502",
-      "bytes": 247849
-    },
-    {
-      "path": "webserver/mcp/mcp_service.py",
-      "sha256": "ab0fd0423e3e54721c4520e9b81bd2e5c64d80fcfd2f19721532d1f4b0677755",
-      "bytes": 71271
-    },
-    {
-      "path": "webserver/services/ai_fillinfo.py",
-      "sha256": "ab3aa44b2088e78b81e079bb39f93b890deaa17c4418ce5b288b3ee3a8d43d37",
-      "bytes": 11525
-    },
-    {
-      "path": "webserver/services/scan_service.py",
-      "sha256": "8d0d9f4bb34f6dcdd732fe52bdb054314b94e15831e313c300013928f0ae3ed5",
-      "bytes": 146686
+      "path": "webserver/handlers/audio.py",
+      "sha256": "3435f38c755aa9a2f95fda3e6ab4ba33edb936707221340246627aa6e2c94639",
+      "bytes": 86007
     }
   ],
   "changed": {
     "hotfix": [
-      "webserver/base/audio_category_agg.py",
-      "webserver/handlers/book.py",
-      "webserver/mcp/mcp_service.py",
-      "webserver/services/ai_fillinfo.py",
-      "webserver/services/scan_service.py"
+      "webserver/handlers/audio.py"
     ],
-    "dist": [],
-    "appsrc": [],
+    "dist": [
+      "app/dist/200.html",
+      "app/dist/ListBook/index.html",
+      "app/dist/ListMeta/index.html",
+      "app/dist/_nuxt/0159518.js",
+      "app/dist/_nuxt/060e196.js",
+      "app/dist/_nuxt/088059c.js",
+      "app/dist/_nuxt/0ce0723.js",
+      "app/dist/_nuxt/0d5d35d.js",
+      "app/dist/_nuxt/0da8c81.js",
+      "app/dist/_nuxt/0f60a6d.js",
+      "app/dist/_nuxt/1031ff2.js",
+      "app/dist/_nuxt/106116f.js",
+      "app/dist/_nuxt/15bb768.js",
+      "app/dist/_nuxt/187d697.js",
+      "app/dist/_nuxt/1d08e83.js",
+      "app/dist/_nuxt/2148d24.js",
+      "app/dist/_nuxt/264288f.js",
+      "app/dist/_nuxt/2a1d528.js",
+      "app/dist/_nuxt/2d885b8.js",
+      "app/dist/_nuxt/2dba3af.js",
+      "app/dist/_nuxt/2e0c7e4.js",
+      "app/dist/_nuxt/367e649.js",
+      "app/dist/_nuxt/37125b4.js",
+      "app/dist/_nuxt/3786716.js",
+      "app/dist/_nuxt/39fce60.js",
+      "app/dist/_nuxt/3d00932.js",
+      "app/dist/_nuxt/3d9a0b2.js",
+      "app/dist/_nuxt/3eae639.js",
+      "app/dist/_nuxt/4408628.js",
+      "app/dist/_nuxt/49e6afc.js",
+      "app/dist/_nuxt/4acc70d.js",
+      "app/dist/_nuxt/4bb9a4c.js",
+      "app/dist/_nuxt/4bd5f9a.js",
+      "app/dist/_nuxt/518d11f.js",
+      "app/dist/_nuxt/5415305.js",
+      "app/dist/_nuxt/57fa72d.js",
+      "app/dist/_nuxt/5acf081.js",
+      "app/dist/_nuxt/61639b3.js",
+      "app/dist/_nuxt/6651a3e.js",
+      "app/dist/_nuxt/677d8c4.js",
+      "app/dist/_nuxt/6ae6970.js",
+      "app/dist/_nuxt/6b08255.js",
+      "app/dist/_nuxt/6be67e1.js",
+      "app/dist/_nuxt/6fee79f.js",
+      "app/dist/_nuxt/771e015.js",
+      "app/dist/_nuxt/77a69a7.js",
+      "app/dist/_nuxt/7bdbc8d.js",
+      "app/dist/_nuxt/8350c46.js",
+      "app/dist/_nuxt/858ab95.js",
+      "app/dist/_nuxt/8654dc4.js",
+      "app/dist/_nuxt/87e8701.js",
+      "app/dist/_nuxt/8ca0be0.js",
+      "app/dist/_nuxt/9035f98.js",
+      "app/dist/_nuxt/94f57f2.js",
+      "app/dist/_nuxt/9c55493.js",
+      "app/dist/_nuxt/9fd444d.js",
+      "app/dist/_nuxt/LICENSES",
+      "app/dist/_nuxt/a2dab91.js",
+      "app/dist/_nuxt/a3bcba1.js",
+      "app/dist/_nuxt/a3cf4cd.js",
+      "app/dist/_nuxt/ac5e5fa.js",
+      "app/dist/_nuxt/acb2aac.js",
+      "app/dist/_nuxt/afbcf9d.js",
+      "app/dist/_nuxt/b266382.js",
+      "app/dist/_nuxt/b4e5f3b.js",
+      "app/dist/_nuxt/b8803cb.js",
+      "app/dist/_nuxt/bbeefce.js",
+      "app/dist/_nuxt/bc8882b.js",
+      "app/dist/_nuxt/bd46ad1.js",
+      "app/dist/_nuxt/be70aa2.js",
+      "app/dist/_nuxt/bfae369.js",
+      "app/dist/_nuxt/c7c5ce7.js",
+      "app/dist/_nuxt/cca3d26.js",
+      "app/dist/_nuxt/css/56e3356.css",
+      "app/dist/_nuxt/css/8964118.css",
+      "app/dist/_nuxt/css/c5e5d4f.css",
+      "app/dist/_nuxt/css/e2d72f1.css",
+      "app/dist/_nuxt/d47bd1d.js",
+      "app/dist/_nuxt/de77a1a.js",
+      "app/dist/_nuxt/df6a45a.js",
+      "app/dist/_nuxt/dfb7c0c.js",
+      "app/dist/_nuxt/e0f34f2.js",
+      "app/dist/_nuxt/e2cf14b.js",
+      "app/dist/_nuxt/e64ced5.js",
+      "app/dist/_nuxt/e756273.js",
+      "app/dist/_nuxt/e83657f.js",
+      "app/dist/_nuxt/e849855.js",
+      "app/dist/_nuxt/e983f5e.js",
+      "app/dist/_nuxt/e9cd461.js",
+      "app/dist/_nuxt/eb77643.js",
+      "app/dist/_nuxt/ec26e01.js",
+      "app/dist/_nuxt/ed68d57.js",
+      "app/dist/_nuxt/f358181.js",
+      "app/dist/_nuxt/f78c3d1.js",
+      "app/dist/_nuxt/fonts/materialdesignicons-subset.6f54acf.woff2",
+      "app/dist/_nuxt/fonts/materialdesignicons-subset.dbf2f4a.woff2",
+      "app/dist/active/success/index.html",
+      "app/dist/admin/all-expected/index.html",
+      "app/dist/admin/book-reviews/index.html",
+      "app/dist/admin/books/index.html",
+      "app/dist/admin/imports/index.html",
+      "app/dist/admin/resources/index.html",
+      "app/dist/admin/settings/index.html",
+      "app/dist/admin/shares/index.html",
+      "app/dist/admin/syslog/index.html",
+      "app/dist/admin/takedowns/index.html",
+      "app/dist/admin/toolbox/index.html",
+      "app/dist/admin/trash/index.html",
+      "app/dist/admin/user-memos/index.html",
+      "app/dist/admin/users/index.html",
+      "app/dist/admin/version/index.html",
+      "app/dist/all/index.html",
+      "app/dist/audiobooks/index.html",
+      "app/dist/author/index.html",
+      "app/dist/booklists/liked/index.html",
+      "app/dist/booklists/mylists/index.html",
+      "app/dist/booklists/publics/index.html",
+      "app/dist/categories/index.html",
+      "app/dist/expected/index.html",
+      "app/dist/favorites/index.html",
+      "app/dist/folder/index.html",
+      "app/dist/history/index.html",
+      "app/dist/index.html",
+      "app/dist/install/index.html",
+      "app/dist/language/index.html",
+      "app/dist/login/index.html",
+      "app/dist/logout/index.html",
+      "app/dist/memos/index.html",
+      "app/dist/opds-readme/index.html",
+      "app/dist/printbooks/index.html",
+      "app/dist/publisher/index.html",
+      "app/dist/rating/index.html",
+      "app/dist/read-done/index.html",
+      "app/dist/reading/index.html",
+      "app/dist/search/index.html",
+      "app/dist/series/index.html",
+      "app/dist/signup/index.html",
+      "app/dist/soledbooks/index.html",
+      "app/dist/starting/index.html",
+      "app/dist/tag/index.html",
+      "app/dist/toolbox/audio_transcode/index.html",
+      "app/dist/toolbox/author_clean/index.html",
+      "app/dist/toolbox/author_norm/index.html",
+      "app/dist/toolbox/author_tools/index.html",
+      "app/dist/toolbox/book_dedup/index.html",
+      "app/dist/toolbox/bookbarn_acceptor/index.html",
+      "app/dist/toolbox/chinese_converter/index.html",
+      "app/dist/toolbox/epub_beautify/index.html",
+      "app/dist/toolbox/epub_fixer/index.html",
+      "app/dist/toolbox/epub_merge/index.html",
+      "app/dist/toolbox/epub_split/index.html",
+      "app/dist/toolbox/format_tools/index.html",
+      "app/dist/toolbox/formats_pruning/index.html",
+      "app/dist/toolbox/merge_formats_tool/index.html",
+      "app/dist/toolbox/mimo_tts/index.html",
+      "app/dist/toolbox/minify_pdf/index.html",
+      "app/dist/toolbox/rare_book_downloader/index.html",
+      "app/dist/toolbox/review_book_language/index.html",
+      "app/dist/toolbox/srt_tool/index.html",
+      "app/dist/toolbox/text_processor/index.html",
+      "app/dist/toolbox/text_replace/index.html",
+      "app/dist/toolbox/txt_encoding_fixer/index.html",
+      "app/dist/user/usersettings/index.html",
+      "app/dist/visits/index.html",
+      "app/dist/wants/index.html",
+      "app/dist/webdav-readme/index.html",
+      "app/dist/welcome/index.html"
+    ],
+    "appsrc": [
+      "app/src/assets/css/mdi-subset.css",
+      "app/src/assets/fonts/materialdesignicons-subset.woff2",
+      "app/src/pages/audio/_id.vue"
+    ],
     "blocking": [],
     "docs": [
-      "CHANGELOG.md",
-      "tests/test_audio_agg_category_change.py",
-      "tests/test_audio_category_agg.py",
-      "tests/test_category_change_notify_contract.py"
+      "tests/test_audio_replace_contract.py"
     ]
   },
   "deploy_commands": [
     "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.6.0-build.27-r38.tar.gz.sha256",
+    "sha256sum -c audiobook-deploy-4.6.0-build.27-r39.tar.gz.sha256",
     "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
     "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.6.0-build.27-r38.tar.gz",
+    "tar -xzf audiobook-deploy-4.6.0-build.27-r39.tar.gz",
     "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }
