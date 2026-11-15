@@ -1149,6 +1149,108 @@ class AudioDelete(BaseHandler):
             return {"err": "server.error", "msg": str(e)}
 
 
+def _atomic_write_file(dst, body):
+    """把 body 原子覆盖已存在的 dst，并保留原文件的属主与权限。
+
+    临时文件与目标同目录，``os.replace`` 是原子操作：不会留下写了一半的文件，
+    也不会因为替换中途失败把原文件弄丢。
+    """
+    st = os.stat(dst)
+    tmp = os.path.join(os.path.dirname(dst), ".replace-%s.tmp" % uuid.uuid4().hex)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp, st.st_mode & 0o7777)
+        except OSError:
+            pass
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except (OSError, AttributeError):
+            pass
+        os.replace(tmp, dst)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+
+
+class AudioReplace(BaseHandler):
+    """替换单个音频章节：只覆盖文件内容，文件名保持不变。
+
+    此前站点只能「删整本音频」或「重新导入」，而导入对同名文件是纯增量
+    （``_copy_or_convert_file`` 遇到已存在目标直接 return），某一章文件损坏时
+    用户只能去 NAS 的文件管理器里手动覆盖。这里补上站内入口。
+
+    安全口径：目标必须是 .audio/ 里**已存在**的音频文件名，且上传文件扩展名
+    与之一致；不接受任何路径成分，避免构造 ../../ 覆盖书库里的其它文件。
+    """
+    # 单章一般几十 MB；设上限防止误传超大文件把数据盘写满。
+    MAX_BYTES = 300 * 1024 * 1024
+
+    @js
+    @is_admin
+    def post(self, book_id):
+        if not self.is_admin():
+            return {"err": "permission.not_admin", "msg": _("只有管理员可以替换音频文件")}
+        try:
+            book_id = int(book_id)
+        except (TypeError, ValueError):
+            return {"err": "params.invalid", "msg": _("无效的书籍ID")}
+
+        target = urllib.parse.unquote(self.get_argument("filename", ""))
+        if (not target or target != os.path.basename(target)
+                or ".." in target or "/" in target or "\\" in target):
+            return {"err": "params.invalid", "msg": _("无效的音频文件名")}
+        ext = os.path.splitext(target)[1].lower()
+        if ext not in tuple(SUPPORTED_AUDIO_FORMATS):
+            return {"err": "file.invalid_format", "msg": _("目标不是支持的音频格式")}
+
+        audio_dir, _legacy = resolve_audio_dir(self.calibre_db, book_id)
+        if not audio_dir or not os.path.isdir(audio_dir):
+            return {"err": "audio.not_found", "msg": _("未找到音频目录")}
+        dst = os.path.join(audio_dir, target)
+        if not os.path.isfile(dst):
+            return {"err": "audio.not_found", "msg": _("未找到要替换的音频文件")}
+
+        files = self.request.files.get("file")
+        if not files:
+            return {"err": "params.missing", "msg": _("未找到上传的音频文件")}
+        uploaded = files[0]
+        up_ext = os.path.splitext(uploaded.get("filename") or "")[1].lower()
+        body = uploaded.get("body") or b""
+        if up_ext != ext:
+            return {
+                "err": "file.invalid_format",
+                "msg": _("上传文件必须与原音频格式一致（%s）") % ext,
+            }
+        # get_audios() 会忽略 <=1KB 的文件，传个空壳等于把这一章弄消失
+        if len(body) <= 1024:
+            return {"err": "file.too_small", "msg": _("音频文件过小，可能不完整")}
+        if len(body) > self.MAX_BYTES:
+            return {"err": "file.too_large", "msg": _("音频文件不能超过 300MB")}
+
+        try:
+            _atomic_write_file(dst, body)
+        except OSError as err:
+            logging.error("[AUDIO_REPLACE] failed for %s: %s", dst, err)
+            return {"err": "server.error", "msg": _("替换音频文件失败: %s") % err}
+
+        logging.info("[AUDIO_REPLACE] book=%s file=%s size=%s",
+                     book_id, target, len(body))
+        # 文件集合没变（这本书仍然「有音频」），AudioBooksCache 与分类聚合都
+        # 无需失效；章节列表是实时 os.listdir，前端给 url 加 ?v= 破浏览器缓存即可。
+        return {
+            "err": "ok",
+            "msg": _("音频已替换，请强制刷新页面（Ctrl+Shift+R）"),
+            "data": {"filename": target, "size": len(body)},
+        }
+
+
 class AudioFile(BaseHandler):
     # 异步读盘的分块大小：太大占用内存，太小增加线程池往返次数
     STREAM_CHUNK_SIZE = 128 * 1024
@@ -1851,6 +1953,7 @@ def routes():
         (r"/api/audio/([0-9]+)/conversion", AudioConversion),
         (r"/api/audio/([0-9]+)/cancel", AudioConversionCancel),
         (r"/api/audio/([0-9]+)/delete", AudioDelete),
+        (r"/api/audio/([0-9]+)/replace", AudioReplace),  # 替换单个损坏章节（须在 /([^/]+) 之前）
         (r"/api/audio/([0-9]+)/purchase", AudioPurchase),  # 音频购买接口
         (r"/api/audio/([0-9]+)/progress", AudioPlaybackProgress),  # 播放进度（跨设备续播）
         (r"/api/audiobooks/categories", AudioBookCategories),  # 有声书页分类 tab（须在 /api/audiobooks 之前注册）

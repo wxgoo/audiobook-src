@@ -642,6 +642,10 @@
   content: "\F0226";
 }
 
+.mdi-file-replace-outline::before {
+  content: "\F0B33";
+}
+
 .mdi-file-star-outline::before {
   content: "\F103B";
 }

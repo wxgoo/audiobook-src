@@ -128,6 +128,16 @@
             <v-icon v-else-if="currentTrackIndex === index && isPlaying" color="primary">
               mdi-volume-high
             </v-icon>
+            <v-btn
+              v-if="isAdmin"
+              icon
+              x-small
+              class="replace-track-btn"
+              title="替换此音频文件"
+              @click.stop="openReplaceDialog(index, audio)"
+            >
+              <v-icon small>mdi-file-replace-outline</v-icon>
+            </v-btn>
           </div>
         </div>
 
@@ -397,6 +407,37 @@
       <p>{{ $t('audio.cancelGenDescription', { title: book.title }) }}</p>
     </AppDialog>
 
+    <!-- 替换损坏的音频章节：只覆盖内容，文件名与播放顺序保持不变 -->
+    <v-dialog v-model="showReplaceDialog" max-width="520" :persistent="replaceLoading">
+      <v-card>
+        <v-card-title class="headline">替换音频 · 第 {{ replaceIndex + 1 }} 集</v-card-title>
+        <v-card-text>
+          <p class="mb-2">
+            选择修好的音频文件，将覆盖 <strong>{{ replaceFilename }}</strong>。
+            文件名、章节顺序与播放进度都不变。
+          </p>
+          <input
+            ref="replaceFileInput"
+            type="file"
+            :accept="replaceAccept"
+            class="mt-2"
+            @change="onReplaceFilePicked"
+          />
+          <p v-if="replaceError" class="red--text mt-3 mb-0">{{ replaceError }}</p>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text :disabled="replaceLoading" @click="closeReplaceDialog">取消</v-btn>
+          <v-btn
+            color="primary"
+            :loading="replaceLoading"
+            :disabled="!replaceFile"
+            @click="submitReplace"
+          >替换</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- 重新生成：语音选择 + 确认 -->
     <AppDialog
       v-model="showRegenerateDialog"
@@ -552,7 +593,15 @@ export default {
       showRegenerateDialog: false,
       regenerateLoading: false,
       voiceName: 'zh-CN-XiaoxiaoNeural',
-      audioPollTimer: null
+      audioPollTimer: null,
+
+      // 替换损坏章节
+      showReplaceDialog: false,
+      replaceIndex: -1,
+      replaceFilename: '',
+      replaceFile: null,
+      replaceError: '',
+      replaceLoading: false
     };
   },
 
@@ -561,6 +610,12 @@ export default {
     // 另外必须要有 EPUB/TXT，否则后端无从转换。
     isAdmin() {
       return !!this.$store.state.user && this.$store.state.user.is_admin === true;
+    },
+
+    // 只允许选与原章节同格式的文件，避免换了内容却播不了
+    replaceAccept() {
+      const m = String(this.replaceFilename).match(/\.[^.]+$/);
+      return m ? m[0].toLowerCase() : 'audio/*';
     },
 
     canRegenerate() {
@@ -1962,6 +2017,75 @@ export default {
       }
     },
 
+    // ===== 替换损坏的音频章节 =====
+    // 后端 /audio/<id>/replace 只覆盖内容、不改文件名；章节列表实时读盘，
+    // 但 AudioFile 带 max-age=3600，替换后给 url 加 ?v= 才能立刻听到新文件。
+    openReplaceDialog(index, audio) {
+      const path = String((audio && audio.url) || '').split('?')[0];
+      let filename = '';
+      try {
+        filename = decodeURIComponent(path.split('/').pop() || '');
+      } catch (e) {
+        filename = path.split('/').pop() || '';
+      }
+      if (!filename) {
+        this.$alert('error', '无法识别该音频文件');
+        return;
+      }
+      this.replaceIndex = index;
+      this.replaceFilename = filename;
+      this.replaceFile = null;
+      this.replaceError = '';
+      this.showReplaceDialog = true;
+      this.$nextTick(() => {
+        if (this.$refs.replaceFileInput) {
+          this.$refs.replaceFileInput.value = '';
+        }
+      });
+    },
+
+    closeReplaceDialog() {
+      if (this.replaceLoading) return;
+      this.showReplaceDialog = false;
+    },
+
+    onReplaceFilePicked(event) {
+      const files = (event.target && event.target.files) || [];
+      this.replaceFile = files[0] || null;
+      this.replaceError = '';
+    },
+
+    async submitReplace() {
+      if (!this.replaceFile || this.replaceIndex < 0 || !this.bookId) return;
+      this.replaceLoading = true;
+      this.replaceError = '';
+      try {
+        const form = new FormData();
+        form.append('filename', this.replaceFilename);
+        form.append('file', this.replaceFile);
+        const response = await this.$backend(`/audio/${this.bookId}/replace`, {
+          method: 'POST',
+          body: form
+        });
+        if (!response || response.err !== 'ok') {
+          this.replaceError = (response && response.msg) || '替换失败';
+          return;
+        }
+        const item = this.audioFiles[this.replaceIndex];
+        if (item) {
+          const base = String(item.url || '').split('?')[0];
+          this.$set(item, 'url', `${base}?v=${Date.now()}`);
+        }
+        this.showReplaceDialog = false;
+        this.$alert('success', '音频已替换，请按 Ctrl+Shift+R 强制刷新');
+      } catch (error) {
+        console.error('Replace audio error:', error);
+        this.replaceError = '替换请求失败，请检查文件大小与网络';
+      } finally {
+        this.replaceLoading = false;
+      }
+    },
+
     // ===== 取消生成 / 重新生成 =====
     // 详情页那个有声书弹窗已整体下线（它与播放页各存一套进度、口径还对不上，
     // 反复修都在互相打架）。生成、取消、删除三种操作统一收到播放页这一处。
@@ -2428,6 +2552,11 @@ export default {
 
 .playlist-item:hover {
   background-color: #404040;
+}
+
+.replace-track-btn {
+  flex-shrink: 0;
+  margin-left: 4px;
 }
 
 .playlist-item.active {
