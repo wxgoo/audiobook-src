@@ -2,20 +2,20 @@
 # -*- coding: utf-8 -*-
 """版本锁检查（防版本回退 / 防被交付标签覆盖）。
 
-背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.27`，语义是
-「上游 mybooks 已发布 tag 4.6.0 + 第 27 次本地构建」。旧的 4.8.x 号段已封存，
-与 4.6.0-build.27 是纯号段重置，不对应任何版本先后关系（详见 README 对照表）。
+背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.28`，语义是
+「上游 mybooks 已发布 tag 4.6.0 + 第 28 次本地构建」。旧的 4.8.x 号段已封存，
+与 4.6.0-build.28 是纯号段重置，不对应任何版本先后关系（详见 README 对照表）。
 
 本检查把这条约定变成显式断言：任何一处被回退（写回 4.8.x / 写回裸 4.6.0）、
 被交付标签顶掉、或被构建参数写成空串，都会直接失败。
 
-注意：`4.6.0-build.27` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.6.0`。
+注意：`4.6.0-build.28` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.6.0`。
 本程序不发布 npm 包、package.json 无 `engines` 校验，因此该排序差异无实际影响；
 同一上游基线的本地构建之间用 `build.N` 区分，版本检测不能只靠 `>` 比较，须比较 `build.N` 段。
 
 用法：
     python3 scripts/check-version-lock.py [--root <仓库或发布包根目录>]
-    python3 scripts/check-version-lock.py --set 4.6.0-build.27   # 一条命令改全部载体
+    python3 scripts/check-version-lock.py --set 4.6.0-build.28   # 一条命令改全部载体
 
 退出码：0 全部通过；1 有断言失败。
 
@@ -31,8 +31,8 @@ import re
 import sys
 from pathlib import Path
 
-VERSION_LOCK = "4.6.0-build.27"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
-PKG_VERSION_LOCK = "4.6.0-build.27"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
+VERSION_LOCK = "4.6.0-build.28"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
+PKG_VERSION_LOCK = "4.6.0-build.28"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
 
 def _why():
     """从 VERSION_LOCK 派生，--set 后同一进程内自动一致，无需手工同步。"""
@@ -154,24 +154,54 @@ def main() -> int:
     except FileNotFoundError as e:
         bad("version.py", "文件缺失 %s" % e, "从仓库恢复 webserver/version.py")
 
-    # 2) docker-compose.yml 的 GIT_VERSION
+    # 2) docker-compose.yml 的版本口径
+    #    两种部署形态都要支持：
+    #    a) 本地构建形态（有 build 段）：GIT_VERSION 必须与运行期版本一致，
+    #       否则 Dockerfile 会把 version.py 写成空串或错值。
+    #    b) 纯镜像形态（只有 image:，与上游一致）：版本由**镜像内**的 version.py 决定，
+    #       compose 不参与注入。此时要求 image 指向一个带版本号的成品镜像 tag，
+    #       并检查该 tag 里的构建号段与运行期版本一致（修订号 -rN 允许不同）。
     try:
         comp = read(root, "docker-compose.yml")
+        has_build = re.search(r'^[ \t]*build\s*:', comp, re.M) is not None
         hits = re.findall(r'^[ \t]*GIT_VERSION:\s*"?([^"\n]*)"?[ \t]*$', comp, re.M)
-        if not hits:
-            bad("docker-compose.yml", "没有 GIT_VERSION 构建参数（Dockerfile 会把 version.py 写成空串）",
-                "在 build.args 下加 GIT_VERSION: \"%s\"" % VERSION_LOCK)
-        elif len(hits) > 1:
-            bad("docker-compose.yml", "GIT_VERSION 出现 %d 次，口径不唯一" % len(hits),
-                "只保留一处 GIT_VERSION: \"%s\"" % VERSION_LOCK)
-        elif hits[0].strip() == "":
-            bad("docker-compose.yml", "GIT_VERSION 为空（会把运行期版本顶成空串）",
-                "填 GIT_VERSION: \"%s\"" % VERSION_LOCK)
-        elif hits[0].strip() != VERSION_LOCK:
-            bad("docker-compose.yml", "GIT_VERSION=%r，应为 %r" % (hits[0].strip(), VERSION_LOCK),
-                "改回 GIT_VERSION: \"%s\"；分支名、旧 4.8.x、裸 4.6.0 都不要写进构建参数" % VERSION_LOCK)
+        if has_build:
+            if not hits:
+                bad("docker-compose.yml", "没有 GIT_VERSION 构建参数（Dockerfile 会把 version.py 写成空串）",
+                    "在 build.args 下加 GIT_VERSION: \"%s\"" % VERSION_LOCK)
+            elif len(hits) > 1:
+                bad("docker-compose.yml", "GIT_VERSION 出现 %d 次，口径不唯一" % len(hits),
+                    "只保留一处 GIT_VERSION: \"%s\"" % VERSION_LOCK)
+            elif hits[0].strip() == "":
+                bad("docker-compose.yml", "GIT_VERSION 为空（会把运行期版本顶成空串）",
+                    "填 GIT_VERSION: \"%s\"" % VERSION_LOCK)
+            elif hits[0].strip() != VERSION_LOCK:
+                bad("docker-compose.yml", "GIT_VERSION=%r，应为 %r" % (hits[0].strip(), VERSION_LOCK),
+                    "改回 GIT_VERSION: \"%s\"；分支名、旧 4.8.x、裸 4.6.0 都不要写进构建参数" % VERSION_LOCK)
+            else:
+                ok("docker-compose.yml", 'GIT_VERSION = "%s"' % VERSION_LOCK)
         else:
-            ok("docker-compose.yml", 'GIT_VERSION = "%s"' % VERSION_LOCK)
+            # 纯镜像形态：检查 image 行带版本号，且构建号段与运行期版本对得上
+            imgs = re.findall(r'^[ \t]*image\s*:\s*"?([^"\n]+)"?[ \t]*$', comp, re.M)
+            if not imgs:
+                bad("docker-compose.yml", "既没有 build 段也没有 image 行，无法确定用哪个镜像",
+                    "写 image: ghcr.io/wxgoo/audiobooks:<版本号>")
+            else:
+                tag = imgs[0].strip()
+                # 允许 ${IMAGE_TAG:-默认tag} 这种带默认值的写法：取花括号里的默认值
+                m = re.search(r'\$\{IMAGE_TAG:-([^}]+)\}', tag)
+                if m:
+                    tag = m.group(1).strip()
+                # 镜像 tag 形如 4.6.0-build.27-r41：构建号段必须与运行期版本一致
+                mb = re.search(r'build\.(\d+)', tag)
+                if not mb:
+                    bad("docker-compose.yml", "镜像 tag %r 里没有构建号，无法校验版本口径" % tag,
+                        "写成 ghcr.io/wxgoo/audiobooks:%s-r<修订号>" % VERSION_LOCK)
+                elif mb.group(1) != VERSION_LOCK.rsplit("build.", 1)[-1]:
+                    bad("docker-compose.yml", "镜像 tag %r 的构建号与运行期版本 %r 不一致" % (tag, VERSION_LOCK),
+                        "换成本版镜像 tag（构建号 %s）" % VERSION_LOCK.rsplit("build.", 1)[-1])
+                else:
+                    ok("docker-compose.yml", "image = %s（构建号与运行期版本一致）" % tag)
     except FileNotFoundError as e:
         bad("docker-compose.yml", "文件缺失 %s" % e, "从仓库恢复 docker-compose.yml")
 

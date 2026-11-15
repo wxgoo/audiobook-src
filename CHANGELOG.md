@@ -1,4 +1,7 @@
-# 变更日志（CHANGELOG）
+# 历史变革（CHANGELOG）
+
+> 本文件是项目的**唯一历史与排障档案**：逐版变更、修复原因与验证方式在正文（按修订号倒序），
+> 历史排错文档的完整证据链在文末「附录：排障实录」。当前安装方式与功能见 [`README.md`](README.md)。
 
 本项目的版本号规则：**`<上游 mybooks tag>-build.<自建构建号>`**，当前版本 **`4.6.0-build.27`**。
 上游基线：mybooks tag `4.6.0`（2026-10-25，commit `3c5947c`）。
@@ -13,6 +16,104 @@
 
 > 更早的变更记录（`4.6.0-build.21` 及以前、旧编号时代）已精简归档，
 > 完整历史见 git 提交记录（`git log`）。
+
+---
+
+## 4.6.0-build.28-r42（2026-11-16，**镜像级变更，须重建镜像**，含文档重构）
+
+本次是**安装口径与文档体系的一次性对齐**，加上两个 bug 修复与一个功能显性化。
+运行期版本升到 `4.6.0-build.28`（八处版本载体由 `scripts/check-version-lock.py --set` 统一改写）。
+
+### ① 文档体系收敛为两份（本次最大动作）
+
+**只保留**：
+
+| 文件 | 定位 |
+| --- | --- |
+| [`README.md`](README.md) | **唯一安装 / 使用文档**：GHCR + 纯 `image:` compose、`.env` 三项、数据与备份、升级、功能清单 |
+| [`CHANGELOG.md`](CHANGELOG.md) | **唯一历史与排障档案**：逐版变更（倒序）+ 文末「附录：排障实录」 |
+
+**已删除**（内容要么过时、要么已并入上面两份）：
+
+- `docs/` 整个目录（38 个文件）：部署包说明、部署方式速查、操作总纲、在线更新说明、备份与恢复演练、
+  NAS-Docker 缓存池手册、开发指南、上游比对与跟进、待修复项、目录功能说明、支持的图书格式、
+  版权下架说明、字幕生成与播放、HTTPS 真证书申请、MCP/Skill 上手卡、`docs/archive/` 全量；
+- `INSTALL_GUIDE.md`（1526 行）：Windows 部署、源码构建、legacy builder 避坑等内容已过时，
+  其**功能章节**（读者组、音频转写、有声书挂靠、MyReader）与**排错章节**分别并入 README 与本文件附录；
+- `delivery/` 旧 NAS 交付目录（all-in-one.patch、各 zip、overlay 冻结快照）：上一代「构建包」体系产物，
+  与现在的成品镜像方式无关；
+- `scripts/watch-upstream.py`（引用的 `docs/upstream-baseline.json` 从未存在，功能已废）；
+- `scripts/install-online.sh` + 其契约测试（「从 Gitee 在线取包再本地构建」路线，与 GHCR 拉镜像冲突）；
+- `apply_radio_fix.py`（一次性修复脚本，无引用）。
+
+**排错内容并入历史变革**：原三篇独立排错文档（`故障复盘-所有书籍首屏空白`、`故障复盘-读者组转圈`、
+`故障复盘-豆瓣v1残留500`）全文并入本文件文末「附录：排障实录」，**保留完整证据链与走过的弯路**，
+按现象检索即可。
+
+### ② 安装口径改为与上游一致（纯 image，无 build）
+
+`docker-compose.yml` 与 `.env.example` 从「本地 build + `mybooks-local:latest`」改为
+**成品镜像 + 只有 `image:`**（`${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:4.6.0-build.28-r42}`）：
+
+- 交付给别人时不需要 clone 源码、不需要在本机构建，也就不再出现
+  `layer does not exist`（legacy builder + btrfs 的老 NAS 事故）；
+- 仓库根 compose 此前是「作者本机自建」口径，与实际给别人的交付包口径**长期不一致**——本次统一；
+- `scripts/check-version-lock.py` 的 compose 检查随之分两种形态：
+  有 `build:` 段 → 查 `GIT_VERSION` 与运行期版本一致；只有 `image:` → 查镜像 tag 的构建号段一致。
+
+### ③ 修 bug：非管理员看不到友情链接
+
+- **根因**：前端用 `showItem("friends")` 决定友链分组显隐，它依赖 `sys.sidebar_items`；
+  而 `SIDEBAR_ITEMS` 在「管理员保存过设置页 + 存下的列表恰好是旧默认（缺 friends/authors/booklists）」时，
+  会被 `SIDEBAR_ITEMS_MIGRATED` 标记判成「管理员主动取消勾选」而原样返回，**friends 被永久吞掉**。
+  这与用户身份无关，前台所有用户都看不到。
+- **修法**：友链显隐**解耦**出 `SIDEBAR_ITEMS`，改由独立站点开关 `ENABLE_FRIEND_LINKS`（默认 True）
+  决定，经 `sys.allow.friend_links` 下发；前端用
+  `allow.friend_links ?? showItem("friends")` 判显隐——新后端走独立开关，老后端回退旧逻辑（兼容）。
+- 设置页新增「显示友情链接」开关（站点与外观区），三套 locale 同步补文案；
+  `ENABLE_FRIEND_LINKS` 已进 `PERSISTABLE_KEYS` / `ADMIN_SETTING_KEYS` 白名单，不会被无关保存抹掉。
+- 新增 `tests/test_friend_links_visibility.py`（4 例）锁定：缺省为真、显式关为假、
+  与 sidebar 迁移彻底解耦、前端走独立开关。
+
+### ④ 图书类型互转（电子书 ⇄ 实体书）显性化
+
+- 该功能**其实早已完整存在**（后端 `BookExchangeType` + `/api/book/exchange_type`、
+  前端对话框与批量处理菜单入口、`ENABLE_BOOKS_TYPE_CONVERT_DIRECT` 开关），
+  但入口藏在「批量处理」折叠菜单里、且需先勾选书才能点，因此一直像「没引用」。
+- 本次在图书管理页工具栏**新增独立橙色按钮**「图书类型互转」（选中书后出现，实体书功能开启时显示），
+  与菜单入口复用同一对话框与方法；README 已写明入口位置与「无 ISBN / 已有电子书格式默认跳过」的规则，
+  以及想直接转就去设置里打开「允许直接转换类型」。
+
+### ⑤ 镜像 OCI label 改回自己的口径
+
+`Dockerfile` 的 `org.opencontainers.image.*` 原本指向**上游** `PoxenStudio/mybooks`
+（`vendor=PoxenStudio`、`source=https://github.com/PoxenStudio/mybooks`），
+GHCR 包页面 Details 里有一部分字段就是取自它，会误导看包的人。现在改为：
+
+- `vendor=wxgoo`、`source`/`url`/`documentation` → `https://github.com/wxgoo/audiobook-src`
+- `title=mybooks (audiobook 定制版)`，补 `description`；`Author` 改为 wxgoo，`Thanks` 保留上游致谢。
+
+> label 只能在**构建时**写入，所以这次随新版镜像一起生效；不必为它单独重建已有镜像。
+
+### ⑥ 顺手清掉的口径残留
+
+- `version_check.py` / `gen-update-manifest.py` 里「请重新执行 deploy.sh / upgrade.sh」的提示
+  改为「把 `.env` 的 IMAGE_TAG 换成新 tag 后重新 `docker compose up -d`」；
+- `gen-update-manifest.py` 的 `DOCS_EXACT` 去掉已删的 `INSTALL_GUIDE.md`；
+- `tools/category_backfill.py`、`scripts/upstream/patch_tool.py`、`scripts/README.md`、
+  `.claude/memory/MEMORY.md`、`CLAUDE.md` 里指向已删文档的链接全部改指 README / CHANGELOG。
+
+### 验证
+
+- `pytest tests/`：**2282 passed**（另有 22 failed + 224 errors 属**基线环境问题**：
+  缺 `social_tornado` / calibre / MCP 依赖，与本次改动无关；装 `social-auth-app-tornado` 会与项目
+  models 的 `social_auth_usersocialauth` 表定义冲突，制造 224 个假 error，**不要装**）；
+- 新增与受影响的针对性用例 **60 passed**（友链可见性、sidebar 迁移、sys_info、安装入口契约、清单白名单）；
+- `app` 前端 `npm run generate` 重新出 dist（768 文件 / 143 个 `_nuxt` chunk），
+  `npm run lint` 0 error；dist 关键路由页与友链开关均在产物中；
+- `scripts/check-version-lock.py` 八处载体全绿。
+
+---
 
 ---
 
@@ -1584,3 +1685,1201 @@ git 里这些链接的 mode 是 `120000`（仓库本身是对的），**但从 W
       存量站点一律不覆盖，需要更换由管理员手工覆盖或后台选图上传。
 
 版本锁九处载体已由 `check-version-lock.py --set` 同步升号；CHANGELOG 本条为人工补写。
+
+
+---
+
+## 附录：排障实录（历史排错文档并入）
+
+> 以下为历史上三篇独立排错文档的原文，按用户要求并入「历史变革」。
+
+> 保留完整证据链与排查弯路，供以后遇到同类现象时对照。按问题现象查找即可。
+
+
+
+---
+
+### 故障复盘：所有书籍首屏空白（预渲染壳 + `asyncData` 只在构建期执行）
+
+> 一句话：页面壳、标题、页码、页脚、侧栏计数全都正常，只有书籍网格是空的；
+> 强刷无效、Console 干净、Network 里**压根没有取书请求**。
+> 真因不是接口、不是缓存、不是旧 chunk，而是**取数入口**：静态产物里 `asyncData` 只在构建期执行，
+> `beforeRouteUpdate` 只在同组件切路由/翻页时触发，直接进入 `/all` 时两个入口都不触发。
+
+- 发生环境：用户 NAS 上的 `4.6.0-build.27-r25`（及更早）镜像，浏览器强刷 `/all`
+- 表现页面：`/all`「所有书籍」（`ListBook.vue`，`all.vue` 是它的薄壳）
+- 引入时间：不是某次提交引入的「新 bug」，而是静态预渲染架构下一直存在的入口缺口；
+  r24 重建 dist、r25 加构建门禁之后仍能复现，说明与 dist 完整性无关
+- 修复提交：`02ad7a9`（`this.alert` / 页大小 / 卡片开销）、`0070cb5`（首屏取数 + 全站审计）、
+  `52648d9`（`lint:refs` 首屏取数规则）；文档另起一笔
+- 交付版本：`4.6.0-build.27-r26`
+
+---
+
+#### 0. 摘要
+
+| 项 | 结论 |
+| --- | --- |
+| 直接原因 | 直接进入 `/all` 时没有任何客户端取数入口被调用：`asyncData` 在静态产物运行时不执行，`beforeRouteUpdate` 只在同组件切换时触发 |
+| 为什么「有时正常」 | 从侧栏其它列表页点入时组件复用（都是 `ListBook`），`beforeRouteUpdate` 被触发 |
+| 为什么 Console 干净 | 没有异常，也没有未捕获 rejection；只是「没人发请求」 |
+| 为什么强刷无效 | 强刷只是重新下载同一个预渲染壳，壳里 payload 是 `data:[{}]`，不会触发生成期逻辑 |
+| 影响面 | `/all`、`/audiobooks`、`/favorites`、`/reading`、`/printbooks`、`/read-done`、`/soledbooks`、`/visits`、`/wants`、`/meta/*`；`/rating`、`/publisher`、`/language`（`ListMeta` 同构）；`/admin/syslog`、`/toolbox/:id` |
+| 修复 | `mounted` 首屏兜底 + `ssr_loaded` 去重 + 请求令牌；同类页一并修；`lint:refs` 加规则防回归 |
+| 是否已上线 | 代码在本地 `52648d9`，包在 r26；**必须重建镜像**，`docker cp` 只临时 |
+
+---
+
+#### 1. 现象与截图证据
+
+用户提供的现场截图与 Network 记录（同一时刻）：
+
+**页面壳完整**
+
+- 顶部标题「所有书籍」、翻页控件 `‹ 1 ›`、页脚「系统版本: 4.6.0-build.27」都在；
+- 左侧栏计数正常：目录 2、有声书 11、实体书 2、作者 35、分类 11、标签 74、出版社 30、丛书 6；
+- 右侧悬浮按钮（翻译 / 上传等）存在；
+- **中间书籍网格完全空白，没有卡片，也没有空态提示文案**。
+
+**Network（强刷后约 21 条）**
+
+| 请求 | 状态 | 大小 | 时间 |
+| --- | --- | --- | --- |
+| `all`（文档） | 200 | 5.2 kB | 14 ms |
+| `f53b51f.js` | 200 | 4.0 kB | — |
+| `47409de.js` | 200 | 91.3 kB | — |
+| `c5b7bb7.js` | 200 | 78.0 kB | — |
+| `ad3c9ea.js` | 200 | 51.6 kB | — |
+| `e7cd90c.js` | 200 | 7.6 kB | — |
+| `e61364c.js` | 200 | 512 B | — |
+| CSS / 字体 | 200 | — | — |
+| `info` | 200 | 2.2 kB | — |
+| `messages?after_id=0` | 200 | 272 B | — |
+| `running` ×2 | 200 | 251 B | — |
+| 图标 / 头像 / favicon | 200 | — | — |
+
+**关键否定事实**：列表里**没有任何取书请求**——既没有 `/api/all`，也没有其它书籍接口；
+`Console` 无报错、无警告。
+
+截图 + Network 的组合把故障范围压到了「请求从未发出」，而不是「请求失败」或「渲染失败」。
+
+---
+
+#### 2. 关键排查过程与被推翻的判断
+
+排查是按「先排除外层，再往调用链里走」推进的。下面每一条都记录了**当时为什么看起来成立**、
+**被什么证据排除**，避免下次重复走弯路。
+
+| # | 被推翻的判断 | 当时为什么像 | 排除证据 |
+| --- | --- | --- | --- |
+| 1 | 接口返回空数组 | 页面空白、无卡片；`total` 可能为 0 | Network 里**没有该请求**；空数组至少会有一次 200 与响应体 |
+| 2 | 浏览器缓存 / Service Worker / CDN | 强刷前空白，怀疑拿到旧 HTML 或旧 JS | `Ctrl+Shift+R` 后仍空白；`all` 文档本身 200、5.2 kB；且请求根本没发 |
+| 3 | 旧 chunk 404（dist 重建后 index 与 chunk 不匹配） | r24 刚重建过 dist，历史上确实出过 362/757 的残缺包 | 所有 chunk 全部 200；chunk 404 会在 Console 留错，且整页白而不是「壳正常、网格空」 |
+| 4 | 事件循环阻塞 / `HeavyGate` 503 / `server_starting` | 之前有过「转圈」「busy」的故障 | 阻塞或 503 会先有请求（pending 或 5xx）；这里是零请求 |
+| 5 | nginx / 反向代理 / 鉴权把请求吞了 | 只有 `/api/*` 受影响时很像代理 | 代理只能影响「已发出的请求」；Network 里没有请求记录 |
+| 6 | `modeText` 同类：render 抛错被吞 | r24 刚修过「方法误入 computed」的空白/转圈 | render 抛错必在 Console 留 `TypeError`；本次 Console 干净 |
+| 7 | `this.alert` 静默失败 | 同一页面确实存在这个 bug，且表现也是「空白无提示」 | 它只会在**请求失败**的错误分支触发；强刷时请求根本没发，所以不是本次主因（但与本次同批修掉） |
+
+**结论**：1~7 全部排除后，只剩下「取数函数没有被调用」这一种解释。随后用户补的两条现场事实
+（Console 干净、从侧栏点入正常）进一步把它锁定为**入口差异**，而不是数据或网络问题。
+
+---
+
+#### 3. 决定性证据
+
+三条证据互相印证，缺一不可：
+
+1. **Network 无取书请求**。如果是接口、代理、渲染、缓存问题，至少会有一次请求或一条 Console 报错。
+2. **从侧栏其它列表页点入 `/all` 正常，直接打开/强刷失败**。同一份 JS、同一套接口，
+   唯一差别是路由进入方式——这说明取数挂在「路由变化」而不是「组件创建」。
+3. **`app/dist/all/index.html` 是预渲染壳**：23,273 字节，`data-server-rendered`，
+   payload 里是 `data:[{}]`（构建期后端不可达，`asyncData` 拿到空对象），
+   线上 gzip 后约 5.2 kB，与 Network 的 `all` 文档大小一致。
+   也就是说：**壳里没有书，运行时也不会再去取**。
+
+对照代码（修复前）：
+
+```js
+// ListBook.vue（修复前）
+async asyncData({route, app, res}) {
+  if (res !== undefined) res.setHeader('Cache-Control', 'no-cache');
+  return app.$backend(route.fullPath);       // ← 只在构建期/SSR 执行
+},
+beforeRouteUpdate(to, next) {
+  this.init(to, next);                       // ← 只在同组件路由更新时执行
+},
+```
+
+`mounted` / `created` 里没有取数；`watch` 也没有兜底。
+
+---
+
+#### 4. 真因（机理）
+
+`app/package.json` 的构建脚本是 `nuxt generate --spa`，`target: 'static'`。它的产物有两层含义：
+
+1. **构建期**：Nuxt 用 SSR 把每条路由渲染成 HTML，`asyncData` 在这里执行一次，
+   结果序列化进 `window.__NUXT__.data`；
+2. **运行期**：浏览器加载这个 HTML 并 hydrate，**不会**再执行 `asyncData`。
+   之后的客户端路由切换（`nuxt-link` / `router.push`）也不会执行 `asyncData`。
+
+而 `beforeRouteUpdate` 的触发条件是「**同一个组件实例**被复用，路由参数或 query 变化」。
+跨组件导航（例如从首页到 `/all`）是新组件挂载，不触发它。
+
+两条路径叠起来就是：
+
+| 进入方式 | `asyncData` | `beforeRouteUpdate` | 结果 |
+| --- | --- | --- | --- |
+| 直接打开 / 强刷 `/all` | 构建期跑过，运行时不跑 | 不触发（首次挂载） | **零请求** |
+| 侧栏在列表页之间点击 | 不跑 | 触发（同一 `ListBook` 复用） | 正常 |
+| 在 `/all` 上翻页 `‹ 1 ›` | 不跑 | 触发（query 变化） | 正常 |
+
+这也解释了「同一本书重复点结果不一定一样」的历史观感：差别不在书，而在**上一次停留的页面**
+是否与目标页共用同一个列表组件。
+
+---
+
+#### 5. 修法与去重机制
+
+### 5.1 首屏补一次取数
+
+`ListBook.vue` / `ListMeta.vue`：
+
+```js
+mounted() {
+  if (!this.ssr_loaded && !this.inited) {
+    this.init(this.$route);
+  }
+},
+```
+
+- `mounted` 保证「组件首次挂载」一定执行一次；
+- `beforeRouteUpdate` 保留，负责同组件切路由/翻页；
+- `init()` 内已有请求令牌（`_reqToken`）：
+  每次发起自增，回调里比对令牌与 `$route.fullPath`，旧响应直接丢弃，不会覆盖新页面。
+
+### 5.2 不产生重复请求
+
+`asyncData` 只在**真的取到数据**时打标记：
+
+```js
+const rsp = await app.$backend(route.fullPath, { timeout: 20000 });
+if (rsp && rsp.err === 'ok') {
+  return Object.assign({}, rsp, { ssr_loaded: true });
+}
+return rsp || {};
+```
+
+- `nuxt dev` / 未来 SSR 部署：`asyncData` 成功 → `ssr_loaded=true` → `mounted` 跳过，只有一次请求；
+- 静态产物直入：构建期 `asyncData` 拿到的是错误/空对象 → 不标记 → `mounted` 补一次；
+- 构建期失败也算「没取到」，所以不会把构建时的空结果当成运行时已加载。
+
+### 5.3 同类页一并修
+
+| 文件 | 改动 |
+| --- | --- |
+| `ListMeta.vue` | `created` 里的 `init` 被注释掉，只剩 `asyncData`；补 `mounted` + `ssr_loaded` |
+| `admin/syslog.vue` | 只有 `asyncData`；补 `mounted → fetchLog()` + `ssr_loaded` |
+| `toolbox/_id.vue` | 只有 `asyncData`；补 `mounted → loadTool()` + `ssr_loaded` |
+
+---
+
+#### 6. 全站审计（68 个自有页面，4 处命中）
+
+口径：`app/src/pages/**/*.vue`，跳过只做 `export default ListBook/ListMeta` 的薄壳（行为继承）。
+按 6 类形态检索：
+
+1. `watch` 路由取数但无 `immediate` 且无生命周期兜底；
+2. 只在 `routeChanged` / `$nuxt.$on` / `nuxt-link` 事件里取数；
+3. 只有 `activated`，无 `created`/`mounted` 兜底；
+4. 取数被首屏不成立的判断（登录态 / store 字段 / query 默认值）提前 `return`；
+5. 依赖上一页传参，缺失时静默 `return`；
+6. `asyncData` 在静态产物运行时不会执行。
+
+| 页面 | 命中形态 | 直接进入的结果 | 处理 |
+| --- | --- | --- | --- |
+| `ListBook.vue` + 9 个薄壳（`all`/`audiobooks`/`favorites`/`reading`/`printbooks`/`read-done`/`soledbooks`/`visits`/`wants`）+ `_meta/_name` | 6 | 不发请求、永久空白 | 已修 |
+| `ListMeta.vue` + `rating`/`publisher`/`language` | 6（`created` 里的 `init` 被注释） | 空列表 | 已修 |
+| `admin/syslog.vue` | 6 | 永远「暂无日志」 | 已修 |
+| `toolbox/_id.vue` | 6 | 永远「工具不存在或已禁用」 | 已修 |
+| `welcome.vue` | 6 | 安装引导页，无列表数据；只是不跳转 | 不改，lint 白名单 |
+| `s/_token.vue` | 6 | `err` 默认 `ok`，`mounted` 的 `verify()` 会重新取数，自愈 | 不改 |
+| `search` / `folder` / `booklist/_id` / `booklists/*` / `history` / `memos` / `expected` / `admin/*` | —（`created` 或 `mounted` 取数） | 正常 | 不改 |
+| `author` / `tag` / `series` / `_bookid` / `readtxt` / `index` / `audio/_id` | —（`created`/`mounted` 取数，`watch` 只做二次响应） | 正常 | 不改 |
+| `starting.vue` | —（`mounted → poll()`） | 正常 | 不改 |
+
+**判定依据**：逐个读 `<script>` 段，确认 `created`/`mounted`/`activated` 的钩子体内有取数调用
+（`this.init(` / `fetchX(` / `loadX(` / `$backend` / `poll(` / `verify(`）；
+`watch: {'$route…': …}` 只在「handler 内取数 + 缺 `immediate` + 无生命周期取数」时才算命中。
+
+**防回归**：`app/scripts/check-vue-method-refs.js` 现在同时做两件事：
+
+1. 原有：扫描 129 个 `.vue`，发现 `this.NAME()` 调用了不存在的成员（`this.alert` / `modeText` 这类）；
+2. 新增：`pages/**` 的「首屏取数审计」——只有 `asyncData`、或只靠路由 `watch` 且缺 `immediate`
+   又没有生命周期兜底时，`--strict` 直接退出 1。
+
+当前结果：**脚本级错误 0、模板待确认 0、首屏隐患 0（68 页）**。
+
+---
+
+#### 7. 同批次另两处修复
+
+### 7.1 `this.alert` → 不存在成员导致静默失败
+
+`ListBook.vue` 的错误分支原来写的是 `this.alert("error", msg)`。
+Vue 插件用 `inject('alert')` 暴露的是 **`this.$alert`**，`this.alert` 是 `undefined`：
+调用即 `TypeError: this.alert is not a function`，而它发生在 `$backend().then(...)` 回调里，
+异常被 Promise 链吞掉，`books` 停在 `[]` —— 界面既没书、也没提示。
+
+修法：
+
+- 改成 `this.$alert(...)`（`_bookid.vue` 的 `init()` 同步修，并给 `msg` 兜底）；
+- 新增 `load_error` / `errorText` 与两种可见状态：
+  「加载失败 + 重试」卡片、`loaded && !books.length` 时显示「暂无书籍」；
+- `store` 的 `alert` mutation 对空 `msg` 直接返回，避免弹窗组件拿到空对象；
+- 三语（zh / zh-TW / en）与 `delivery/overlay` 副本新增 `listBook.empty / loadFailed / retry`。
+
+### 7.2 页大小不封顶 → 第二页必空
+
+`page_size` 从 `localStorage` / `store.default_page_size` 直接读，没有上限；
+用户或被污染的值可能是 500、1000。后端 `MAX_PAGE_SIZE = 200`（LITE 60）会截断返回，
+但前端仍按「每页 1000」计算 `start`：
+
+- 第一页：`start=0&size=1000` → 后端只回 200 条；
+- 第二页：`start=1000` → 越过总数 → **空列表**。
+
+修法：新增 `app/src/utils/pageSize.js` 的 `clampPageSize(value, fallback, max=200)`，
+`ListBook` 读取页大小时统一走它；后端 `MAX_PAGE_SIZE` 仍是最终闸门。
+
+### 7.3 卡片渲染开销
+
+`BookCards.vue` 的 `render_books` 原来直接改父级 `book` 对象（`b.href = ...`），
+在长列表里会造成无谓的响应式触发；改为返回新对象 `{ ...b, href }`。
+卡片样式增加：
+
+```css
+.book-list-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 260px 120px;
+}
+```
+
+让浏览器跳过视口外卡片的布局/绘制。配合页大小封顶，几十本到几百本的列表不再一次性付全量渲染成本。
+
+---
+
+#### 8. 性能实测与「暂不做」的决定
+
+对「列表接口是否随书数线性变慢」做了静态审计与微基准：
+
+- 无 `LIKE '%x%'`、无全表 Python 过滤；封面/音频标志不逐书 `stat`（走 `AudioBooksCache`）；
+- `total` 有版本缓存，不是每次 `COUNT(*)`；
+- 主瓶颈在前端一次渲染几十~几百张卡（已用 `content-visibility` 缓解）。
+
+id 排序微基准：
+
+| 规模 | 耗时 |
+| --- | --- |
+| 1,000 条 | 0.081 ms |
+| 10,000 条 | 1.252 ms |
+| 100,000 条 | 18.267 ms |
+
+结论：排序本身不是瓶颈，**本轮不做**键集分页前端接入与 id 排序缓存——
+后端 `after` / `next_cursor` 已支持，但前端改造面大、收益要等到万级书库才明显。
+真到万级再按「先接游标、再谈缓存」的顺序做，避免为假想规模增加复杂度。
+
+---
+
+#### 9. 测试与静态检查
+
+`tests/test_frontend_silent_failures.py`（16 条，实测 `16 passed`）：
+
+| 用例 | 覆盖 |
+| --- | --- |
+| 全仓禁止 `this.alert(` | `this.alert` 这类「调用不存在成员」不再出现 |
+| ListBook 必须用 `$alert` 且带 `load_error` / `errorText` | 错误必须有可见出口 |
+| 模板含 `empty` / `loadFailed` / `retry` | 空态与失败态不能缺 |
+| store `alert` 空文案保护 | 空消息不弹窗、不写坏状态 |
+| 三语 + overlay 的 key 存在（3 个参数化） | 文案不漏语言 |
+| `lint:refs --strict` 退出 0 | 成员引用 + 首屏取数审计 |
+| 4 个页面（ListBook / ListMeta / syslog / toolbox）`mounted` 必须触发取数 | 守住「首屏必取一次」 |
+| 同上 4 页必须用 `!this.ssr_loaded` 去重 | 守住「不重复请求」 |
+
+---
+
+#### 10. 教训
+
+1. **预渲染壳页不能把 `asyncData` 当唯一取数入口。** 静态产物里它只属于构建期；
+   任何「运行时必须最新」的数据都要有客户端入口（`mounted` / `created` / 路由 `watch` + `immediate`）。
+2. **静默 catch 会把「报错」伪装成「空白」。** `this.alert` 的 `TypeError` 被 Promise 吞掉后，
+   页面既不提示也不报错；错误分支必须有可见出口（错误卡片 / 空态 / 全局 errorHandler）。
+3. **同类写法要全仓扫，不要单点修。** `modeText`（r24）、`this.alert`、`asyncData-only`
+   是同一类问题的三种外衣；用静态扫描把它们变成规则，比每次靠用户报障便宜得多。
+4. **区分「没发请求」和「请求失败」是排查分水岭。** 前者查生命周期与入口，后者查接口与网络；
+   看一眼 Network 有没有那条请求，能省掉大半猜测。
+5. **`dist` 的非构建资源来自 `public/`。** `app/public` 被删时 `generate` 只出 301 个文件，
+   包看着能装、页面却缺 pdfjs/字体/图标；出包前必须整目录校验 757。
+
+---
+
+#### 附录 A：实测 / 推断 / 误判
+
+**实测**
+
+- 强刷 `/all` 的 Network 清单（21 条，无取书请求）与 Console 干净（用户现场提供）
+- 从侧栏点入正常、直接进入失败（用户实测确认）
+- `app/dist/all/index.html`：23,273 B、`data-server-rendered`、payload `data:[{}]`、gzip 约 5.2 kB
+- 修复前 `ListBook.vue` 只有 `asyncData` + `beforeRouteUpdate` 两个取数入口
+- 全站扫描 68 个自有页面，命中 4 处；修复后 `lint:refs --strict` 0 隐患
+- `pytest` 16 passed；`npx eslint` 改动文件 0 error
+- `npx nuxt generate` → 757 文件；`index.html` sha256 `b7c49b20…`
+
+**推断**
+
+- 「以前偶发正常」源于进入方式差异（是否与列表页共用组件），依据是 `beforeRouteUpdate` 的触发条件，
+  没有逐次操作日志佐证。
+- 构建期 `asyncData` 返回空对象，是因为构建环境没有可用后端；依据是 payload `data:[{}]`。
+
+**误判（保留记录）**
+
+- 一度把 `asyncData` 返回视为「运行时会重新执行」，于是先去查接口与缓存；
+  实际静态产物只 hydrate，不重跑。
+- 一度认为 `this.alert` 是本次主因；它确实是真 bug，但只能解释「请求失败后的空白」，
+  解释不了「Network 零请求」。
+
+---
+
+#### 附录 B：复现与验证命令
+
+```sh
+### 1) 复现：直接打开 / 强刷（预期修复前零请求、修复后一次取书请求）
+###    浏览器打开 /all → Ctrl+Shift+R → Network 过滤 Fetch/XHR
+
+### 2) 确认 dist 是预渲染壳（payload 为空）
+python - <<'PY'
+import re
+s = open('app/dist/all/index.html', encoding='utf-8').read()
+print(len(s), '__NUXT__' in s, re.findall(r'data:\[[^\]]*\]', s)[:1])
+PY
+
+### 3) 静态扫描（成员引用 + 首屏取数审计，必须 0 错误 0 隐患）
+cd app && node scripts/check-vue-method-refs.js --strict
+
+### 4) 回归测试
+python -m pytest tests/test_frontend_silent_failures.py -q
+
+### 5) dist 完整性（757 + pdfjs 等非构建资源）
+sh scripts/check-dist.sh
+
+### 6) 容器内核对（升级后）
+docker exec <容器> sh -c 'find /app-static/dist -type f | wc -l'          # 期望 757
+docker exec <容器> sha256sum /app-static/dist/index.html
+### 期望 b7c49b20c2e9042538dcdd9038e0c43557a18d7449922e159569e8ee509a1ebc
+
+### 7) 构建期别把 app/public 弄丢（丢了只会出 301 个文件）
+test -f app/public/static/pdfjs/web/viewer.html && echo "public ok"
+```
+
+
+---
+
+### 故障复盘：读者组页面一直转圈
+
+> 故障对象：后台「设置 → 读者组分级权限」面板
+> 影响版本：`4.6.0-build.27-r18` ~ `r21`（引入提交 `aa457b8`，修复提交 `bc39f47`）
+> 修复交付：`4.6.0-build.27-r24`（前端产物，dist 757 文件）
+> 复盘日期：2026-11-11
+> 证据等级：本文每条结论都标注「实测」或「推断」，被推翻的判断集中记在附录 A，**不要**再把它们当结论引用。
+
+---
+
+#### 0. 摘要
+
+页面一直转圈、接口返回 `200` 且数据完整——**问题不在请求，在渲染**。
+
+`ReaderGroupEditor.vue` 把 `modeText(mode)` 定义在 `computed` 里，模板却按方法调用
+`{{ modeText(groups[name].mode) }}`。Vue 2 的 computed 是**无参属性**，求值得到字符串；
+模板再对字符串加括号 → `TypeError: e.modeText is not a function`。
+
+异常发生在 `_render` 期间，组件渲染中断，DOM 停在初始的
+`<div v-if="!loaded && loading"><v-progress-circular></div>`；`reload()` 里
+`loaded = true` 其实执行了，但已没有人能把它画出来。
+
+| 维度 | 结论 |
+| --- | --- |
+| 直接原因 | `modeText` 误入 `computed`，模板带参调用 → 渲染期 TypeError |
+| 引入 | `aa457b8`（读者组模板扩到 17 套，顺手把内联三元改成 `modeText(...)`） |
+| 修复 | `bc39f47`：`modeText` 移入 `methods`；新增前端契约测试；按 `app/src` 重编 dist |
+| 现场验证 | 用户 NAS 上用 r24 的 `app/dist` 覆盖运行中容器 → 读者组列表恢复（**实测**）；随后 `docker compose build` 重建镜像固化（见 §7.3） |
+| 被排除 | 同步 IO 压住 ioloop、`calibre_pool` 饥饿、代理截断、旧镜像未重建、`prepare()` 同步 SQLite、8 秒护栏 |
+| 附带事故 | 重编前端时 `app/dist` 丢了 395 个非构建资源（15,346,411 B），r23 只剩 362 / 应有的 757 |
+
+---
+
+#### 1. 现象
+
+**实测**（用户环境 + 本地复现）：
+
+1. 打开设置页，展开「读者组分级权限」：
+   - 组列表区域只有一个无限旋转的 `v-progress-circular`；
+   - 「分组权限」下拉框（模式选择）同时不出现——两者在同一个 `v-if` 分支里；
+   - 不报错、不超时、没有「重试」入口，刷新后照旧。
+2. DevTools → Network：`GET /api/admin/reader_groups` **200**，正文 **548 字节**，
+   两个组的数据完整（组名、模式、分类、标签、成员都在）。
+3. 保存（POST）能成功，只有「读出来展示」这一半是坏的。
+4. 服务端日志无异常、无慢查询、无 5xx。
+
+**关键矛盾**：接口好、数据好、页面不显示。这个矛盾贯穿了整个排查过程，也是早期所有
+后端侧假设全部走空的原因。
+
+---
+
+#### 2. 时间线
+
+| 阶段 | 动作 | 观察到的证据 | 当时的判断 |
+| --- | --- | --- | --- |
+| T1 | 用户报障：读者组不显示、一直转圈 | 接口 200、548 B、数据完整 | 先怀疑后端慢/卡（后来被推翻） |
+| T2 | 查 Tornado 单线程、同步 IO | 其它 `/api/admin/*` 同时段正常；`reader_groups` 毫秒级返回 | ioloop 未被占（**实测**，见 §3.1） |
+| T3 | 查 `calibre_pool` 线程池 | 响应在池排队前就完整返回 | 池饥饿不成立（**实测**，见 §3.2） |
+| T4 | 查 handler `prepare()` 的同步 SQLite | 响应体完整、无慢日志 | 不成立（**实测**，见 §3.5） |
+| T5 | 怀疑 nginx / 外层代理截断 | Response 面板 548 B 完整，无 JSON 解析错误 | 不成立（**实测**，见 §3.3） |
+| T6 | 怀疑旧镜像未重建 | 部署后 `index.html` 指纹已变；报错栈指向新 chunk `a8c2eb4.js` | 不成立（**实测**，见 §3.4） |
+| T7 | r20 加 `server_starting` 整页兜底 + 20s 超时 | 部署 r21 后**仍然转圈** | 归因错误（见 §3.6 与附录 A） |
+| T8 | 用户贴出浏览器 Console | `TypeError: e.modeText is not a function`，`a8c2eb4.js:1:17741` | **决定性证据**（见 §4） |
+| T9 | 对源码 + 对产物 | `modeText` 定义落在 `computed` 区间内；调用点列号 17741 与源码一致 | 根因确认（**实测**） |
+| T10 | 修复 `bc39f47`，重编 dist，加契约测试 | 新 chunk `fa190f8.js` 中 `modeText` 已在 `methods` | 修复完成（**实测**） |
+| T11 | 用户 NAS 现场替换 dist | 页面恢复，不再转圈 | 闭环（**实测**） |
+| T12 | 复核部署包 | 发现 r23 dist 只有 362 / 应有 757，漏 395 个资源 | 副线事故（见 §8） |
+
+---
+
+#### 3. 走过的弯路：每条被排除的假设
+
+> 写这一节的目的是：这些假设在提出时都有「像那么回事」的依据，事后看全是把
+> 「页面不显示」误当成「请求不回来」。每条都给出**推翻它的那条证据**。
+
+### 3.1 同步 IO 压住 ioloop
+
+- **提出依据**：后端是 Tornado 单进程；「页面等很久」最经典的原因就是事件循环里有同步
+  阻塞调用（文件 IO、`requests`、`subprocess`），把整个 loop 卡住，所有请求一起变慢。
+- **推翻证据**（**实测**）：同一时间段其它 `/api/admin/*` 正常返回；`reader_groups`
+  本身毫秒级返回 200、正文 548 B 完整。若 ioloop 被占，不可能只坏这一个面板，
+  更不可能坏在「数据已经返回之后」。
+- **更强的反证**：把修好的 `app/dist` 用 `docker cp` 扔进**运行中的**容器即可恢复，
+  后端进程一个字节都没动。与后端线程模型无关。
+
+### 3.2 `calibre_pool` 线程池饥饿
+
+- **提出依据**：读者组要按分类/标签解析可读书目，会走 calibre 相关查询；线程池被长任务
+  占满时，请求会排队等待，表现就是「转圈」。
+- **推翻证据**（**实测**）：响应在池超时之前就完整返回，且返回的是**完整 JSON**
+  （两个组齐全），不是超时后的降级响应；服务端无池等待日志。
+- **教训**：池饥饿会表现为「慢/超时/502」，不会表现为「200 + 数据完整 + 前端不画」。
+
+### 3.3 nginx / 外层代理截断
+
+- **提出依据**：此前刚遇到部署包下载被截断（`tar: A lone zero block`），
+  很容易顺势认为 HTTP 响应也被中间层截了一半，导致前端 `JSON.parse` 失败。
+- **推翻证据**（**实测**）：DevTools 的 Response 面板里 548 B 完整可见，没有
+  `Unexpected end of JSON input`；Console 里的错误是 `TypeError`，不是解析错误。
+  截断类问题一定伴随长度/解析异常。
+
+### 3.4 旧镜像未重建 / 前端没更新
+
+- **提出依据**：多次热更后，容器里跑的可能还是旧静态资源，「改了没生效」很常见。
+- **推翻证据**（**实测**）：
+  1. 部署后首页 `index.html` 指纹已经变化；
+  2. 浏览器报错栈指向 `a8c2eb4.js`——这是**新构建**的 chunk，旧包里没有这个名字；
+  3. 也就是说：新代码确实上线了，新代码带着 bug 上线了。
+
+### 3.5 `prepare()` 里同步 SQLite 读
+
+- **提出依据**：该 handler 的 `prepare()` 阶段会读库；同步 SQLite 读在单线程里同样能卡 loop。
+- **推翻证据**（**实测**）：响应 200、正文完整、无慢查询日志；且同 §3.1 的 `docker cp`
+  反证——只换前端静态文件即恢复，`prepare()` 根本没被触发过问题。
+
+### 3.6 「8 秒护栏盖不住」——把超时兜底当成了修复
+
+- **提出依据**：既然怀疑是「等太久」，那给 `await` 套一个超时（早期版本 8 秒，
+  r20 提到 20 秒），最坏也能停下来报错，不至于无限转圈。
+- **推翻证据**（**实测**）：转圈没有上限，也从未出现超时提示；r20/r21 都加了兜底，
+  现象一模一样。
+- **真正的解释**（**实测 + 代码推导**）：护栏其实**跑到了**——`reload()` 末尾的
+  `this.loading = false` 与 `loadError` 赋值都执行了。但组件 `_render` 每次都抛
+  `TypeError`，Vue 无法完成渲染，**任何状态变更都无法反映到 DOM**。
+  所以「护栏没兜住」的真实含义不是「等得比 8 秒久」，而是「状态更新没有出口」。
+
+> 这一条是整次排查最贵的教训：**spinner 不消失 ≠ 请求没结束**。
+> 状态可能早就更新了，只是渲染已经死了。
+
+---
+
+#### 4. 决定性证据
+
+### 4.1 浏览器 Console
+
+```
+TypeError: e.modeText is not a function
+    at a8c2eb4.js:1:17741
+```
+
+三条信息同时成立，才把「前端渲染」这条线钉死：
+
+1. `TypeError` —— 不是网络错误、不是解析错误、不是 5xx；
+2. `modeText` —— 正是该模板里新引入的方法名；
+3. 明确的文件 + 行列 —— 可以直接回到源码对齐。
+
+### 4.2 `modeText` 的定义位置（实测）
+
+老产物 `a8c2eb4.js`（sha256 `77662f525899e6c807ea63e75fec7077966f95d9c38665f2c4cca169da788de8`，
+19,731 B，单行压缩）：
+
+| 记号 | 1-based 列号 |
+| --- | --- |
+| `computed:{` 起点 | 1891 |
+| `modeText:function` 定义 | 2294（**落在 computed 区间内**） |
+| `methods:{` 起点 | 3512 |
+| 模板里的 `modeText(` 调用 | **17741** |
+
+对照修复后的 `fa190f8.js`：
+
+| 记号 | 1-based 列号 |
+| --- | --- |
+| `computed:{` 起点 | 1891 |
+| `methods:{` 起点 | 3327 |
+| `modeText:function` 定义 | 3336（**紧跟 `methods:{`**） |
+| 模板里的 `modeText(` 调用 | 17741（调用点没变） |
+
+`modeText:function` 在旧包里位于 `computed` 区间，在新包里位于 `methods` 之后——
+这是同一个函数、同一处调用，只换了归宿。
+
+### 4.3 列号与源码对齐（实测）
+
+- Console 报的是 `1:17741`，与上面解析出的调用点列号**完全一致**；
+- `app/src/components/ReaderGroupEditor.vue` 第 180 行：
+  `{{ modeText(groups[name].mode) }}`，是整份模板里唯一一处 `modeText(` 调用；
+- 因此报错栈确实指向这一行，不存在「另一个同名方法」的可能。
+
+### 4.4 为什么 DOM 冻在 spinner
+
+模板结构（当前源码 L159-L163）：
+
+```html
+<div v-if="!loaded && loading" class="text-center py-4"><v-progress-circular indeterminate></v-progress-circular></div>
+<div v-else-if="loadError" ...>...</div>
+```
+
+初次渲染时 `loaded=false`、`loading=true`，先画出 spinner；随后的渲染在
+`modeText(...)` 处抛错 → patch 中断 → 屏幕上保留**上一次成功渲染的结果**，即 spinner。
+此后 `groups` 被赋值、`loaded` 变 `true`、`loading` 变 `false`，全部写进了组件状态，
+但没有任何一次渲染能完成，所以用户永远看不到列表。
+
+这解释了所有「矛盾」现象：
+
+| 现象 | 解释 |
+| --- | --- |
+| 接口 200、数据完整 | 请求链路完全正常 |
+| 页面只有 spinner | 首次渲染成功（还没走到 `modeText`），后续渲染全部中断 |
+| 保存能用 | POST 不走这条渲染路径，且成功提示由别的组件渲染 |
+| 刷新无效 | 每次挂载都会重新走同一段坏模板 |
+| 加超时无效 | 状态更新了，但没有渲染出口（§3.6） |
+
+---
+
+#### 5. 根因
+
+引入提交 **`aa457b8`**（`feat(reader-group): 模板扩到 17 套并分栏；修「成人家属」模板本身不可用`）
+做了两件事，单独看都合理，合在一起就炸：
+
+```diff
+-            <td>{{ $t(groups[name].mode === "whitelist" ? "settings.reader_group_mode_whitelist" : "settings.reader_group_mode_blacklist") }}</td>
++            <td>{{ modeText(groups[name].mode) }}</td>
+```
+
+```diff
++    // 组列表里的模式列：三态映射，别再写成二元三元表达式
++    modeText(mode) {
++      if (mode === "open") return this.$t("settings.reader_group_mode_open");
++      return this.$t(mode === "blacklist" ? ... : ...);
++    }
+```
+
+——这个 `modeText(mode)` 被加进了 **`computed` 对象**（旧源码 L279）。
+
+于是运行期发生两件事：
+
+1. Vue 2 把 computed 当**无参属性**求值一次：`modeText` 变成 `modeText(undefined)` 的返回值，
+   也就是一个**字符串**（比如「白名单」）；
+2. 模板对这个字符串求值 `字符串(...)` → `TypeError: ... is not a function`。
+
+根因不是「三态映射」这个需求，而是**把方法写进了 computed**。Vue 只对
+`methods` 里的成员按函数调用，computed 的成员永远是「已求值的值」。
+
+---
+
+#### 6. 修复
+
+提交 **`bc39f47`**（`fix(reader-group): modeText 误放 computed 致渲染中断，按 src 重编 SPA 产物`）：
+
+| 文件 | 改动 |
+| --- | --- |
+| `app/src/components/ReaderGroupEditor.vue` | `modeText` 从 `computed` 移到 `methods` 首位，逻辑与返回值不变；保留注释说明「模板带参调用 ⇒ 必须在 methods」 |
+| `tests/test_reader_group_frontend_contract.py` | 新增 3 条契约测试（见下） |
+| `app/dist/**` | 用 `app/src` 重新 `nuxt generate`，`_nuxt` 全部换成新产物 |
+
+契约测试锁住三件事：
+
+1. **模板里不得对 computed 的键带参调用** —— 解析 `<template>` 段（`src.rindex("</template>")`
+   截断），把 `computed` 的键名逐个在模板中匹配 `key(`；命中即失败。
+   这条测试在旧源码上**确实会红**（已回放验证）。
+2. `modeText` 必须出现在 `methods` 段内。
+3. `dist` 必须包含只存在于 `src` 的文案片段——防止「改了源码没重编」。
+
+> 这类错误 TypeScript 也拦不住（Vue 2 的 `this` 是 any），静态检查只能靠
+> 「模板 vs computed keys」这种结构性断言。见《开发指南》踩坑 #18。
+
+---
+
+#### 7. 验证
+
+### 7.1 现场（用户 NAS，实测）
+
+1. 取 r24 包内的 `app/dist`；
+2. `docker cp` 覆盖进**正在运行**的容器；
+3. 浏览器强刷 → 读者组列表出现，「分组权限」下拉恢复，不再转圈。
+
+这一步同时完成了两件事：
+
+- **确认修复**：只换前端静态产物即恢复；
+- **反向证伪**：后端进程、容器、镜像、网络全部未动 → §3.1/3.2/3.3/3.5 的后端假设
+  全部不成立；§3.4「旧镜像」也不成立（否则换文件不会生效）。
+
+### 7.2 边界（实测）
+
+**`docker cp` 只写容器的可写层**，容器一旦重建/重拉即回退。因此这次现场验证
+**不是最终部署**，必须用包含 r24 `app/dist` 的镜像重新 `docker compose build` 固化
+（已于 §7.3 完成）。
+
+### 7.3 固化（用户 NAS，实测）
+
+- `docker compose build mybooks` **构建通过**，pdfjs 的 COPY 层正常；
+- 容器起来后，镜像内 `/app/dist/static/pdfjs/web/viewer.html` 与
+  `/app/dist/_nuxt/fa190f8.js`（带 `modeText` 修复的 chunk）**均存在**；
+- 页面正常，读者组不再转圈。
+
+镜像内 `app/dist` 实际是 **824** 个文件 = 757 + 67 个历史残留 chunk（`rsync` 同步
+构建上下文时未加 `--delete`）。残留 chunk 无引用、不影响功能；清理见 §8.4。
+
+### 7.4 尚未覆盖
+
+- 本次修复未做后端回归（没有任何后端改动）；
+- 未在其它浏览器复测，但报错属于渲染期逻辑错误，与浏览器无关（**推断**）。
+
+---
+
+#### 8. 副线教训：重编前端丢了 395 个非构建资源
+
+### 8.1 事实（实测）
+
+`nuxt generate` **先清空 `dist/`** 再生成。而 `app/dist` 里除了构建产物，还有一批
+**不是构建出来的**静态资源（历史手工放入）：PDF 阅读器、字体、壁纸、图标等。
+
+| 包 | dist 文件数 |
+| --- | --- |
+| r20（原始 build.27） | **757** |
+| r23（重编后，按「构建产物」口径清点） | **362** |
+| r24（取回资源后） | **757** |
+
+缺失的 **395 个文件、15,346,411 B**（gzip 后 4,994,974 B）：
+
+| 目录 / 文件 | 数量 | 未压缩字节 |
+| --- | --- | --- |
+| `static/pdfjs/**`（PDF 阅读器） | 369 | 14,525,028 |
+| `static/js/jquery-1.11.1.min.js` | 1 | 95,786 |
+| `icons/*.svg` | 11 | — |
+| `static/wallpaper/*` | 4 | — |
+| `static/images/*` | 4 | — |
+| `static/fonts/*`（Poppins） | 3 | — |
+| `static/toolbox-bridge.js` | 1 | — |
+| `robots.txt`、`static/README` 等 | 3 | — |
+
+后果（**实测路径依赖**）：
+
+- `webserver/settings.py:232`：`"PDF_VIEWER": "/static/pdfjs/web/viewer.html?file=%(pdf_url)s"`，
+  被 `handlers/book.py:4211`、`4264` 使用 → 缺文件直接 **404**；
+- `_nuxt/css/7b430fa.css` 里引用了 wallpaper / 字体 / 背景图 → 静默 404、样式退化；
+- `toolbox/srt_tool/index.html` 引用 `static/toolbox-bridge.js` → 工具链断。
+
+当时这些**不会让 docker build 失败**（Dockerfile 只强依赖 `dist/logo`、`dist/avatar`），
+所以「构建成功」不能当作「产物完整」。**r24 之后已在 builder 末尾加硬门禁**：
+`/app-static/dist/static/pdfjs/web/viewer.html` 不存在就直接 `exit 1`，并配
+`scripts/check-dist.sh` 与 `pack.sh` 的整目录校验（见 §9.4）。
+
+### 8.2 为什么按产物口径会漏（实测）
+
+重编后逐目录对账：`_nuxt` 下 59 个旧 chunk 名在 321 个 html/js/css/json 中
+**引用数为 0**（可安全删除）；但 395 个非 `_nuxt` 文件是**真实依赖**，不是垃圾。
+把「构建产物 348 + logo/avatar 14 = 362」当成完整，就正好漏掉这 395 个。
+
+### 8.3 处理（已做）
+
+1. 从 r20 包原样取回 395 个文件写入 `app/dist`（回到 757）；
+2. 同一批写入 `public/`（`nuxt.config.js` 的 `dir.static = '../public'`），
+   以后 `generate` 自动带出，不再依赖手工补；
+3. r24 重打包，清单记 `dist_files=757`、`dist_deleted=0`；
+4. 校验脚本对比 r20 与 r24：剩余差异**只有** 59 个旧 `_nuxt` chunk（已被 59 个新 chunk 取代）。
+
+### 8.4 校验口径（以后就这么做）
+
+**整目录校验**，不要按「构建产物」口径：
+
+```sh
+### 文件数基线（r24 = 757）
+find app/dist -type f | wc -l
+### 关键目录必须存在且非空
+test -f app/dist/static/pdfjs/web/viewer.html
+test -f app/dist/static/toolbox-bridge.js
+test -d app/dist/logo && test -d app/dist/avatar
+### 与包内清单比对
+tar -tzf audiobook-deploy-*.tar.gz | grep -c '^audiobook/app/dist/.*[^/]$'
+```
+
+镜像内的数量可能**多于** 757（实测 824 = 757 + 67 个历史残留 chunk）：`rsync` 同步
+构建上下文时没加 `--delete`，旧 chunk 只增不减。清理必须用**白名单差集**：
+
+```bash
+tar -tzf audiobook-deploy-4.6.0-build.27-r25.tar.gz --wildcards 'audiobook/app/dist/_nuxt/*' | sed 's#^audiobook/app/dist/_nuxt/##' | sort > /tmp/keep.txt; ls /volume1/docker/audiobook/app/dist/_nuxt | sort > /tmp/have.txt; comm -23 /tmp/have.txt /tmp/keep.txt
+```
+
+**不要**用「扫引用」判断孤儿：排除 `_nuxt` 后扫描，会把运行时动态加载的
+Vue 运行时 `84f214b.js`、语言包 `76d48a7.js` 误判成没人用。
+
+---
+
+#### 9. 部署侧教训
+
+### 9.1 先校验，后破坏
+
+r23 的 `tar: A lone zero block at 76268` 发生在解包阶段，而当时**容器已经停了**，
+线上处于不可用状态。事后本地校验证明包本身完好（**实测**）：
+
+| 项 | 结果 |
+| --- | --- |
+| 大小 | 209,171,397 B |
+| SHA256 | `69f02594…` |
+| MD5 | `7cc6ee31…` |
+| `gzip -t` 全流解压 | 通过（595,456,000 B） |
+| 成员数 | 47,112 |
+| 尾部 512 B×2 零块 | 完整 |
+
+报错位置 block 76268 × 512 ≈ **39,049,216 B**，约为 gzip 流的 **6.6%** —— 传输被截断的
+典型特征，不是包坏了。
+
+**四道门禁必须放在「停容器」之前**：
+
+```sh
+set -e
+PKG=audiobook-deploy-4.6.0-build.27-r24.tar.gz
+EXPECT_SIZE=219162163
+EXPECT_SHA=2775c2e1ff1a2a7f01ab3e27babc88d4b2f6aa049e707a7b9fec44e99a717fb9
+EXPECT_MEMBERS=47902
+
+[ "$(stat -c %s "$PKG")" = "$EXPECT_SIZE" ] || { echo "大小不符"; exit 1; }
+echo "$EXPECT_SHA  $PKG" | sha256sum -c - || exit 1
+gzip -t "$PKG" || { echo "gzip 流损坏"; exit 1; }
+[ "$(tar -tzf "$PKG" | wc -l)" = "$EXPECT_MEMBERS" ] || { echo "成员数不符"; exit 1; }
+### 四道门禁全过，才允许 docker compose down / stop
+```
+
+更好的顺序：**先解到新目录再停服务**，解包失败不影响线上。
+
+### 9.2 大包分片 + 逐片校验
+
+200 MB 单文件在群晖/NAS 拷贝链路上断一次就得重传。
+r24 已生成 4 片：`part01~03` 70,000,000 B + `part04` 9,162,163 B，
+附 `.parts.sha256`（逐片）与整包 `.sha256` / `.md5`。合并后再过一遍整包 SHA。
+
+### 9.3 `docker cp` 只能验证，不能交付
+
+`docker cp` 写的是容器可写层：容器重建/重拉镜像即回退，且不会进入镜像，下次部署又没了。
+它是**现场验证手段**，不是发布手段——发布必须 `docker compose build` 重建镜像。
+
+### 9.4 构建期的三个坑（本次实测）
+
+1. `COPY --from=builder /app-static/dist/{logo,avatar}/` 要求源路径**必须存在**，
+   否则 BuildKit 直接 `failed to compute cache key`；
+2. builder 阶段的预构建分支会 `cp -r /build/dist /app-static/dist` **整体重建**该目录，
+   任何之前的 `mkdir` 都会被抹掉——所以兜底 `RUN mkdir -p` 必须放在它**之后**（当前是
+   builder 最后一条指令）；
+3. 光靠 `mkdir` 只保证构建不报错，**不保证产出的镜像内容完整**。r24 起在 builder 末尾
+   增加了 pdfjs viewer 断言（缺则 `exit 1`），并在打包侧加了 `scripts/check-dist.sh`
+   与 `pack.sh --check` 的 757 文件数校验。
+
+### 9.5 群晖终端的两条操作约束（实测）
+
+1. busybox 的 `tar` 带通配符（`-t` / `-x` 配 `*.js`）**必须加 `--wildcards`**，
+   否则通配符会被当成字面量，结果为空或报错；
+2. NAS 终端会把超长命令折行，粘贴多行或带 `\` 续行时容易得到
+   `syntax error near unexpected token`——交给用户的命令**一律写成单行**，用 `;` 串联。
+
+---
+
+#### 10. 结论
+
+1. **接口正常 ≠ 页面正常**。排查「一直转圈」时，第一步就该看 Console，而不是 Network 之后
+   再猜后端。这次花了大量时间在后端线程模型上，全部无效。
+2. **spinner 是渲染结果，不是状态**。状态早更新了、渲染死了，看起来和「请求没回来」
+   一模一样。加超时、加兜底都救不了。
+3. **Vue 2 的 computed 不接受参数**，模板带参调用 computed 成员必然在 render 期抛错。
+   这类错误只能靠结构性测试锁住，靠 review 靠不住（它看起来只是「把三元抽成方法」）。
+4. **「构建成功」不等于「产物完整」**。`nuxt generate` 会清空 dist，非构建资源必须放在
+   `public/` 并做整目录校验。
+5. **部署要先校验后破坏**；大包用分片；`docker cp` 只用于验证。
+
+---
+
+#### 11. 后续动作清单
+
+| # | 动作 | 状态 |
+| --- | --- | --- |
+| 1 | `modeText` 移入 `methods`，重编 dist | ✅ 已完成（`bc39f47`） |
+| 2 | 新增前端契约测试（computed 不得带参调用） | ✅ 已完成 |
+| 3 | 395 个非构建资源回填 `app/dist` 与 `public/` | ✅ 已完成（`61f1213`） |
+| 4 | r24 重新打包并按整目录口径校验（757） | ✅ 已完成 |
+| 5 | 文档更正：CHANGELOG / 开发指南 / 部署包说明 / 本报告 | ✅ 已完成 |
+| 6 | 用 r24 重建镜像固化，替代 `docker cp` 临时方案 | ✅ 已完成（§7.3 实测：`docker compose build` 通过，镜像内 `static/pdfjs/web/viewer.html` 与 `fa190f8.js` 均存在，页面正常，dist 按 757 校验） |
+| 7 | 部署脚本并入 §9.1 四道门禁（先校验后停容器） | ⏳ 待用户执行（核对 `scripts/deploy.sh`、`scripts/upgrade.sh` 与 `delivery/overlay` 副本，目前只有 `index.html` 的 sha256 比对，尚无大小 / 整包 sha256 / `gzip -t` / 成员数四道） |
+| 8 | CI 增加 dist 整目录文件数基线（757）与关键路径存在性检查 | ⏳ 建议 |
+| 9 | 把 `tests/test_reader_group_frontend_contract.py` 纳入必跑集 | ⏳ 建议 |
+
+---
+
+#### 附录 A：实测 / 推断 / 当时的误判
+
+### A.1 明确属于「实测」的结论
+
+- 接口 `200`、548 B、数据完整；页面只显示 spinner（用户环境）。
+- `a8c2eb4.js` 中 `modeText:function` 位于 `computed` 区间内（列 2294，区间 1891–3511）。
+- `fa190f8.js` 中 `modeText:function` 紧跟 `methods:{`（列 3336）。
+- 两版 `modeText(` 调用点均在 1-based 列 **17741**，与 Console 报错一致。
+- `a8c2eb4.js` sha256 `77662f52…`。
+- 契约测试在旧源码上会失败、在新源码上通过。
+- `docker cp` r24 的 dist 后页面恢复。
+- r20 dist 757 / r23 362 / 缺 395 个（15,346,411 B，gzip 4,994,974 B）。
+- 59 个旧 `_nuxt` chunk 在 321 个文本文件中引用数为 0。
+- r23 包本地完整性检查全部通过；解包失败位置 block 76268 ≈ 6.6% 流长。
+- r24 包：219,162,163 B / 47,902 成员 / 191 个符号链接（包内口径） / dist 757。
+
+### A.2 属于「推断」的结论
+
+- r23 解包失败的直接原因是**传输截断**（本地包完好 + 报错位置特征，但未抓到传输日志）。
+- `calibre_pool` 在故障时段的排队情况——没有抓到池指标，结论来自「响应完整且毫秒级」的反证。
+- 保存路径不受影响的原因（不走该渲染分支）——基于代码结构推断，未逐行插桩。
+- 浏览器无关性——未跨浏览器实测。
+
+### A.3 当时的误判（保留记录，不要再当结论）
+
+| 误判 | 当时的说法 | 后来被什么推翻 |
+| --- | --- | --- |
+| 误判 1 | 「r20 转圈」是服务启动期 `server_starting` 返回永不 settle 的 Promise（`99b3527` 的归因） | 接口 200、548 B 完整；r21 仍转圈；Console 是渲染期 TypeError |
+| 误判 2 | 「5.8 MB 体积差是废弃 chunk」 | 逐目录对账：395 个**真实依赖资源**缺失，废弃 chunk 只占 59 个且引用为 0 |
+| 误判 3 | 「r23 只是传输截断，包内容没问题」 | 传输截断属实，但 r23 的 dist 只有 362 / 应有 757，**内容本身也不完整**（两件事叠加） |
+| 误判 4 | 「加超时护栏就能兜住转圈」 | 护栏执行了，但渲染已中断，状态变更无法反映到 DOM |
+| 误判 5 | 「后端线程/IO/代理」方向 | `docker cp` 只换前端文件即恢复，后端未动 |
+
+> 误判 2 与误判 3 是同一个坑的两面：用「构建产物」口径解释体积，就会把
+> 「缺文件」误读成「删了垃圾」。
+
+---
+
+#### 附录 B：复核命令
+
+```sh
+### 1) 老产物里 modeText 的归属（需要保留旧包或旧 commit）
+git cat-file blob f819cc3:app/dist/_nuxt/a8c2eb4.js > /tmp/old.js
+python3 - <<'PY'
+s = open('/tmp/old.js', encoding='utf-8').read().split('\n')[0]
+print('computed', s.find('computed:{') + 1, 'methods', s.find('methods:{') + 1)
+print('def', s.find('modeText:function') + 1, 'call', s.find('modeText(') + 1)
+PY
+
+### 2) 新产物
+python3 - <<'PY'
+s = open('app/dist/_nuxt/fa190f8.js', encoding='utf-8').read().split('\n')[0]
+print('methods', s.find('methods:{') + 1, 'def', s.find('modeText:function') + 1)
+PY
+
+### 3) 契约测试
+python -m pytest tests/test_reader_group_frontend_contract.py -q
+
+### 4) dist 完整性
+find app/dist -type f | wc -l            # 期望 757
+test -f app/dist/static/pdfjs/web/viewer.html && echo pdfjs-ok
+
+### 5) 包完整性
+sha256sum -c audiobook-deploy-4.6.0-build.27-r24.tar.gz.sha256
+gzip -t audiobook-deploy-4.6.0-build.27-r24.tar.gz
+tar -tzf audiobook-deploy-4.6.0-build.27-r24.tar.gz | wc -l   # 期望 47902
+```
+
+
+---
+
+### 故障复盘：豆瓣 v1 残留导致的「更新元数据」500
+
+> 一句话：删掉了豆瓣 v1 插件和它的 `import`，但漏掉了 `book.py` 里一句
+> `if provider_key == douban.KEY:`。这行位于所有 provider 的公共路径上，
+> 于是**任何来源**的「更新元数据」都会 `NameError` 500，和用不用豆瓣无关。
+
+- 发生环境：用户 NAS 上的 `4.6.0-build.27-r24` 镜像
+- 报错位置：`webserver/handlers/book.py` 第 1310 行，`BookRefer.post`
+- 引入提交：`4f7c427`（`chore(meta)!: douban v1 尸体彻底清除`，随 build.27-r12 发布）
+- 修复提交：`65ff4cb`（服务端）、`c08e823`（文档）；热更包 `audiobook-hotfix-4.6.0-build.27-r25-douban1.tar.gz`
+
+---
+
+#### 0. 摘要
+
+| 项 | 结论 |
+| --- | --- |
+| 直接原因 | `BookRefer.post` 里 `if provider_key == douban.KEY:` 引用了已删除的模块，求值即 `NameError` |
+| 影响面 | 「更新元数据 / 仅更新封面 / 仅更新作者简介」三个 POST 动作全部 500；页面浏览、阅读、搜索不受影响 |
+| 为什么没早发现 | 该分支不是页面加载路径，只在用户手动点「更新元数据」时触发；且 500 被前端当成普通失败提示 |
+| 为什么删 v1 时没发现 | 删除提交只改了 `import` 行、`douban.str2date` 与文案，**没有扫描跨模块常量引用** `douban.KEY` |
+| 修复 | 抽出 `_resolve_refer_mi`，删除 v1 分支；存量 `provider_key="douban"` 仍按 v2 流程正常保存 |
+| 防回归 | 8 条测试，其中一条用 AST 静态检查禁止 `webserver/**` 出现未绑定的 `douban.` 属性访问 |
+| 是否已上线 | 代码在 `65ff4cb`（r25）；线上可先用热更包临时顶住，正式仍须重建 r25 镜像 |
+
+---
+
+#### 1. 现象
+
+线上日志：
+
+```
+File "/var/www/mybooks/webserver/handlers/book.py", line 1310, in post
+    if provider_key == douban.KEY:
+NameError: name 'douban' is not defined
+```
+
+前端表现：书籍详情页点「更新元数据」（或「仅更新封面」）后请求返回 500，页面提示失败，
+有时表现为一直转圈到超时。与选择哪个信息源（`calibre` / `douban_v2` / `xhsd` / `bookbarn`）无关。
+
+**实测**：异常发生在 `post` 的参数解析之后、任何 provider 逻辑之前，
+因此「哪个源」不可能影响是否触发。
+
+---
+
+#### 2. 为什么这条分支长期没暴露
+
+三个条件同时成立，缺一不可：
+
+1. **只在写路径上**。`BookRefer.post` 是「更新元数据」的接口（前端 `POST /book/<id>/refer`），
+   不是书籍详情页的加载接口。日常浏览、搜索、阅读都不会走到这里。
+2. **对所有 provider 都先求值**。`if provider_key == douban.KEY:` 先算右值再比较，
+   所以 `provider_key` 是 `calibre` 也照样抛异常——它不是一个"豆瓣专属"分支，而是公共路径上的地雷。
+3. **失败被前端弱化**。500 在界面上就是一次普通的「操作失败」，没有堆栈入口；
+   只有去翻服务端日志才看得到 `NameError`。
+
+v1 下线（`4f7c427`，build.27-r12）之后，插件目录、插件注册、前端源选择、配置项都清干净了，
+所以**没人再从功能路径上想起它**——这也解释了为什么"清得很彻底"的感知与实际残留同时存在。
+
+---
+
+#### 3. 引用链
+
+```
+webserver/handlers/book.py
+  L54  from webserver.plugins.meta import douban_v2      ← 只有 v2
+  L1299 def post(self, id)          (@js @auth，路由 /book/<id>/refer)
+  L1310 if provider_key == douban.KEY:                    ← douban 未定义
+```
+
+- `webserver/plugins/meta/douban/`：**目录不存在**（实测），v1 插件已被删除。
+- 插件注册是**显式 import**（`webserver/services/book_search.py:16-25` 逐个 from-import 并组成
+  `_PLUGIN_CLASSES` / `_PROVIDER_PLUGIN_CLASSES`），没有"扫描目录动态加载"，
+  所以不会出现"删了目录但注册表里还挂着"的另一种 500。
+- `4f7c427` 的实际改动（实测，`git show 4f7c427 -- webserver/handlers/book.py`）：
+
+```diff
+-from webserver.plugins.meta import douban, douban_v2
++from webserver.plugins.meta import douban_v2
+@@ class BookEdit
+-            content = douban.str2date(data["pubdate"])
+@@ class BookAddByISBN
+-  ... 配置互联网信息源的插件地址（仅部署 douban-rs-api 镜像时才需要；未部署请取消勾选 douban 源）。
+```
+
+即：**import 删了、两处显式调用改了，但 `douban.KEY` 这处"常量引用"留了下来**。
+Python 不会在 import 时发现它（属性访问在函数体内，运行时才解析名字），
+`pyflakes` 之类也只报"未定义名字"，如果 CI 没跑静态检查就一路带到了线上。
+
+---
+
+#### 4. 全仓库同类残留清单与判定
+
+排查口径：`douban` 字面量 + `douban.` 属性访问 + `provider_key == "douban"`，覆盖 `webserver/`、`tools/`、`app/src/`、`delivery/`。
+
+| 位置 | 内容 | 判定 |
+| --- | --- | --- |
+| `webserver/handlers/book.py:1310`（修复前） | `if provider_key == douban.KEY:` | **真 500，已修**（唯一一处真正会抛异常的） |
+| `tools/others/tools.py:23`、`73-88` | `from webserver.plugins.meta import douban`、`douban.get_douban_metadata(...)` | **跑起来即 ImportError**，但这是 calibre 遗留批处理脚本，服务不 import、镜像不执行 → 安全，未改（历史工具，改动无收益） |
+| `delivery/overlay/files/webserver/handlers/book.py:53/1292/2250` | 同样的 v1 分支 + `douban.str2date` | **冻结的历史快照**（`opt/p0-p1` 分支交付物），Dockerfile / compose / `pack.sh` 都不引用它，且其 `MANIFEST`/`SHA256SUMS` 依赖原始字节 → 刻意不改 |
+| `webserver/handlers/base.py:194-203` | `douban_id = link.split("//")[-1]` 局部变量 | 只是变量名，与模块无关 → 安全 |
+| `webserver/settings.py:199/311`、`webserver/base/setting_saver.py:54` | `META_SELECTED_SOURCES` 含 `douban_v2`；`douban_max_count` 被 v2 复用 | 配置键，v2 仍在读 → 安全 |
+| `webserver/handlers/admin.py:66/668` | `DEFAULT_META_SOURCES`、`douban_apikey` 校验已移除的注释 | 注释/默认值 → 安全 |
+| `app/src/pages/book/_bookid.vue:117` | `['douban','amazon','douban_v2'].includes(book.provider_key)` 决定标题颜色 | 前端常量，命中只是配色 → 安全 |
+| locale / 文档文案里的「豆瓣」 | 文案 | 安全 |
+
+结论：**只有一处会抛异常**，其余是"名字或历史遗留"，不是"未定义引用"。
+这也是本次没有做大扫除的原因——把安全项一起改，只会扩大回归面。
+
+---
+
+#### 5. 修复
+
+`webserver/handlers/book.py`：
+
+- 新增 `_resolve_refer_mi(provider_key, provider_value, metadata, mi, only_meta, only_author_comments)`（L1272-1295）；
+- 删除 `if provider_key == douban.KEY:` 分支；
+- 统一流程：**v2 占位注释修正 → 表单 `metadata` 或现有 `mi` → 按需补封面**；
+- `post` 里改为一次调用 + 空值兜底（L1334-1338）：
+
+```python
+refer_mi = self._resolve_refer_mi(
+    provider_key, provider_value, metadata, mi, only_meta, only_author_comments)
+if not refer_mi:
+    return {"err": "plugin.fail", "msg": _("拉取图书信息异常，请重试")}
+```
+
+**为什么保留 `provider_key="douban"` 的兼容**：库里存量书籍的 `provider_key` 字段还可能是 `douban`
+（v1 时代写入的）。这类书再点「更新元数据」时，不应该因为源不存在而失败——
+按"以表单/现有元数据为准，必要时补封面"处理，行为等同于不再依赖该源。
+**没有**恢复 v1 插件：模块、前端入口、配置都已下线，恢复等于把整套 v1 拖回来。
+
+---
+
+#### 6. 测试与静态检查
+
+`tests/test_book_meta_provider_branch.py`（8 条，实测 `8 passed`）：
+
+| 用例 | 覆盖 |
+| --- | --- |
+| `douban` / `douban_v2` / `xhsd` / `bookbarn` 四参数化 | 各 provider 分支在**没有任何豆瓣模块**时也能正常返回，不抛异常 |
+| v2 占位注释 | `comments == "....."` 时清空并走插件 |
+| 封面开关 | `only_meta=yes` 不补封面；默认补封面 |
+| AST 静态检查 | 遍历 `webserver/**/*.py`，若出现 `douban.` 属性访问而该文件没有绑定 `douban` 名字 → 失败 |
+| v1 模块确已删除 | `webserver/plugins/meta/douban/` 下不再有 `.py` 源文件 |
+
+静态检查是这次的关键补充：它防的不是"再写错一次同样的代码"，而是**"再删一次模块时漏掉常量引用"**。
+
+---
+
+#### 7. 验证
+
+**已验证（本地）**
+
+- `python -m pytest tests/test_book_meta_provider_branch.py -q` → 8 passed
+- `_resolve_refer_mi` 在 L1272，`post` 调用在 L1334；旧分支已无（行首锚定 `grep -n "^        if provider_key == douban.KEY:"` 无输出）
+
+**须在真机验证（尚未做）**
+
+1. 重建 r25 镜像或打热更包后重启；
+2. 书籍详情点「更新元数据」→ 正常返回；
+3. `docker logs --since 10m <容器> 2>&1 | grep -c "NameError: name 'douban' is not defined"` → `0`。
+
+---
+
+#### 8. 热更包：能做，但只是临时手段
+
+为了不为 249 KB 的一个文件重传 221 MB 部署包，另出了热更包
+`audiobook-hotfix-4.6.0-build.27-r25-douban1.tar.gz`（66,177 B，SHA256 `cd6d1e97…69f8be`）：
+
+```
+webserver/handlers/book.py   修复版（ca49dfbd…99b8b）
+apply.sh                     备份 → docker cp → sha256 校验 → 提示重启
+rollback.sh                  按备份还原 → 校验 → 提示重启
+SHA256SUM / README.md
+```
+
+```sh
+sh apply.sh -c <容器名>
+docker restart <容器名>
+### 回滚: sh rollback.sh -c <容器名>
+```
+
+边界（**必须知道**）：
+
+| 操作 | 结果 |
+| --- | --- |
+| `docker cp` 后不重启 | **不生效**，Python 不会热加载 |
+| `docker restart <容器>` / `docker compose restart mybooks` | 重启进程、保留可写层 → 热更有效 |
+| `docker compose up -d --force-recreate`、`docker rm` 重建、重建镜像 | 新容器、可写层丢弃 → **热更失效**，回到镜像内旧代码 |
+
+所以热更是"止血"，正式修复仍应重建 r25 镜像（r25 同时含 Dockerfile 构建门禁，本来就要重建）。
+
+---
+
+#### 9. 教训
+
+1. **删除模块 ≠ 改 import**。删一个模块时，要扫三类引用：
+   ① `import` / `from ... import`；② `module.attr` 形式的常量与函数；③ 字符串/配置里的 key。
+   本次 ② 漏了，而它恰好落在公共路径上。
+2. **公共路径上的 provider 判断要"无害化"**。凡是 `if x == CONST:` 这种写法，
+   `CONST` 必须来自仍在维护的模块；否则用 `getattr(mod, "KEY", None)` 或直接查表，
+   避免"源已下线"变成"整个功能不可用"。
+3. **别名/兼容字段要显式测试**。`provider_key="douban"` 的存量数据没有测试覆盖，
+   修复时补了参数化用例，而不是只测当前在用的源。
+4. **静态检查要针对"类别"而不是"这一行"**。AST 规则禁止"未绑定的 `douban.` 访问"，
+   下次换成别的模块同样能兜住。
+5. **用 sha256 判断热更是否到位，别用裸 grep**。修复版的注释里也出现了
+   `if provider_key == douban.KEY:` 这句（讲历史），`grep "douban.KEY"` 会误报；
+   用行首缩进锚定或直接比对文件 sha256。
+
+---
+
+#### 附录 A：实测 / 推断
+
+**实测**
+
+- 报错原文、行号、`BookRefer.post` 位置（用户线上日志）
+- `4f7c427` 的 diff：只改了 import、`douban.str2date`、ISBN 提示文案（`git show`）
+- `webserver/plugins/meta/douban/` 不存在；插件注册为显式 import
+- 全仓库 `douban` 残留清单（第 4 节表格，逐处 grep + 读代码判定）
+- 修复后 8 条测试通过；AST 检查对 `webserver/**` 生效
+- 热更包结构、权限、sha256、`sh -n`/`bash -n`、解包复验（本机）
+
+**推断**
+
+- "因为不在页面加载路径，所以长期没被发现"——依据是接口调用时机与前端提示方式，
+  没有用户侧的操作记录佐证。
+- "线上 r12~r24 都带这个问题"——依据是 r24 包内 `book.py` 与 `HEAD~1` 完全一致；
+  更早的 r12~r23 未逐包开箱比对，但该行自 `4f7c427` 起从未被改动（`git log -S` 只命中初始导入）。
+
+**误判（保留记录）**
+
+- 一度以为这是"豆瓣 v2 插件挂了"或"某个源返回异常"，实际与 provider 无关。
+- 一度想用 `grep -rn "douban"` 直接判定"还有多少残留"，会把注释、变量名、文案全算进来，
+  必须逐个看上下文才能区分"会抛异常"和"只是名字"。
+
+---
+
+#### 附录 B：复现与验证命令
+
+```sh
+### 1) 确认修复前的坏行（在旧镜像/旧包里）
+docker exec <容器> grep -n "^        if provider_key == douban.KEY:" /var/www/mybooks/webserver/handlers/book.py
+
+### 2) 确认修复后的文件指纹
+docker exec <容器> sha256sum /var/www/mybooks/webserver/handlers/book.py
+### 期望 ca49dfbd4ac0f1311ab33ed437d26856abeb21c62d092792a31a088f20299b8b
+
+### 3) 日志不再出现该异常
+docker logs --since 30m <容器> 2>&1 | grep -c "NameError: name 'douban' is not defined"
+
+### 4) 静态检查 + 单测（仓库内）
+python -m pytest tests/test_book_meta_provider_branch.py -q
+
+### 5) 全仓残留扫描（人工复核用）
+grep -rn "\bdouban\b" --include="*.py" webserver tools | grep -v "douban_v2"
+```

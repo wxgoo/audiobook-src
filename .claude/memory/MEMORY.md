@@ -4,10 +4,10 @@
 
 ## Key Reference Documents
 
-- [`docs/操作总纲.md`](../docs/操作总纲.md) — 日常运维/升级先看这个
-- [`INSTALL_GUIDE.md`](../INSTALL_GUIDE.md) — 首次安装、功能排障（1400+ 行，当字典查）
-- [`docs/部署包说明.md`](../docs/部署包说明.md) — 包里有啥、目录布局、upgrade.sh 设计
-- [`docs/上游跟进清单.md`](../docs/上游跟进清单.md) — 相对上游的缺陷与新增，按 issue 整理
+- [`README.md`](../README.md) — 唯一安装 / 使用文档（GHCR + 纯 image compose，与上游一致）
+- [`CHANGELOG.md`](../CHANGELOG.md) — 唯一历史与排障档案（逐版变更 + 文末「排障实录」附录）
+
+> 旧的多份部署 / 排障 / 归档文档已并入这两份并删除；下面各节是仍有效的踩坑记录。
 
 ---
 

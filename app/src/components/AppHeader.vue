@@ -818,7 +818,12 @@ export default {
                 .concat(this.user.is_login && showItem("booklists") ? booklistLinks: [])
                 .concat(navLinks)
                 .concat(this.sys.allow.user_memos ? memoLink : [])
-                .concat(showItem("friends") && this.sys.friends.length > 0 ? friendLinks : [])
+                // 友情链接显隐独立于 SIDEBAR_ITEMS：旧逻辑 showItem("friends") 在
+                // 「管理员保存过设置页 + 存储列表是旧默认（缺 friends）」时会把 friends
+                // 判为「管理员主动取消勾选」而永久隐藏，非管理员前台就看不到友情链接。
+                // 现改为独立站点开关 sys.allow.friend_links（默认 true，老后端无此字段时
+                // 回退 showItem 兼容），保证所有用户一致可见。
+                .concat((this.sys.allow.friend_links !== undefined ? this.sys.allow.friend_links : showItem("friends")) && this.sys.friends.length > 0 ? friendLinks : [])
         },
     },
     mounted() {

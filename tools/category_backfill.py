@@ -2,7 +2,7 @@
 # -*- coding: UTF-8 -*-
 """按现有 tags 批量回填 calibre 自定义列 #category。
 
-用途（见 INSTALL_GUIDE.md 读者组分级权限一节）：
+用途（读者组分级权限相关，机制见 README 主要功能一节）：
   读者组（ReaderGroupService）的「分类」白/黑名单匹配的是每本书的
   calibre 自定义列 #category（webserver/constants.py: CALIBRE_COLUMN_CATEGORY）。
   书库里大量书籍没填这一列时，读者组白名单会把这些书全部挡掉。

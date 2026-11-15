@@ -37,7 +37,8 @@ docker exec audiobook-mybooks-1 ls /var/www/mybooks/app/dist/_nuxt/ | grep <chun
 
 ## 代码地图（简版）
 
-> 完整架构、路由顺序、常用命令、开发任务与踩坑清单以 [`docs/开发指南.md`](docs/开发指南.md) 为准，
+> 架构、路由顺序、常用命令、开发任务见本文件；踩坑清单见 [`.claude/memory/MEMORY.md`](.claude/memory/MEMORY.md)。
+> 安装 / 使用看 [`README.md`](README.md)，逐版变更与排障实录看 [`CHANGELOG.md`](CHANGELOG.md)。
 > 本文件只留索引级信息，不重复维护。
 
 - **入口**：`server.py` → `webserver.main.main()`；路由由 `webserver/handlers/*.py` 的 `routes()` 按固定顺序拼接，

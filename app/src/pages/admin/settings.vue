@@ -1398,7 +1398,7 @@ const SEARCH_ALIASES = {
     主页: ["INDEX_PAGE_TYPE", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"], 默认页: ["INDEX_PAGE_TYPE"], 首页类型: ["INDEX_PAGE_TYPE"],
     首页卡片: ["HOMEPAGE_CONFIG"], 自定义卡片: ["HOMEPAGE_CONFIG"], 卡片: ["HOMEPAGE_CONFIG"], 作者卡片: ["HOMEPAGE_CONFIG"], 标签卡片: ["HOMEPAGE_CONFIG"], 丛书卡片: ["HOMEPAGE_CONFIG"], 语言卡片: ["HOMEPAGE_CONFIG"], 评分卡片: ["HOMEPAGE_CONFIG"],
     项目链接: ["HIDE_PROJECT_LINKS"], 隐藏链接: ["HIDE_PROJECT_LINKS"], 开源链接: ["HIDE_PROJECT_LINKS"],
-    友情链接: ["FRIENDS"], 友链: ["FRIENDS"], 链接: ["FRIENDS", "HIDE_PROJECT_LINKS", "AI_API_URL", "static_host", "SITE_URL"],
+    友情链接: ["FRIENDS", "ENABLE_FRIEND_LINKS"], 友链: ["FRIENDS", "ENABLE_FRIEND_LINKS"], 链接: ["FRIENDS", "ENABLE_FRIEND_LINKS", "HIDE_PROJECT_LINKS", "AI_API_URL", "static_host", "SITE_URL"],
     网址: ["AI_API_URL", "static_host", "SITE_URL"], 地址: ["AI_API_URL", "static_host", "smtp_server", "SITE_URL"],
     // 站点与外观 · 首页与列表
     随机: ["MAIN_PAGE_RANDOM_COUNT"], 推荐: ["RECOMMEND_ENABLE", "RECOMMEND_USE_CROWD", "ENABLE_BOOK_RECOMMEND_TO_OTHERS", "MAIN_PAGE_RANDOM_COUNT"], 智能: ["RECOMMEND_ENABLE"],
@@ -2082,6 +2082,13 @@ export default {
                     type: "checkbox",
                   }
                 ]
+              },
+              {
+                icon: "mdi-link-variant",
+                key: "ENABLE_FRIEND_LINKS",
+                label: "settings.enable_friend_links",
+                type: "checkbox",
+                tips: "settings.enable_friend_links_tips",
               },
               {
                 icon: "mdi-page-layout-sidebar-left",

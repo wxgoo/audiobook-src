@@ -66,7 +66,7 @@ DIST_HOTFIX_MAX_BYTES = 20 * 1024 * 1024
 # 文档类：改动不需要用户执行任何操作（但仍会体现在 changed 里，方便核对）。
 DOCS_PREFIX = ("docs/", "document/", "delivery/overlay/files/docs/",
                "delivery/overlay/files/document/", "delivery/overlay/files/CHANGELOG.md")
-DOCS_EXACT = {"CHANGELOG.md", "README.md", "INSTALL_GUIDE.md", "SECURITY.md",
+DOCS_EXACT = {"CHANGELOG.md", "README.md", "SECURITY.md",
               # §维护者侧工具§（build.27-r12）：只在出清单的开发机/git 上跑，
               # NAS 运行态不执行——它的改动不阻塞在线热更，随下次整包部署落地。
               "scripts/gen-update-manifest.py"}
@@ -108,7 +108,7 @@ def changed_files(base_commit):
 def classify(path):
     if path in DOCS_EXACT or path.endswith(".md") or path.startswith(DOCS_PREFIX):
         return "docs"
-    # §tests/ 不进部署包§（pack.sh 有意排除，见 docs/部署包说明.md「包内容裁剪」）：
+    # §tests/ 不进部署包§（pack.sh 有意排除）：
     # 测试改动既不能通过在线热更投递（apply 只收 server.py + webserver/**/*.py），
     # 也不存在于部署目录里——按 docs 同口径归档，不能让一个测试文件的改动把
     # 整次纯后端修订顶成「必须重新部署」（build.27-r12 现场教训）。
@@ -254,7 +254,7 @@ def main():
         "dist_deleted": dist_deleted,
         "reason": (
             "本次改动包含镜像级文件（Dockerfile / conf / 依赖 / 工具链 / 删除的前端文件），"
-            "在线替换无法生效，请重新执行 deploy.sh / upgrade.sh"
+            "在线替换无法生效，请把 .env 的 IMAGE_TAG 换成新 tag 后重新 docker compose up -d"
             if blocking else
             "包含前端产物与后端 Python 代码，可在线替换并重启服务；完成后请 Ctrl+Shift+R 强制刷新"
             if (dist_files or dist_deleted) and files else

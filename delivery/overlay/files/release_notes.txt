@@ -1,9 +1,0 @@
-<b>版本与更新</b><br/>
-<b>运行期版本: 4.6.0-build.27</b><br/>
-<br/>
-本项目的更新来源是 Gitee 仓库 wxgoo/audiobook-src 的发布清单
-<code>update/manifest.json</code>，与上游 mybooks 的 release 无关。<br/>
-请在左侧管理树打开「版本与更新」查看新版本、在线更新或重新部署指引。<br/>
-<br/>
-本文件仅为兼容旧构建保留；界面弹窗内容由 /api/admin/release/notes
-依据 Gitee 发布清单动态生成，不再读取本文件。<br/>

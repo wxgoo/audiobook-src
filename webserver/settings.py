@@ -374,6 +374,9 @@ settings = {
     'SIDEBAR_ITEMS_MIGRATED': False,    # 服务端内部标记（无 UI 控件）：管理员保存过设置页即置 True，之后 SIDEBAR_ITEMS 由管理员权威决定，读取期不再补齐旧默认列表缺的三个新项
 
     'FRIENDS': [],
+    # 友情链接是否在前台侧边栏显示（独立于 SIDEBAR_ITEMS 的站点级开关）。
+    # 设为 False 时任何用户都看不到；默认 True，保证所有用户（含非管理员）都能看到。
+    'ENABLE_FRIEND_LINKS': True,
     'SOCIALS': [],
     'DEVICES': [],
     'SIGNUP_MAIL_TITLE': '欢迎注册个人书屋',

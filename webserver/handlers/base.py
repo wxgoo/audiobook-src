@@ -465,6 +465,10 @@ class BaseHandler(web.RequestHandler):
             "upload": False if require_login else CONF.get("ALLOW_GUEST_UPLOAD", False),
             "share_link": CONF.get("ENABLE_SHARE_LINK", True),
             "physical_books": CONF.get("ENABLE_PHYSICAL_BOOKS", True),
+            # 友情链接显隐独立于 SIDEBAR_ITEMS：后者在「管理员保存过设置页 + 旧默认列表」
+            # 时会把 friends 判为「管理员主动隐藏」而永久吞掉，导致非管理员在前台看不到友情链接。
+            # 独立开关默认 True，任何用户都能看到；仅当用户显式关掉才隐藏。
+            "friend_links": CONF.get("ENABLE_FRIEND_LINKS", True),
             "folder": CONF.get("ENABLE_FOLDER_BROWSE", False),
             "download_quota": CONF.get("ENABLE_DOWNLOAD_QUOTA", False),
             "server_import": CONF.get("ENABLE_SERVER_FILE_IMPORT", False),

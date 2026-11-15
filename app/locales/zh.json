@@ -976,6 +976,8 @@
         "hide_project_link_in_footer": "隐藏脚注中的项目链接",
         "enable_user_memos": "启用站内留言功能",
         "enable_user_memos_tips": "开启后将在侧边栏上显示站内留言；关闭后侧边栏和系统管理中均不显示留言相关入口",
+        "enable_friend_links": "显示友情链接",
+        "enable_friend_links_tips": "关闭后所有用户在前台侧边栏都看不到友情链接；开启时对所有用户一致显示。",
         "sidebar_items": "侧边栏显示项目",
         "sidebar_items_tips": "勾选表示在侧边栏显示，全部不勾选表示全部隐藏",
         "private_library_mode": "开启私人图书馆模式",

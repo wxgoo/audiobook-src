@@ -15,8 +15,8 @@
   旧文件备份到持久化 /data；失败即回滚；提供 Web 一键回滚与宿主机回滚命令。
 * 生效方式：Python 是解释型，代码在镜像的可写层里替换后，进程退出
   （supervisor autorestart=true 会拉起）即加载新代码，与既有 AdminRestartServer 一致。
-  注意 docker compose down && up -d 会丢弃可写层，所以另有 /data/update-sync 供
-  deploy.sh / upgrade.sh 把热更新固化进宿主机源码目录，避免"下次部署版本倒退"。
+  注意 docker compose down && up -d（换 IMAGE_TAG 重建）会丢弃可写层，所以另有
+  /data/update-sync 保存最新清单，供宿主机侧脚本在换镜像时固化热更，避免版本倒退。
 """
 import hashlib
 import json
@@ -366,7 +366,7 @@ def _apply_locked(revision):
     # 其余 blocking（Dockerfile / conf / 依赖 / myreader）仍然只能重新部署。
     dist_ok = bool(remote.get("dist_hotfixable"))
     if (remote.get("requires_dist") and not dist_ok) or not remote.get("hotfixable"):
-        raise RuntimeError("本次更新包含镜像级文件，请重新执行 deploy.sh / upgrade.sh")
+        raise RuntimeError("本次更新包含镜像级文件，请把 .env 的 IMAGE_TAG 换成新 tag 后重新 docker compose up -d")
 
     local = read_local_manifest()
     if not local.get("revision"):
@@ -451,7 +451,7 @@ def _apply_locked(revision):
             json.dump(remote, f, ensure_ascii=False, indent=2)
         os.replace(LOCAL_MANIFEST + ".tmp", LOCAL_MANIFEST)
 
-        # 5) 同步到 /data 供宿主机固化（deploy.sh / upgrade.sh 会读取）
+        # 5) 同步到 /data 供宿主机侧脚本读取（换镜像重建时会用到）
         try:
             if os.path.isdir(SYNC_ROOT):
                 shutil.rmtree(SYNC_ROOT)

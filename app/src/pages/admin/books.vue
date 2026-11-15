@@ -119,6 +119,20 @@
                         <v-icon>mdi-book-refresh-outline</v-icon>
                         <span v-if="!$vuetify.breakpoint.xs">{{ $t(books_selected.length > 0 ? 'admin.books.autoUpdateSelected' : 'admin.books.autoUpdate') }}</span>
                     </v-btn>
+                    <!-- 图书类型互转：电子书 ⇄ 实体书（上游功能，独立橙色按钮，选中书后出现）。
+                         批量处理下拉菜单里也保留了同名入口，两处复用同一个对话框与方法。 -->
+                    <v-btn
+                        v-if="!loading && books_selected.length > 0 && allowPhysicalBooks"
+                        color="orange darken-2"
+                        @click="showExchangeTypeDialog"
+                        class="flex-shrink-0 white--text"
+                        :icon="$vuetify.breakpoint.xs"
+                        :small="$vuetify.breakpoint.xs"
+                        :title="$t('admin.books.exchangeType')"
+                    >
+                        <v-icon>mdi-swap-horizontal</v-icon>
+                        <span v-if="!$vuetify.breakpoint.xs">{{ $t('admin.books.exchangeType') }}</span>
+                    </v-btn>
                     <v-btn
                         v-if="!loading && books_selected.length > 0"
                         color="#9f353a"
