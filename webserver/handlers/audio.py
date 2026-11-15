@@ -1202,18 +1202,24 @@ def _atomic_write_file(dst, body):
 # 好处：中文/编码/字段丢失全部消失；目标由后端决定，杜绝路径穿越。
 
 def list_chapter_files(audio_dir):
-    """按播放页同一口径枚举章节文件：自然排序、忽略 <=1KB 的残缺文件。
+    """按播放页（AudioDetail.get）同一口径枚举章节文件：自然排序、跳过 CIP 前缀。
 
-    get_audios() 先 sorted(..., key=natural_sort_key) 再跳过 <=1KB 的文件，
-    这里先过滤后排序，相对顺序完全一致，所以 index 与页面列表严格一一对应。
+    r40 曾按 get_audios() 口径忽略 <=1KB 的残缺文件，但播放页 AudioDetail
+    并不跳过它们（也不跳 CIP 前缀）：书里一旦出现 0 字节坏文件，index 就会
+    与页面列表错位，删/替换会误伤下一集。r41 统一到播放页口径：文件粒度、
+    不作大小过滤，坏文件也能被准确定位并删除/替换。
+
+    边界：m4b 内嵌章节在播放页会展开成多个列表项，本函数只列物理文件，
+    这类书的章节管理仍按文件粒度操作（与 r40 一致）。
     """
     names = []
     for name in os.listdir(audio_dir):
         if not name.lower().endswith(tuple(SUPPORTED_AUDIO_FORMATS)):
             continue
-        full = os.path.join(audio_dir, name)
+        if name.startswith(SKIP_AUDIO_FILE_PREFIX):
+            continue
         try:
-            if os.path.isfile(full) and os.path.getsize(full) > 1024:
+            if os.path.isfile(os.path.join(audio_dir, name)):
                 names.append(name)
         except OSError:
             continue
@@ -1226,6 +1232,96 @@ def chapter_by_index(audio_dir, index):
     if index < 0 or index >= len(names):
         return None
     return names[index]
+
+
+# ===== r41：按「顺序号」插入章节 =====
+# 播放页顺序完全由文件名的 natural_sort_key 决定，没有独立的排序字段。
+# r40 上传时的建议名是「最后一集 +1」，所以删掉第 10 集再补传必然排到末尾。
+# 现在允许指定 1-based 顺序号，由后端生成一个「恰好排到该位置」的文件名：
+# 不重命名、不移动任何现有文件，播放进度（按 index 记）与字幕（按同名 stem
+# 匹配）都不会错位。生成结果一律用 natural_sort_key 实测验证落位。
+
+def _shift_last_number(stem, delta):
+    """把 stem 里最后一段数字 +/- delta，保持零填充宽度；无数字返回 None。"""
+    matches = list(re.finditer(r"\d+", stem))
+    if not matches:
+        return None
+    m = matches[-1]
+    value = int(m.group()) + delta
+    if value < 0:
+        return None
+    return stem[:m.start()] + str(value).zfill(len(m.group())) + stem[m.end():]
+
+
+def _insert_after_last_number(stem, suffix):
+    """在 stem 最后一段数字之后插入 suffix；无数字时追加到末尾。"""
+    matches = list(re.finditer(r"\d+", stem))
+    pos = matches[-1].end() if matches else len(stem)
+    return stem[:pos] + suffix + stem[pos:]
+
+
+def _position_name_candidates(prev, nxt, ext, preferred):
+    """按优先级生成候选文件名 stem，最后统一补上传文件的扩展名。"""
+    stems = []
+
+    def add(stem):
+        if stem and stem not in stems:
+            stems.append(stem)
+
+    # 1) 补空位优先复用被删章节的原名（前端删除后把名字带回来）
+    if preferred:
+        add(os.path.splitext(os.path.basename(preferred))[0])
+    # 2) 与前后邻居同风格：把邻居的数字 -1 / +1
+    for neighbour in (nxt, prev):
+        if not neighbour:
+            continue
+        nstem = os.path.splitext(neighbour)[0]
+        for delta in (-1, 1, -2, 2):
+            shifted = _shift_last_number(nstem, delta)
+            if shifted:
+                add(shifted)
+        # 3) 连续编号（10 与 11）之间：数字后加字母，字典序落在两者之间
+        for suffix in ("a", "b", "c", "z", "_1", "-1", "1"):
+            add(_insert_after_last_number(nstem, suffix))
+        # 4) 无规律文件名：stem 末尾追加可排序字符
+        for suffix in ("a", "b", "z", "_1", "~", "1"):
+            add(nstem + suffix)
+    # 5) 插到最前 / 无邻居时的兜底
+    for stem in ("0000", "0", "0001", "chapter0001"):
+        add(stem)
+    return [s + ext for s in stems]
+
+
+def _sorts_at(names, candidate, idx):
+    """candidate 加入列表后按播放页口径排序，是否恰好落在 idx。"""
+    merged = sorted(names + [candidate], key=natural_sort_key)
+    return merged.index(candidate) == idx
+
+
+def chapter_name_for_position(audio_dir, position, ext, preferred=None):
+    """为「插入到第 position 集」生成文件名；返回 (name, err_msg)。
+
+    保证：不与现有文件同名、扩展名与上传文件一致、按 natural_sort_key
+    恰好排在 position-1。绝不改动任何现有文件。
+    """
+    names = list_chapter_files(audio_dir)
+    idx = position - 1
+    if position < 1 or position > len(names) + 1:
+        return None, _("顺序号超出范围（1 ~ %d）") % (len(names) + 1)
+    prev = names[idx - 1] if idx > 0 else None
+    nxt = names[idx] if idx < len(names) else None
+    for candidate in _position_name_candidates(prev, nxt, ext, preferred):
+        if os.path.splitext(candidate)[1].lower() != ext:
+            continue
+        if candidate in names or os.path.exists(os.path.join(audio_dir, candidate)):
+            continue
+        if (candidate != os.path.basename(candidate) or ".." in candidate
+                or "/" in candidate or "\\" in candidate
+                or candidate.startswith(".")):
+            continue
+        if _sorts_at(names, candidate, idx):
+            return candidate, ""
+    return None, _("无法为第 %d 集自动生成文件名，请清空顺序号后手动填写章节名") % position
 
 
 def _parse_chapter_index(handler):
@@ -1408,12 +1504,17 @@ class AudioChapterDelete(BaseHandler):
 
 
 class AudioChapterUpload(BaseHandler):
-    """上传新章节：文件名由 URL query 指定，绝不覆盖已有文件。
+    """上传新章节：可指定「插入到第 N 集」，绝不覆盖已有文件。
 
-    文件名决定播放顺序（natural_sort_key 自然排序）与 VIP 免费章判定位置，
-    因此要与这本书现有章节保持同一命名风格（例如「平凡的世界11.m4a」）。
+    文件名决定播放顺序（natural_sort_key 自然排序）与 VIP 免费章判定位置。
+    r41 起两种模式：
+      - ``?position=N``：后端按播放页排序口径生成一个恰好排到第 N 集的
+        文件名（``preferred`` 可带上刚删除章节的原名以优先复用）；
+        **不重命名/移动任何现有文件**，进度与字幕都不受影响。
+      - ``?name=xxx.ext``：沿用 r40 的手动命名，留空则用上传文件自带名；
+        追加到末尾或按名字排序。
     文本参数只走 URL query（中文经 URL 编码可靠送达），文件本体走 multipart；
-    不传 name 时退回上传文件自带的文件名。同名已存在请用「替换」，避免误覆盖。
+    文件名扩展名必须与上传文件一致。同名已存在请用「替换」，避免误覆盖。
     """
 
     MAX_BYTES = 300 * 1024 * 1024
@@ -1448,22 +1549,48 @@ class AudioChapterUpload(BaseHandler):
         if len(body) > self.MAX_BYTES:
             return {"err": "file.too_large", "msg": _("音频文件不能超过 300MB")}
 
-        # 目标文件名只从 URL query 取（中文经 encodeURIComponent 可靠送达），
+        # 文本参数一律只从 URL query 取（中文经 encodeURIComponent 可靠送达），
         # 不依赖 multipart 普通文本字段——r40 现场「无效的音频文件名」的教训。
+        raw_position = self.get_argument("position", "")
+        preferred = urllib.parse.unquote(self.get_argument("preferred", ""))
         name = urllib.parse.unquote(self.get_argument("name", ""))
-        if not name:
-            name = uploaded.get("filename") or ""
-        if (not name or name != os.path.basename(name)
-                or ".." in name or "/" in name or "\\" in name
-                or name.startswith(".")):
-            return {"err": "params.invalid", "msg": _("无效的音频文件名")}
-        target_ext = os.path.splitext(name)[1].lower()
-        if target_ext not in tuple(SUPPORTED_AUDIO_FORMATS):
-            return {
-                "err": "file.invalid_format",
-                "msg": _("只支持 %s 格式") % ", ".join(SUPPORTED_AUDIO_FORMATS),
-            }
-        target = name
+        position = None
+        if raw_position != "":
+            try:
+                position = int(raw_position)
+            except (TypeError, ValueError):
+                return {"err": "params.invalid", "msg": _("无效的顺序号")}
+            if position < 1:
+                return {"err": "params.invalid", "msg": _("顺序号必须从 1 开始")}
+
+        if position is not None:
+            # 顺序号模式：文件名由后端按播放页排序口径生成，只新增一个文件，
+            # 绝不重命名/移动任何现有章节。
+            target, pos_err = chapter_name_for_position(
+                audio_dir, position, ext, preferred)
+            if pos_err:
+                return {"err": "params.invalid", "msg": pos_err}
+        else:
+            if not name:
+                name = uploaded.get("filename") or ""
+            if (not name or name != os.path.basename(name)
+                    or ".." in name or "/" in name or "\\" in name
+                    or name.startswith(".")):
+                return {"err": "params.invalid", "msg": _("无效的音频文件名")}
+            target_ext = os.path.splitext(name)[1].lower()
+            if target_ext not in tuple(SUPPORTED_AUDIO_FORMATS):
+                return {
+                    "err": "file.invalid_format",
+                    "msg": _("只支持 %s 格式") % ", ".join(SUPPORTED_AUDIO_FORMATS),
+                }
+            # 名实一致：文件名扩展名必须与上传文件一致，否则会造出一个
+            # 「.m4a 里装 mp3」的文件，播放器与转码都会出问题。
+            if target_ext != ext:
+                return {
+                    "err": "file.invalid_format",
+                    "msg": _("章节名扩展名必须与上传文件一致（%s）") % ext,
+                }
+            target = name
         dst = os.path.join(audio_dir, target)
         exists_msg = _("同名章节 %s 已存在，请用「替换」覆盖或改名") % target
         if os.path.exists(dst):
@@ -1476,15 +1603,18 @@ class AudioChapterUpload(BaseHandler):
             logging.error("[AUDIO_UPLOAD_CHAPTER] failed for %s: %s", dst, err)
             return {"err": "server.error", "msg": _("上传音频章节失败: %s") % err}
 
-        logging.info("[AUDIO_UPLOAD_CHAPTER] book=%s file=%s size=%s",
-                     book_id, target, len(body))
+        logging.info("[AUDIO_UPLOAD_CHAPTER] book=%s file=%s size=%s position=%s",
+                     book_id, target, len(body), position)
         # 给原本没有音频的书上传第一章时，书集合新增一本；已有音频的书
         # mark_has_audio 内部会跳过，不会让 version 空转。
         _sync_audio_set(book_id, True)
+        data = {"filename": target, "size": len(body)}
+        if position is not None:
+            data["position"] = position
         return {
             "err": "ok",
             "msg": _("已上传章节 %s") % target,
-            "data": {"filename": target, "size": len(body)},
+            "data": data,
         }
 
 

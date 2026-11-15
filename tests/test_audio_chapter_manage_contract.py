@@ -152,17 +152,23 @@ def test_natural_sort_key_handles_mixed_str_and_int():
 
 
 def test_list_chapter_files_matches_player_order(tmp_path):
-    """自然排序 + 忽略 <=1KB 残缺文件，与 get_audios() 口径一致。"""
+    """r41：与播放页 AudioDetail 口径一致——不按大小过滤、跳过 CIP 前缀。
+
+    播放页并不跳过 0 字节坏文件；r40 这里过滤 <=1KB 会让 index 与页面列表
+    错位（删第 10 集会误伤第 11 集），故改为文件粒度 + 自然排序。
+    """
     from webserver.handlers.audio import list_chapter_files, chapter_by_index
     for name, size in [("平凡的世界10.m4a", 2048),
                        ("平凡的世界09.m4a", 2048),
                        ("平凡的世界02.m4a", 2048)]:
         (tmp_path / name).write_bytes(b"x" * size)
-    (tmp_path / "平凡的世界03.m4a").write_bytes(b"")  # 损坏的 0 字节
+    (tmp_path / "平凡的世界03.m4a").write_bytes(b"")  # 损坏的 0 字节，播放页仍会显示
     (tmp_path / "cover.jpg").write_bytes(b"x" * 2048)  # 非音频
+    (tmp_path / "图书在版编目CIP数据.m4a").write_bytes(b"x" * 2048)  # 播放页跳过
     assert list_chapter_files(str(tmp_path)) == [
-        "平凡的世界02.m4a", "平凡的世界09.m4a", "平凡的世界10.m4a"]
-    assert chapter_by_index(str(tmp_path), 1) == "平凡的世界09.m4a"
+        "平凡的世界02.m4a", "平凡的世界03.m4a",
+        "平凡的世界09.m4a", "平凡的世界10.m4a"]
+    assert chapter_by_index(str(tmp_path), 2) == "平凡的世界09.m4a"
     assert chapter_by_index(str(tmp_path), 99) is None
 
 

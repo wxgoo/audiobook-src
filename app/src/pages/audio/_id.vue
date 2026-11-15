@@ -480,24 +480,42 @@
       </v-card>
     </v-dialog>
 
-    <!-- 上传新音频章节：文件名决定播放顺序 -->
+    <!-- 上传新音频章节：可指定顺序号；文件名决定播放顺序 -->
     <v-dialog v-model="showUploadDialog" max-width="520" :persistent="uploadLoading">
       <v-card>
         <v-card-title class="headline">上传音频章节</v-card-title>
         <v-card-text>
-          <p class="mb-2">选择音频文件，并确认章节文件名。</p>
-          <p class="mb-2 grey--text">
-            文件名决定播放顺序与 VIP 免费章位置，请与现有章节保持同一命名风格，
-            例如 <strong>平凡的世界11.m4a</strong>。同名已存在时请改用「替换」。
-          </p>
+          <p class="mb-2">选择音频文件，可指定插入到第几集。</p>
           <v-text-field
-            v-model="uploadName"
-            label="章节文件名"
+            v-model="uploadPosition"
+            label="插入为第几集（留空 = 追加到末尾）"
+            type="number"
+            min="1"
+            :max="audioFiles.length + 1"
             dense
             outlined
             hide-details
-            class="mb-3"
+            class="mb-2"
           />
+          <p v-if="uploadPositionHint" class="mb-2 primary--text">{{ uploadPositionHint }}</p>
+          <p v-if="hasUploadPosition" class="mb-2 grey--text">
+            文件名由系统按该位置自动生成，与现有章节同风格；只新增这一集，
+            不会改动其它章节的顺序、播放进度与字幕。
+          </p>
+          <template v-else>
+            <p class="mb-2 grey--text">
+              文件名决定播放顺序与 VIP 免费章位置，请与现有章节保持同一命名风格，
+              例如 <strong>平凡的世界11.m4a</strong>。同名已存在时请改用「替换」。
+            </p>
+            <v-text-field
+              v-model="uploadName"
+              label="章节文件名"
+              dense
+              outlined
+              hide-details
+              class="mb-3"
+            />
+          </template>
           <input
             ref="uploadFileInput"
             type="file"
@@ -512,7 +530,7 @@
           <v-btn
             color="primary"
             :loading="uploadLoading"
-            :disabled="!uploadFile || !uploadName"
+            :disabled="!uploadFile || (!hasUploadPosition && !uploadName)"
             @click="submitUpload"
           >上传</v-btn>
         </v-card-actions>
@@ -691,16 +709,31 @@ export default {
       deleteChapterError: '',
       deleteChapterLoading: false,
 
-      // 上传新章节
+      // 上传新章节（r41：可指定顺序号，补空位时复用被删章节原名）
       showUploadDialog: false,
       uploadFile: null,
       uploadName: '',
+      uploadPosition: '',
+      uploadPreferred: '',
+      lastDeletedChapter: null,
       uploadError: '',
       uploadLoading: false
     };
   },
 
   computed: {
+    hasUploadPosition() {
+      const n = Number(this.uploadPosition);
+      return Number.isInteger(n) && n >= 1;
+    },
+    uploadPositionHint() {
+      const item = this.lastDeletedChapter;
+      if (!item || !this.hasUploadPosition) return '';
+      if (Number(this.uploadPosition) !== item.position) return '';
+      return item.filename
+        ? `将补回刚删除的第 ${item.position} 集（原文件名：${item.filename}）`
+        : `将补回刚删除的第 ${item.position} 集`;
+    },
     // 「重新生成」只在两种情况下出现：没有音频，或上次生成失败。
     // 另外必须要有 EPUB/TXT，否则后端无从转换。
     isAdmin() {
@@ -2235,6 +2268,11 @@ export default {
           this.deleteChapterError = (rsp && rsp.msg) || '删除失败';
           return;
         }
+        // r41：记住被删章节的原文件名与序号，上传时可一键补回原位置
+        this.rememberDeletedChapter(
+          this.deleteChapterIndex + 1,
+          (rsp.data && rsp.data.filename) || ''
+        );
         this.showDeleteChapterDialog = false;
         await this.refreshAudioFiles();
         this.$alert('success', '该章节已删除');
@@ -2243,6 +2281,39 @@ export default {
         this.deleteChapterError = '删除请求失败，请稍后重试';
       } finally {
         this.deleteChapterLoading = false;
+      }
+    },
+
+    // ===== r41：删除后补回原位置 =====
+    deletedChapterKey() {
+      return `mybooks_deleted_chapter_${this.bookId}`;
+    },
+    rememberDeletedChapter(position, filename) {
+      const item = { position, filename: filename || '' };
+      this.lastDeletedChapter = item;
+      try {
+        window.localStorage.setItem(this.deletedChapterKey(), JSON.stringify(item));
+      } catch (e) {
+        // 隐私模式 / 禁用存储时忽略，当前会话内仍可用
+      }
+    },
+    loadDeletedChapter() {
+      try {
+        const raw = window.localStorage.getItem(this.deletedChapterKey());
+        if (!raw) return null;
+        const item = JSON.parse(raw);
+        return (item && Number.isInteger(item.position) && item.position >= 1) ? item : null;
+      } catch (e) {
+        return null;
+      }
+    },
+    clearDeletedChapter() {
+      this.lastDeletedChapter = null;
+      this.uploadPreferred = '';
+      try {
+        window.localStorage.removeItem(this.deletedChapterKey());
+      } catch (e) {
+        // 同上
       }
     },
 
@@ -2265,6 +2336,11 @@ export default {
       this.uploadFile = null;
       this.uploadName = `${this.suggestNextChapterName()}.m4a`;
       this.uploadError = '';
+      // 刚删过一集时默认补回它的原位置；用户可改序号，或清空改为追加末尾
+      this.lastDeletedChapter = this.loadDeletedChapter();
+      this.uploadPreferred = (this.lastDeletedChapter && this.lastDeletedChapter.filename) || '';
+      this.uploadPosition = this.lastDeletedChapter
+        ? String(this.lastDeletedChapter.position) : '';
       this.showUploadDialog = true;
       this.$nextTick(() => {
         if (this.$refs.uploadFileInput) this.$refs.uploadFileInput.value = '';
@@ -2291,23 +2367,35 @@ export default {
     },
 
     async submitUpload() {
-      if (!this.uploadFile || !this.uploadName || !this.bookId) return;
+      if (!this.uploadFile || !this.bookId) return;
+      const usePosition = this.hasUploadPosition;
+      if (!usePosition && !this.uploadName) return;
       this.uploadLoading = true;
       this.uploadError = '';
       try {
         const form = new FormData();
         form.append('file', this.uploadFile);
-        // 目标文件名走 URL query（中文经 encodeURIComponent 可靠送达），
+        // 文本参数走 URL query（中文经 encodeURIComponent 可靠送达），
         // 文件本体走 multipart；与替换同源的「文本字段不可靠」问题就此避开。
-        const url = `/audio/${this.bookId}/upload-chapter?name=${encodeURIComponent(this.uploadName)}`;
+        // 指定顺序号时文件名由后端按位置生成，只传 position 与可选的补位原名。
+        let url = '';
+        if (usePosition) {
+          url = `/audio/${this.bookId}/upload-chapter?position=${Number(this.uploadPosition)}&preferred=${encodeURIComponent(this.uploadPreferred || '')}`;
+        } else {
+          url = `/audio/${this.bookId}/upload-chapter?name=${encodeURIComponent(this.uploadName)}`;
+        }
         const rsp = await this.$backend(url, { method: 'POST', body: form });
         if (!rsp || rsp.err !== 'ok') {
           this.uploadError = (rsp && rsp.msg) || '上传失败';
           return;
         }
+        if (usePosition) this.clearDeletedChapter();
         this.showUploadDialog = false;
         await this.refreshAudioFiles();
-        this.$alert('success', '章节已上传');
+        const data = rsp.data || {};
+        this.$alert('success', data.position
+          ? `已插入为第 ${data.position} 集：${data.filename || ''}`
+          : '章节已上传');
       } catch (error) {
         console.error('Upload chapter error:', error);
         this.uploadError = '上传请求失败，请检查文件大小与网络';
