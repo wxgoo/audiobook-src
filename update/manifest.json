@@ -170,11 +170,6 @@
       "bytes": 7759
     },
     {
-      "path": "app/dist/_nuxt/LICENSES",
-      "sha256": "e4b5a7df260789b431044345cc33392d46ba161c9e975a739350792aff3bf870",
-      "bytes": 1256
-    },
-    {
       "path": "app/dist/_nuxt/a2dab91.js",
       "sha256": "76cf6d5c297c3a0865c74979ef4c3d6b3f91371e4b972d66c64ba93ad53c5b6e",
       "bytes": 16712
@@ -737,7 +732,6 @@
       "app/dist/_nuxt/94f57f2.js",
       "app/dist/_nuxt/9c55493.js",
       "app/dist/_nuxt/9fd444d.js",
-      "app/dist/_nuxt/LICENSES",
       "app/dist/_nuxt/a2dab91.js",
       "app/dist/_nuxt/a3bcba1.js",
       "app/dist/_nuxt/a3cf4cd.js",
@@ -856,7 +850,12 @@
     ],
     "blocking": [],
     "docs": [
-      "tests/test_audio_replace_contract.py"
+      "scripts/gen-update-manifest.py",
+      "tests/test_audio_replace_contract.py",
+      "tests/test_manifest_dist_allowlist.py"
+    ],
+    "ignored": [
+      "app/dist/_nuxt/LICENSES"
     ]
   },
   "deploy_commands": [

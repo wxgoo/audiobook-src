@@ -19,6 +19,8 @@
   dist      app/dist/** —— 前端产物，可在线替换「本次变化的文件」，但客户端要强刷
   blocking  镜像配置 / myreader / tools / 系统级改动 —— 必须重新 deploy 或 upgrade
   docs      *.md、docs/**、delivery/overlay/files/docs/** —— 只影响说明，不触发更新操作
+  ignored   app/dist/ 下但不在消费端 DIST_SUFFIX 白名单里的构建副产物（如 _nuxt/LICENSES）
+            —— 绝不写进 dist_files（否则 apply() 会拒绝整份清单），也不算 blocking
 
 dist 变更是否允许在线更新，看规模：文件数与总字节在阈值内（默认 300 个 / 20MB）
 则写进 dist_files，页面可一键更新；超过阈值（例如整包重建 757 个文件）或含
@@ -48,9 +50,13 @@ DIST_PREFIX = "app/dist/"
 DIST_SUFFIX = (".js", ".css", ".html", ".json", ".map", ".txt",
                ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico",
                ".woff", ".woff2", ".ttf", ".eot")
-# dist 下少数没有扩展名的产物：webpack 生成的第三方许可证清单，纯文本，不影响运行。
-# 不认它的话每次构建都会多出一个 blocking 文件，把整次修订顶成「必须重新部署」。
-DIST_EXACT = {"app/dist/_nuxt/LICENSES"}
+# ⚠️ r39 事故（勿恢复）：这里曾用 DIST_EXACT = {"app/dist/_nuxt/LICENSES"} 单方面
+# 把无后缀的许可证清单放行进 dist_files，但消费端 version_check.is_allowed() 只认
+# DIST_SUFFIX 白名单，apply() 在下载任何文件之前就抛
+# 「发布清单含不允许在线替换的路径」，整次在线更新被卡死。
+# 结论：app/dist/ 下凡不在消费端白名单里的路径一律「明确忽略」——既不能投递
+# （投不了），也不能算 blocking（不该把一次纯前端修订顶成必须重新部署）。
+# 这类文件只是构建副产物（webpack 的第三方许可证文本），运行时不加载。
 # 在线更新 dist 的规模上限：超过就不走页内更新，退回重新部署。
 # Nuxt 每次构建都会重写全部路由 html（buildId 变），一个异步 chunk 改动还会连带重写引用
 # 它的 chunk——实测「只改一个设置页」= 210 个文件 / 3.4MB，所以 200 那个值每次都会误伤。
@@ -120,10 +126,12 @@ def classify(path):
     if path.startswith(HOTFIX_PREFIX) and path.endswith(".py") and "/__pycache__/" not in path:
         return "hotfix"
     # 前端产物：只认 app/dist/ 下的静态文件，其它 app/ 源码改动仍是 blocking
-    if path in DIST_EXACT:
-        return "dist"
     if path.startswith(DIST_PREFIX) and path.endswith(DIST_SUFFIX):
         return "dist"
+    # 消费端白名单不认的 dist 路径：绝不能进 dist_files / dist_deleted，
+    # 否则旧版本站点的 apply() 会直接拒绝整份清单。明确忽略并计入 changed.ignored。
+    if path.startswith(DIST_PREFIX):
+        return "ignored"
     return "blocking"
 
 
@@ -161,13 +169,13 @@ def main():
     args = ap.parse_args()
 
     changes = changed_files(args.base_commit)
-    hotfix, blocking, docs, dist, appsrc = [], [], [], [], []
+    hotfix, blocking, docs, dist, appsrc, ignored = [], [], [], [], [], []
     for path, status in sorted(changes.items()):
         if path.startswith("update/") and path.endswith("manifest.json"):
             continue  # 清单本身不参与分类
         kind = classify(path)
         target = {"hotfix": hotfix, "blocking": blocking, "docs": docs,
-                  "dist": dist, "appsrc": appsrc}[kind]
+                  "dist": dist, "appsrc": appsrc, "ignored": ignored}[kind]
         target.append({"path": path, "status": status})
 
     files = []
@@ -263,6 +271,7 @@ def main():
             "appsrc": [i["path"] for i in appsrc],
             "blocking": [i["path"] for i in blocking],
             "docs": [i["path"] for i in docs],
+            "ignored": [i["path"] for i in ignored],
         },
         "deploy_commands": [
             "cd /volume1/docker",
@@ -286,9 +295,11 @@ def main():
           " dist_hotfixable:", dist_hotfixable)
     print("  hotfix files  :", len(files), " dist:", len(dist_files),
           "(%.1fMB, %d deleted)" % (dist_bytes / 1048576.0, len(dist_deleted)),
-          " blocking:", len(blocking), " docs:", len(docs))
+          " blocking:", len(blocking), " docs:", len(docs), " ignored:", len(ignored))
     for i in blocking[:8]:
         print("    ! ", i["path"])
+    for i in ignored[:8]:
+        print("    - ", i["path"], "(消费端白名单不认，不投递)")
     return 0
 
 
