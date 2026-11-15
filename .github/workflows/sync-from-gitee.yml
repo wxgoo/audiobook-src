@@ -1,0 +1,66 @@
+name: 同步 Gitee 镜像
+
+# Gitee（wxgoo/audiobook-src）是主仓库：发布、热更清单都在那边。
+# 本 GitHub 仓库只是镜像/备份，单向 Gitee -> GitHub 强制对齐。
+# 注意：这个文件必须同时存在于 Gitee，否则下一次 force push 会把它从镜像里删掉。
+on:
+  schedule:
+    # 每小时第 7、37 分钟各同步一次，避开整点拥塞
+    - cron: '7,37 * * * *'
+  workflow_dispatch:  # 也可以在 Actions 页面点「Run workflow」立即同步
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-from-gitee
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: 检出 GitHub 镜像（含全部历史）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 从 Gitee 拉取并强制对齐分支与标签
+        env:
+          GITEE_URL: https://gitee.com/wxgoo/audiobook-src.git
+        run: |
+          set -euo pipefail
+          git config user.name "gitee-mirror[bot]"
+          git config user.email "gitee-mirror[bot]@users.noreply.github.com"
+          git config http.lowSpeedLimit 1000
+          git config http.lowSpeedTime 60
+          git remote add gitee "$GITEE_URL"
+
+          # Gitee 在国内，海外 runner 偶发抖动，重试 3 次
+          ok=0
+          for i in 1 2 3; do
+            if git fetch --prune --tags gitee '+refs/heads/*:refs/remotes/gitee/*'; then
+              ok=1
+              break
+            fi
+            echo "第 $i 次拉取 Gitee 失败，15 秒后重试"
+            sleep 15
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::无法连接 Gitee，本次同步跳过（GitHub 保持原状）"
+            exit 1
+          fi
+
+          # 所有分支：以 Gitee 为准强制覆盖（本项目实际只有 master）
+          refs=$(git for-each-ref --format='%(refname)' refs/remotes/gitee/ \
+                 | grep -v 'refs/remotes/gitee/HEAD$' || true)
+          for r in $refs; do
+            b=${r#refs/remotes/gitee/}
+            echo "同步分支 $b -> $(git rev-parse --short "$r")"
+            git push --force origin "$r:refs/heads/$b"
+          done
+
+          # 标签同样以 Gitee 为准，Gitee 删掉的标签也一并删除
+          git push --force --prune origin '+refs/tags/*:refs/tags/*'
+          echo "同步完成，master = $(git rev-parse --short refs/remotes/gitee/master)"
