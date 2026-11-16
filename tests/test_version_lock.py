@@ -21,6 +21,7 @@ LOCK = "4.7.0-build.01"
 FILES = [
     "webserver/version.py",
     "docker-compose.yml",
+    ".env.example",
     "Dockerfile",
     "app/package.json",
     "app/package-lock.json",
