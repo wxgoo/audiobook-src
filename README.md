@@ -3,7 +3,7 @@
 基于 [PoxenStudio/mybooks](https://github.com/PoxenStudio/mybooks) 的私人图书 / 有声书服务器定制版。
 在 Calibre 书库之上提供 Web 阅读、听书、权限分级、元数据刮削、格式转换等能力。
 
-> **当前镜像：`ghcr.io/wxgoo/audiobooks:4.6.0-build.28-r42`**（Public，匿名可拉）
+> **当前镜像：`ghcr.io/wxgoo/audiobooks:4.7.0-build.01-r44`**（Public，匿名可拉）
 > 装完即最新：镜像内含 r42 全部代码与 r42 发布清单，`/admin/version` 基线就是 r42。
 
 > **仓库**：Gitee [`wxgoo/audiobook-src`](https://gitee.com/wxgoo/audiobook-src) 是**主仓库**，
@@ -47,7 +47,7 @@ docker compose up -d
 别先 `gunzip` 出 2.4GB 中间文件白占磁盘：
 
 ```sh
-gunzip -c mybooks-image-4.6.0-build.28-r42.tar.gz | docker load
+gunzip -c mybooks-image-4.7.0-build.01-r44.tar.gz | docker load
 ```
 
 第 2 步**照常**改 `.env`（这一步不能省），第 3 步照常 `docker compose up -d`：
@@ -58,7 +58,7 @@ vi .env
 docker compose up -d
 ```
 
-包里已带好 `ghcr.io/wxgoo/audiobooks:4.6.0-build.28-r42` 与 `latest` 两个标签，
+包里已带好 `ghcr.io/wxgoo/audiobooks:4.7.0-build.01-r44` 与 `latest` 两个标签，
 **不用再 `docker tag`**；本地有同名 tag，Docker 就不再联网拉，
 compose 和 `.env` **一个字都不用改**（还是写着那个 GHCR 名字，但走的是本地镜像）。
 
@@ -68,7 +68,7 @@ compose 和 `.env` **一个字都不用改**（还是写着那个 GHCR 名字，
 | --- | --- |
 | `DATA_DIR` | 数据目录的**绝对路径**，空目录即可；不能是程序目录本身 |
 | `PUID` / `PGID` | SSH 里 `id 你的用户名` 查到的 uid/gid；填错会「上传不了书 / 设置存不下 / 封面不显示」 |
-| `IMAGE_TAG` | **别动**，已是 `ghcr.io/wxgoo/audiobooks:4.6.0-build.28-r42` |
+| `IMAGE_TAG` | **别动**，已是 `ghcr.io/wxgoo/audiobooks:4.7.0-build.01-r44` |
 
 端口冲突改 `HTTP_PORT`（默认 9800）；不需要 HTTPS 就删掉 compose 里 8443 那行。
 
@@ -97,7 +97,7 @@ docker run -d --name mybooks --restart always \
   --security-opt seccomp:unconfined \
   -v /你的/数据目录:/data -p 9800:80 -p 8443:443 \
   -e PUID=$(id -u) -e PGID=$(id -g) -e TZ=Asia/Shanghai \
-  ghcr.io/wxgoo/audiobooks:4.6.0-build.28-r42
+  ghcr.io/wxgoo/audiobooks:4.7.0-build.01-r44
 ```
 
 参数与 compose 一一对应：`-v ...:/data` ↔ `volumes`、`-p` ↔ `ports`、`-e` ↔ `environment`。
@@ -209,7 +209,29 @@ cd app && npm run lint                 # 前端 lint
 cd app && npm run generate
 ```
 
-版本号规则、发布流程、历史变更与排障记录统一在 [`CHANGELOG.md`](CHANGELOG.md)。
+---
+
+## 版本号规则
+
+版本号 = **`<上游 mybooks 已发布 tag>-build.<该基线上的第几次本地构建>`**。
+
+当前：**`4.7.0-build.01`** —— 上游基线 `4.7.0`，我们按主题合入后在新基线上的第一次构建。
+
+| 情况 | 版本号怎么变 |
+|---|---|
+| 只改本地代码 | 构建号 +1（`4.7.0-build.01` → `4.7.0-build.02`） |
+| **上游正式发 tag 且我们按主题合入** | **整体改号**：基线段跟上游走、构建号在新基线上**从 1 重新起算**（`4.6.0-build.28` → `4.7.0-build.01`） |
+| 上游只发了 `develop`、没发 tag | **不跟号**（避免与上游未来正式发布的内容脱节） |
+
+**防回退**：`scripts/check-version-lock.py` 锁死八处版本载体——基线段不得回退到旧 tag、
+构建号在同一基线内不得递减。改号只用一条命令，别手工改单个文件：
+
+```sh
+python3 scripts/check-version-lock.py --set 4.7.0-build.02
+```
+
+> 旧的 `4.8.x` 号段已封存，与当前基线是纯号段重置，不对应任何版本先后关系。
+> 完整版本历史与排障记录见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """版本锁（防反弹）回归测试。
 
-背景：本 fork 自本版起把运行期版本统一为 `4.6.0-build.28`（上游已发布 tag 4.6.0
-+ 第 28 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
+背景：本 fork 自本版起把运行期版本统一为 `4.7.0-build.01`（上游已发布 tag 4.6.0
++ 第 01 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
 回退（写回 4.8.x、写回裸 4.6.0）、被构建参数顶成空串、Dockerfile/Makefile
 守卫被删除，都必须失败。
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKER = ROOT / "scripts" / "check-version-lock.py"
-LOCK = "4.6.0-build.28"
+LOCK = "4.7.0-build.01"
 FILES = [
     "webserver/version.py",
     "docker-compose.yml",
@@ -85,7 +85,7 @@ def test_compose_image_tag_rollback_is_rejected(tmp_path):
     """
     root = make_fixture(tmp_path)
     mutate(root, "docker-compose.yml",
-           "ghcr.io/wxgoo/audiobooks:%s-r42" % LOCK,
+           "ghcr.io/wxgoo/audiobooks:%s-r44" % LOCK,
            "ghcr.io/wxgoo/audiobooks:4.6.0-build.27-r41")
     r = run(root)
     assert r.returncode == 1, r.stdout
@@ -97,7 +97,7 @@ def test_compose_image_tag_without_build_number_is_rejected(tmp_path):
     """镜像 tag 里没有构建号段 = 无法校验版本口径，必须拦下。"""
     root = make_fixture(tmp_path)
     mutate(root, "docker-compose.yml",
-           "ghcr.io/wxgoo/audiobooks:%s-r42" % LOCK,
+           "ghcr.io/wxgoo/audiobooks:%s-r44" % LOCK,
            "ghcr.io/wxgoo/audiobooks:latest")
     r = run(root)
     assert r.returncode == 1, r.stdout
@@ -114,9 +114,9 @@ def test_compose_with_build_section_still_checks_git_version(tmp_path):
     text = p.read_text(encoding="utf-8")
     # 塞一个 build 段进去，且故意把 GIT_VERSION 写成旧构建号
     text = text.replace(
-        "    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:%s-r42}" % LOCK,
+        "    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:%s-r44}" % LOCK,
         "    build:\n      context: .\n      args:\n        GIT_VERSION: \"4.6.0-build.27\"\n"
-        "    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:%s-r42}" % LOCK,
+        "    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:%s-r44}" % LOCK,
         1,
     )
     p.write_text(text, encoding="utf-8")
@@ -124,6 +124,45 @@ def test_compose_with_build_section_still_checks_git_version(tmp_path):
     assert r.returncode == 1, r.stdout
     assert "docker-compose.yml" in r.stdout
     assert "GIT_VERSION" in r.stdout
+
+
+def test_base_rollback_to_previous_upstream_tag_is_rejected(tmp_path):
+    """基线段回退到跟上游前的旧 tag 必须被拦住（本次 r43→r44 的核心改动点）。
+
+    之前版本号写死 4.6.0，跟到上游 4.7.0 后必须改判：
+    - 基线段回退（4.7.0 → 4.6.0）：回退，拦；
+    - 同基线内构建号回退（build.01 → build.00）：回退，拦；
+    - 换到更新的基线且构建号重置为 1：合法，放行。
+    """
+    root = make_fixture(tmp_path)
+    # 基线段回退
+    mutate(root, "webserver/version.py", 'VERSION = "%s"' % LOCK, 'VERSION = "4.6.0-build.99"')
+    r = run(root)
+    assert r.returncode == 1, r.stdout
+    assert "回退" in r.stdout
+    # 同基线构建号回退
+    mutate(root, "webserver/version.py", 'VERSION = "4.6.0-build.99"', 'VERSION = "%s"' % LOCK)
+    mutate(root, "webserver/version.py", 'VERSION = "%s"' % LOCK, 'VERSION = "%s"' % LOCK[:-2] + "00")
+    r = run(root)
+    assert r.returncode == 1, r.stdout
+    assert "回退" in r.stdout
+
+
+def test_set_accepts_new_base_and_rejects_sealed(tmp_path):
+    """--set 接受换基线（4.6.0 → 4.7.0），拒绝封存号段（4.8.x）与裸 tag。"""
+    root = make_fixture(tmp_path)
+    r = subprocess.run(
+        [sys.executable, str(CHECKER), "--root", str(root), "--set", "4.7.0-build.01"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    src = (root / "webserver" / "version.py").read_text(encoding="utf-8")
+    assert 'VERSION = "4.7.0-build.01"' in src
+
+    for bad in ("4.8.0-build.01", "4.7.0", "4.7.1-build.01"):
+        r = subprocess.run(
+            [sys.executable, str(CHECKER), "--root", str(root), "--set", bad],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        assert r.returncode != 0, "%s 应被拒绝：%s" % (bad, r.stdout)
 
 
 def test_package_json_rollback_is_rejected(tmp_path):
