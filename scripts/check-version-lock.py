@@ -110,6 +110,7 @@ def read(root: Path, rel: str) -> str:
 CARRIERS = {
     "webserver/version.py": 2,          # VERSION 行 + 文件尾注释
     "docker-compose.yml": 2,            # GIT_VERSION + 注释示例
+    ".env.example": 1,                   # IMAGE_TAG（交付给别人的镜像标签）
     "Dockerfile": 1,                    # ARG GIT_VERSION 默认值
     "app/package.json": 1,
     "app/package-lock.json": 2,         # 顶层 version 两处
@@ -279,6 +280,28 @@ def main() -> int:
                     ok("docker-compose.yml", "image = %s（构建号与运行期版本一致）" % tag)
     except FileNotFoundError as e:
         bad("docker-compose.yml", "文件缺失 %s" % e, "从仓库恢复 docker-compose.yml")
+
+    # 2b) .env.example 的 IMAGE_TAG：交付给别人的镜像标签，构建号须与运行期一致
+    #     （它是「第几号交付」，带 -rN 后缀；只校验构建号段，修订号不参与）
+    try:
+        env = read(root, ".env.example")
+        m2 = re.search(r'^IMAGE_TAG=\s*([^\s]+)', env, re.M)
+        if not m2:
+            bad(".env.example", "找不到 IMAGE_TAG",
+                "写 IMAGE_TAG=ghcr.io/wxgoo/audiobooks:%s-r<修订号>" % VERSION_LOCK)
+        else:
+            tag = m2.group(1).strip()
+            mb = re.search(r'build\.(\d+)', tag)
+            if not mb:
+                bad(".env.example", "镜像 tag %r 里没有构建号" % tag,
+                    "写成 ghcr.io/wxgoo/audiobooks:%s-r<修订号>" % VERSION_LOCK)
+            elif mb.group(1) != BUILD_NO:
+                bad(".env.example", "镜像 tag %r 的构建号与运行期版本 %r 不一致" % (tag, VERSION_LOCK),
+                    "换成本版镜像 tag（构建号 %s）" % BUILD_NO)
+            else:
+                ok(".env.example", "IMAGE_TAG = %s" % tag)
+    except FileNotFoundError as e:
+        bad(".env.example", "文件缺失 %s" % e, "从仓库恢复 .env.example")
 
     # 3) Dockerfile 空值守卫
     try:
