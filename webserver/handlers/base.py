@@ -326,6 +326,36 @@ def is_admin(func):
     return do
 
 
+def _book_matches_limits(book, eff) -> bool:
+    """判定一本书在给定「阅读范围限制」下是否可读——全站唯一口径来源。
+
+    从历史定制层搬入本模块（上游 4.7.0 无此函数，
+    它把等价逻辑内联在 is_book_in_reading_range 里）。这里的版本比上游内联版多处理
+    两个边界，语义更严谨：
+      * 白名单空条件 → 什么都匹配不上（返回 False）；黑名单空条件 → 全库可读（True）。
+        上游内联版对两者都返回 not matched，白名单空时会错误放行全库。
+      * 分类与标签是「或」关系：只填一边时不要求另一边也匹配。
+
+    eff 含 read_limit / limit_categories / limit_tags 三个键（值为用户字段或缓存签名）。
+    书列表（is_book_in_reading_range）与统计（_build_scoped_counts）共用本函数，
+    保证「看到的数字」与「点进去能读到的书」一致。
+    """
+    read_limit = int(eff.get("read_limit") or 0)
+    if read_limit == 0:
+        return True
+    limit_categories = set(filter(None, (eff.get("limit_categories") or "").split(",")))
+    limit_tags = set(filter(None, (eff.get("limit_tags") or "").split(",")))
+    if not limit_categories and not limit_tags:
+        return read_limit != 1
+
+    book_category = book.get(constants.CALIBRE_COLUMN_CATEGORY) or ""
+    book_tags = set(book.get("tags") or [])
+    matched = (limit_categories and book_category in limit_categories) or bool(
+        limit_tags and book_tags & limit_tags
+    )
+    return matched if read_limit == 1 else not matched
+
+
 class BaseHandler(web.RequestHandler):
     _path_to_env = {}
     _query_fallback_cache = {}
@@ -875,11 +905,10 @@ class BaseHandler(web.RequestHandler):
         return user
 
     def is_admin(self):
-        if self.admin_user:
-            return True
-        if not self.current_user:
-            return False
-        return self.current_user.is_admin()
+        # 统一走 AccessControl 门面：管理员豁免的语义只有一个来源，
+        # 74 处调用点无需改动即获得一致口径。
+        from webserver.services.access_control import AccessControl
+        return AccessControl.is_admin(self.current_user, superuser=bool(self.admin_user))
 
     def login_user(self, user, persist=True, set_cookie=True):
         # set_cookie=False 用于 ?token= 这类"凭据即身份"的场景：token 会出现在 RSS URL、
@@ -1487,20 +1516,17 @@ class BaseHandler(web.RequestHandler):
             return not book.get("tags") and not book.get(constants.CALIBRE_COLUMN_CATEGORY)
         # 管理员永远全可见：分类列表那边原本就有 is_admin() 豁免
         # （见本类 _filter_categories_by_reading_range），但这里漏了，
-        # 导致管理员自己也被读者组拦下——详情页四个按钮全灰、书架缺书，
+        # 导致管理员自己也被拦下——详情页四个按钮全灰、书架缺书，
         # 表现出来非常像"权限系统坏了"，实际只是漏了这行。
         if self.is_admin():
             return True
-        # v4.7 读者组：用生效限制判断（自身显式设置优先，否则回退组配置）。
-        # 不再拿 read_limit 做前置判断：白名单+空条件的「严格模式」靠一份
-        # 永不匹配的哨兵条件表达，read_limit 虽然有值，也必须走完整判定。
-        from webserver.services.reader_group import ReaderGroupService
-        if ReaderGroupService.effective_limits(user)["read_limit"] > 0:
+        # 阅读范围限制（上游口径）：直接读用户自己的字段。
+        if getattr(user, "read_limit", 0) > 0:
             return self.is_book_in_reading_range(book, user)
         return True
 
     def is_library_restricted(self) -> bool:
-        """当前登录用户是否被读者范围限制（v4.7 读者组）。
+        """当前登录用户是否受阅读范围限制。
 
         书库统计（/api/library/stats*）是全库口径的数字：受限用户点开
         首页看到的「图书总数/作者数」与 unlimited 用户完全一样，等于把
@@ -1508,12 +1534,16 @@ class BaseHandler(web.RequestHandler):
         restricted 标记，前端隐藏面板），而不是给一份「过滤后的假数字」
         ——按人重算每月入库/空间占用代价太大，且数字本身就是全库事实。
         游客保持旧行为（本来就能看，与受限无关）。
+
+        口径一致性：必须与 is_book_visible 同一前提——全局阅读范围开关关闭时，
+        任何用户实际上都能看全库，此时不该再报"受限"而错误隐藏统计页。
         """
+        if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+            return False
         user = self.get_current_user()
         if not user or self.is_admin():
             return False
-        from webserver.services.reader_group import ReaderGroupService
-        return ReaderGroupService.effective_limits(user)["read_limit"] > 0
+        return getattr(user, "read_limit", 0) > 0
 
     def is_book_in_reading_range(self, book, user) -> bool:
         """Check whether a book is accessible for the given user based on their reading range.
@@ -1523,15 +1553,16 @@ class BaseHandler(web.RequestHandler):
             1 - whitelist: only books matching limit_categories or limit_tags are accessible
             2 - blacklist: books matching limit_categories or limit_tags are blocked
 
-        v4.7 读者组：用户自己没显式设置限制时，回退到所属读者组的配置
-        （见 services/reader_group.py）。
+        与上游 4.7.0 逐行等价：直接读用户自己的字段。判定本体在模块级
+        _book_matches_limits()，统计侧（_build_scoped_counts）复用同一函数，
+        保证「看到的数字」与「点进去能读到的书」是同一套规则。
         """
-        # 判定本体收敛到 services.reader_group.book_matches_limits：
-        # 统计侧（左侧树 / 分类 / 标签云）也调它，保证「看到的数字」与
-        # 「点进去能读到的书」是同一套规则。
-        from webserver.services.reader_group import ReaderGroupService, book_matches_limits
-
-        return book_matches_limits(book, ReaderGroupService.effective_limits(user))
+        eff = {
+            "read_limit": getattr(user, "read_limit", 0) or 0,
+            "limit_categories": user.limit_categories or "",
+            "limit_tags": user.limit_tags or "",
+        }
+        return _book_matches_limits(book, eff)
 
     def search_for_books(self, query):
         self.search_restriction = ""
@@ -1550,16 +1581,12 @@ class BaseHandler(web.RequestHandler):
         # 否则管理员侧边栏少一半标签，看起来像书目丢了。
         if user.is_admin():
             return tags
-        # 必须走 effective_limits：以前只读 user.limit_tags，绕过了读者组，
-        # 组员自身字段是 0 时标签云完全不过滤（meta.py 的 MetaList 早改过，
-        # 这里漏了）。两处判定口径必须与 is_book_in_reading_range 一致。
-        from webserver.services.reader_group import ReaderGroupService
-
-        eff = ReaderGroupService.effective_limits(user)
-        read_limit = int(eff.get("read_limit") or 0)
+        # 与上游口径一致：直接读用户字段。两处判定口径必须与
+        # is_book_in_reading_range 一致（都走 _book_matches_limits 的标签语义）。
+        read_limit = int(getattr(user, "read_limit", 0) or 0)
         if read_limit == 0:
             return tags
-        limit_tags = set(filter(None, (eff.get("limit_tags") or "").split(",")))
+        limit_tags = set(filter(None, (user.limit_tags or "").split(",")))
         if not limit_tags:
             return tags
         if read_limit == 1:
@@ -1719,7 +1746,7 @@ class BaseHandler(web.RequestHandler):
         「有书在用」的语义）对不上。
 
         口径必须与书籍侧判定（`book_category in limit_categories`）一致，
-        否则管理员看到「5 个分类」，进读者组下拉只有 2 个，会以为漏了。
+        否则管理员看到「5 个分类」，进限制下拉只有 2 个，会以为漏了。
         """
         from webserver.constants import CALIBRE_COLUMN_CATEGORY
 
@@ -1759,14 +1786,11 @@ class BaseHandler(web.RequestHandler):
             return []
         if self.is_admin():
             return categories
-        # v4.7 读者组：自身未显式设置时回退组配置
-        from webserver.services.reader_group import ReaderGroupService
-
-        eff = ReaderGroupService.effective_limits(user)
-        read_limit = eff["read_limit"]
+        # 上游口径：直接读用户字段
+        read_limit = getattr(user, "read_limit", 0) or 0
         if read_limit == 0:
             return categories
-        limit_cats = set(filter(None, eff["limit_categories"].split(',')))
+        limit_cats = set(filter(None, (user.limit_categories or "").split(',')))
         if not limit_cats:
             return categories
         if read_limit == 1:
@@ -1811,7 +1835,7 @@ class BaseHandler(web.RequestHandler):
         categories = [{"name": row[0], "count": row[1]} for row in rows]
 
         # 分类页每个 tab 后面的 (N) 以前是全库 SQL 的 count(l.book)，
-        # 只按名字过滤了条目、没重算数字；读者组成员点进去看到的书
+        # 只按名字过滤了条目、没重算数字；受限用户点进去看到的书
         # 远少于括号里的数。这里统一换成「可见口径」的计数。
         key = self._scope_key()
         scoped = (await self.run_calibre_read_async(self.scoped_counts, key)
@@ -2136,20 +2160,18 @@ class BaseHandler(web.RequestHandler):
         user = self.current_user
         if not user or self.is_admin():
             return None
-        from webserver.services.reader_group import ReaderGroupService
-
-        eff = ReaderGroupService.effective_limits(user)
-        if eff["read_limit"] == 0:
+        read_limit = getattr(user, "read_limit", 0) or 0
+        if read_limit == 0:
             return None
-        return (self.user_id(), eff["read_limit"],
-                eff["limit_categories"] or "", eff["limit_tags"] or "")
+        return (self.user_id(), read_limit,
+                user.limit_categories or "", user.limit_tags or "")
 
     def _build_scoped_counts(self, key):
         """按「这个用户真正读得到的书」重算所有统计口径。
 
         以前统计走全库 SQL（count(distinct book)），列表走 is_book_visible，
         分组成员登录后左侧树显示全库规模、点进去却只有白名单里的几本。
-        这里一次性遍历书库、用与列表同源的 book_matches_limits 判定，
+        这里一次性遍历书库、用与列表同源的 _book_matches_limits 判定，
         再从可见书籍聚合出左侧树与各类元数据列表需要的数字。
         只碰 calibre 侧对象，可被 run_calibre_read_async 丢进线程池执行。
         """
@@ -2159,8 +2181,6 @@ class BaseHandler(web.RequestHandler):
             CALIBRE_COLUMN_CATEGORY, CALIBRE_COLUMN_FOLDER,
             CALIBRE_COLUMN_BOOK_TYPE, BOOK_TYPE_PHYSICAL,
         )
-        from webserver.services.reader_group import book_matches_limits
-
         _uid, read_limit, cats, tags = key
         eff = {"read_limit": read_limit, "limit_categories": cats, "limit_tags": tags}
 
@@ -2178,7 +2198,7 @@ class BaseHandler(web.RequestHandler):
             for colnum, name in cmap.items():
                 if colnum in b and name not in b:
                     b[name] = b[colnum]
-            if not book_matches_limits(b, eff):
+            if not _book_matches_limits(b, eff):
                 continue
             bid = b["id"]
             visible_ids.add(bid)

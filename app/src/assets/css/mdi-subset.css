@@ -58,16 +58,8 @@
   content: "\F0B58";
 }
 
-.mdi-account-lock-outline::before {
-  content: "\F115F";
-}
-
 .mdi-account-multiple::before {
   content: "\F000E";
-}
-
-.mdi-account-multiple-check::before {
-  content: "\F08C5";
 }
 
 .mdi-account-outline::before {
@@ -650,10 +642,6 @@
   content: "\F0B33";
 }
 
-.mdi-file-star-outline::before {
-  content: "\F103B";
-}
-
 .mdi-file-sync::before {
   content: "\F1216";
 }
@@ -868,10 +856,6 @@
 
 .mdi-lock-open-outline::before {
   content: "\F0340";
-}
-
-.mdi-lock-open-variant::before {
-  content: "\F0FC6";
 }
 
 .mdi-lock-open-variant-outline::before {
@@ -1156,10 +1140,6 @@
 
 .mdi-shield-key::before {
   content: "\F0BC4";
-}
-
-.mdi-shield-lock-outline::before {
-  content: "\F0CCC";
 }
 
 .mdi-shuffle::before {

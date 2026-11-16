@@ -7,7 +7,7 @@
 3. **口径一致性**：tab 的 count 必须等于用同一用户请求
    `/api/audiobooks?category=X` 时看到的 total——历史上统计侧与列表侧
    各写各的口径，出现过「树里 328 本点进去 12 本」的事故；
-4. 受限用户（读者组范围）下 tab 与列表同步削减；
+4. 受限用户（阅读范围）下 tab 与列表同步削减；
 5. 空分类不出现在 tab 里。
 """
 
@@ -27,6 +27,17 @@ BOOKS = {
     2: {"id": 2, "title": "流浪地球", "tags": ["太空"], CALIBRE_COLUMN_CATEGORY: "科幻"},
     3: {"id": 3, "title": "随笔集", "tags": [], CALIBRE_COLUMN_CATEGORY: ""},
 }
+
+
+class FakeUser:
+    """把阅读范围限制字典变成带属性的用户对象（对齐上游直读 user 字段的判定）。"""
+
+    def __init__(self, read_limit=0, limit_categories="", limit_tags="", **kw):
+        self.read_limit = read_limit
+        self.limit_categories = limit_categories
+        self.limit_tags = limit_tags
+        self.admin = kw.get("admin", False)
+        self.id = kw.get("id", 1)
 
 
 class FakeMI:
@@ -134,9 +145,7 @@ class TestAudioBooksCategoryFilter(unittest.TestCase):
     def _get(self, handler, allow_range=True):
         # allow_range=False 模拟「无范围限制的普通用户」（快路全可见）
         with mock.patch.multiple(audio_module, CONF={
-                "ALLOW_READ_RANGE_SETTING": allow_range}), \
-             mock.patch("webserver.services.reader_group.ReaderGroupService.effective_limits",
-                        staticmethod(lambda u: u["_eff"])):
+                "ALLOW_READ_RANGE_SETTING": allow_range}):
             for p in _patch_common():
                 p.start()
             try:
@@ -191,9 +200,7 @@ class TestTabCountsConsistency(unittest.TestCase):
 
     def _categories_rsp(self, handler):
         with mock.patch.multiple(audio_module, CONF={
-                "ALLOW_READ_RANGE_SETTING": True}), \
-             mock.patch("webserver.services.reader_group.ReaderGroupService.effective_limits",
-                        staticmethod(lambda u: u["_eff"])):
+                "ALLOW_READ_RANGE_SETTING": True}):
             for p in _patch_common():
                 p.start()
             try:
@@ -205,7 +212,7 @@ class TestTabCountsConsistency(unittest.TestCase):
 
     def test_tab_count_equals_list_total(self):
         admin = FakeHandler(args={}, is_admin=True,
-                            current_user={"_eff": {"read_limit": 0}})
+                            current_user=FakeUser(read_limit=0))
         tab = self._categories_rsp(admin)
         self.assertEqual(tab["err"], "ok")
         names = {c["name"]: c["count"] for c in tab["categories"]}
@@ -214,7 +221,7 @@ class TestTabCountsConsistency(unittest.TestCase):
         # 逐个分类：tab count == 列表 total
         for name, cnt in names.items():
             lst = FakeHandler(args={"category": name}, is_admin=True,
-                              current_user={"_eff": {"read_limit": 0}})
+                              current_user=FakeUser(read_limit=0))
             rsp = self._get_by_audio(lst)
             self.assertEqual(rsp["total"], cnt, name)
         # 无分类书只出现在「全部」里
@@ -222,9 +229,7 @@ class TestTabCountsConsistency(unittest.TestCase):
 
     def _get_by_audio(self, handler):
         with mock.patch.multiple(audio_module, CONF={
-                "ALLOW_READ_RANGE_SETTING": True}), \
-             mock.patch("webserver.services.reader_group.ReaderGroupService.effective_limits",
-                        staticmethod(lambda u: u["_eff"])):
+                "ALLOW_READ_RANGE_SETTING": True}):
             for p in _patch_common():
                 p.start()
             try:
@@ -235,9 +240,8 @@ class TestTabCountsConsistency(unittest.TestCase):
         return handler.written
 
     def test_restricted_user_counts_shrink_together(self):
-        """读者组白名单只认「太空」标签：tab 与列表同步削减。"""
-        eff = {"read_limit": 1, "limit_categories": "", "limit_tags": "太空"}
-        user = {"_eff": eff}
+        """阅读范围白名单只认「太空」标签：tab 与列表同步削减。"""
+        user = FakeUser(read_limit=1, limit_tags="太空")
 
         tab_h = FakeHandler(args={}, current_user=user)
         tab = self._categories_rsp(tab_h)
@@ -253,7 +257,7 @@ class TestTabCountsConsistency(unittest.TestCase):
     def test_tab_order_follows_catalog_page(self):
         """分类名与顺序必须与分类浏览页一致，不能按有声书数重排。"""
         admin = FakeHandler(args={"all": "1"}, is_admin=True,
-                            current_user={"_eff": {"read_limit": 0}})
+                            current_user=FakeUser(read_limit=0))
         tab = self._categories_rsp(admin)
         # 照抄分类页顺序（历史 → 科幻 → 文学），哪怕有声书最多的是科幻
         self.assertEqual([c["name"] for c in tab["categories"]],
@@ -263,7 +267,7 @@ class TestTabCountsConsistency(unittest.TestCase):
     def test_zero_count_hidden_by_default(self):
         """默认剔除有声书为 0 的分类（点进去只能是空页），all=1 才保留。"""
         admin = FakeHandler(args={}, is_admin=True,
-                            current_user={"_eff": {"read_limit": 0}})
+                            current_user=FakeUser(read_limit=0))
         tab = self._categories_rsp(admin)
         self.assertEqual([c["name"] for c in tab["categories"]], ["科幻"])
         # 每个 tab 都有图标（与分类页同一套命名规则）
@@ -272,8 +276,7 @@ class TestTabCountsConsistency(unittest.TestCase):
     def test_empty_categories_removed(self):
         """count 为 0 的分类不进 tab（聚合里可能有已不可见的旧桶）。"""
         # 构造一个只有书 3 可见的受限用户 → 「科幻」桶全被削减 → tab 里消失
-        eff = {"read_limit": 1, "limit_categories": "", "limit_tags": "诗词"}
-        user = {"_eff": eff}
+        user = FakeUser(read_limit=1, limit_tags="诗词")
         tab_h = FakeHandler(args={}, current_user=user)
         tab = self._categories_rsp(tab_h)
         self.assertEqual(tab["categories"], [])

@@ -585,7 +585,7 @@ def _visible_audio_ids(handler):
     口径必须与 get_books → _merge_books → is_book_visible 完全一致：
       - 阅读范围开关关闭 / 管理员 → None（调用方按全可见处理）；
       - 未登录 → 只有无 tags 且无 #category 的书（与 is_book_visible 的访客分支同规）；
-      - 受限用户 → 逐本 book_matches_limits（统计侧与列表侧共用的唯一口径来源），
+      - 受限用户 → 逐本 _book_matches_limits（统计侧与列表侧共用的唯一口径来源），
         判定所需的 tags/#category 来自共享聚合的 book_meta，不再逐本取元数据。
     冷启动聚合未建完时受限用户可能短暂看到空列表，聚合后台建好后自愈——
     这是「请求路径零阻塞」的既定代价，见 audio_category_agg 模块注释。
@@ -601,11 +601,15 @@ def _visible_audio_ids(handler):
         }
     if handler.is_admin():
         return None
-    from webserver.services.reader_group import ReaderGroupService, book_matches_limits
-    eff = ReaderGroupService.effective_limits(user)
-    if not eff.get("read_limit"):
+    from webserver.handlers.base import _book_matches_limits
+    eff = {
+        "read_limit": getattr(user, "read_limit", 0) or 0,
+        "limit_categories": user.limit_categories or "",
+        "limit_tags": user.limit_tags or "",
+    }
+    if not eff["read_limit"]:
         return None
-    return {bid for bid, m in meta.items() if book_matches_limits(m, eff)}
+    return {bid for bid, m in meta.items() if _book_matches_limits(m, eff)}
 
 
 class AudioBooks(ModuleGateMixin, BaseHandler):

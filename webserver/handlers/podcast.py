@@ -365,7 +365,7 @@ class PodcastBook(PodcastBaseHandler):
 
         # 阅读范围校验：以前这里完全没有权限判断，
         # 知道 book_id 的人直接拼 /podcast/book/<id> 就能拿到整本音频的订阅源，
-        # 读者组的限制形同虚设。按"看不见就当不存在"返回 404，
+        # 阅读范围限制形同虚设。按"看不见就当不存在"返回 404，
         # 免得拿 403 去枚举库里有几本书。
         if not provider.filter_book_ids([book_id], self.current_user):
             raise web.HTTPError(404, reason="Book not found")
@@ -496,7 +496,7 @@ class PodcastTokenBook(PodcastBaseHandler):
             raise web.HTTPError(400, reason="Invalid book ID")
 
         # token 已经证明"你是谁"，但没证明"这本书你能听"：
-        # 读者组限制必须同样生效，否则拿自己的 token 换个 book_id 就能越权。
+        # 阅读范围限制必须同样生效，否则拿自己的 token 换个 book_id 就能越权。
         if not provider.filter_book_ids([book_id], user):
             raise web.HTTPError(404, reason="Book not found")
 

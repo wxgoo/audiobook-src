@@ -73,7 +73,7 @@ class FolderList(BaseHandler):
     def get(self):
         if not self.current_user:
             return {"err": "ok", "folders": [], "root_count": 0, "max_depth": fh.MAX_DEPTH}
-        # 读者组受限用户：目录树每级的 (N) 必须按「他真正读得到的书」重算，
+        # 阅读范围受限用户：目录树每级的 (N) 必须按「他真正读得到的书」重算，
         # 否则数字跟管理员看到的全库数一样、点进去却只剩白名单里的几本。
         # 可见书集合直接取自 scoped_counts 的 book_ids（与书籍列表同源判定）。
         key = self._scope_key()

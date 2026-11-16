@@ -594,12 +594,6 @@
               </div>
             </template>
 
-            <template v-if="s.special === 'reader_groups'">
-              <div id="f-READER_GROUPS">
-                <reader-group-editor></reader-group-editor>
-              </div>
-            </template>
-
             <template v-if="s.special === 'devices'">
               <div id="f-DEVICES" class="pl-6">
               <template v-for="(device, idx) in settings.DEVICES">
@@ -1291,7 +1285,6 @@ import SSLManager from "~/components/SSLManager.vue";
 import ReadingRangeDialog from "~/components/ReadingRangeDialog.vue";
 import BookNavEditor, { createCategory } from "~/components/BookNavEditor.vue";
 import ReaderDictEditor from "~/components/ReaderDictEditor.vue";
-import ReaderGroupEditor from "~/components/ReaderGroupEditor.vue";
 import HomepageCardsEditor from "~/components/HomepageCardsEditor.vue";
 import ScanIgnoreDirsEditor from "~/components/ScanIgnoreDirsEditor.vue";
 import draggable from "vuedraggable";
@@ -1885,7 +1878,6 @@ export default {
     "reading-range-dialog": ReadingRangeDialog,
     "book-nav-editor": BookNavEditor,
     "reader-dict-editor": ReaderDictEditor,
-    "reader-group-editor": ReaderGroupEditor,
     "homepage-cards-editor": HomepageCardsEditor,
     "scan-ignore-dirs-editor": ScanIgnoreDirsEditor,
     draggable,
@@ -2272,9 +2264,9 @@ export default {
         title: "settings.group_users",
         sections: [
           {
-            // 访问控制：门槛（必须登录）→ 访客权限 → 读者组（谁能看哪些书）。
-            // 4.6.0-19 起三块合一张卡——它们说的是同一条权限链，分开摆会让人
-            // 以为有三个互不相干的开关。
+            // 访问控制：门槛（必须登录）→ 访客权限 → 阅读范围（谁能看哪些书）。
+            // 三块合一张卡——它们说的是同一条权限链，分开摆会让人
+            // 以为有几个互不相干的开关。
             id: "users-access",
             icon: "mdi-shield-account-outline",
             title: "settings.sec_users_access",
@@ -2304,16 +2296,6 @@ export default {
                 tips: "settings.guest_login_relation_note_tips",
               },
               {
-                // 读者组总开关（4.6.0-19）：只关组规则这一层，用户自身的
-                // read_limit/limit_* 不受影响；成员归属保留，重开即恢复
-                icon: "mdi-account-group-outline",
-                key: "READER_GROUPS_ENABLED",
-                label: "settings.reader_groups_enabled",
-                tips: "settings.reader_groups_enabled_tips",
-                al: ["读者组", "总开关", "分组权限", "关闭读者组"],
-                type: "checkbox",
-              },
-              {
                 // 作者整理指路（build.27）：归一化与清理已合并为工具箱里的一个工具，
                 // 这里保留一条说明并直达合并后的页面；左侧树不再单列归一化入口。
                 key: "author_norm_entry",
@@ -2330,21 +2312,11 @@ export default {
                 key: "ALLOW_READ_RANGE_SETTING",
                 label: "settings.allow_read_range_setting",
                 tips: "settings.allow_read_range_setting_tips",
-                al: ["白名单", "黑名单", "阅读范围", "读者组"],
+                al: ["白名单", "黑名单", "阅读范围"],
                 type: "checkbox",
               },
             ],
             groups: [
-              {
-                // 嵌套在总开关内部：开关关掉时这一整块折叠/失效，
-                // 避免「我明明配了组，怎么不管用」这种排查。
-                key: "READER_GROUP_STRICT",
-                icon: "mdi-shield-lock-outline",
-                label: "settings.reader_group_strict",
-                hint: "settings.reader_group_strict_hint",
-                al: ["严格", "空条件", "白名单"],
-                fields: [],
-              },
               {
                 // 外层 group 的 key 不能和内部 field 同名，否则 v-model
                 // 会既绑布尔又绑对象，开关直接失灵。这里用独立键名。
@@ -2362,7 +2334,6 @@ export default {
                 ],
               },
             ],
-            special: "reader_groups",
           },
           {
             // 注册/邀请 + 新用户默认权限：新用户从注册进来，默认给什么权限

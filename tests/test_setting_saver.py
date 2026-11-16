@@ -59,37 +59,6 @@ class TestSavePartial(unittest.TestCase):
             if key != "BOOKBARN_TOKEN":
                 self.assertEqual(saved[key], "marker", key)
 
-    def test_reader_group_keys_are_persistable(self):
-        """读者组三个键必须在白名单里。
-
-        漏掉 READER_GROUPS 的后果（实测踩过）：设置页任意一次保存都会整份覆盖
-        auto.py，把分组规则静默抹掉；叠加容器重建，表现为「分组权限每次重建后
-        全部消失」。这三个键不在 ADMIN_SETTING_KEYS（设置页不直接编辑它们），
-        只由 handlers/reader_group.py 通过 save_partial 写入，所以只断言
-        PERSISTABLE_KEYS。
-        """
-        for key in ("READER_GROUPS", "READER_GROUPS_ENABLED", "READER_GROUP_STRICT"):
-            self.assertIn(key, PERSISTABLE_KEYS, key)
-
-    def test_reader_groups_survive_settings_page_save(self):
-        """设置页保存无关键时，已建好的分组规则不能被抹掉。"""
-        groups = {
-            "儿童": {
-                "mode": "whitelist",
-                "categories": "文学,教育,社科",
-                "tags": "绘本,童书,儿童文学",
-            }
-        }
-        saved = self.run_partial(
-            {"READER_GROUPS": groups, "READER_GROUPS_ENABLED": True,
-             "READER_GROUP_STRICT": True},
-            {"BOOKBARN_TOKEN": "t"},
-        )
-        self.assertEqual(saved["READER_GROUPS"], groups)
-        self.assertTrue(saved["READER_GROUPS_ENABLED"])
-        self.assertTrue(saved["READER_GROUP_STRICT"])
-
-
 class TestSaveExtraSettingsCarryOver(unittest.TestCase):
     """设置页 POST 的路径：args 里只有前端提交的键。
 
@@ -120,30 +89,14 @@ class TestSaveExtraSettingsCarryOver(unittest.TestCase):
             SettingsSaver().save_extra_settings(args)
         return captured
 
-    def test_reader_groups_survive_settings_page_post(self):
-        groups = {
-            "儿童": {"mode": "whitelist", "categories": "", "tags": "绘本,童书"},
-            "访客": {"mode": "whitelist", "categories": "", "tags": "小说,文学"},
-        }
-        saved = self.save_with_only(
-            {"READER_GROUPS": groups, "READER_GROUPS_ENABLED": True,
-             "READER_GROUP_STRICT": True},
-            {"BOOKBARN_TOKEN": "t"},
-        )
-        self.assertEqual(saved.get("READER_GROUPS"), groups)
-        self.assertIs(saved.get("READER_GROUPS_ENABLED"), True)
-        self.assertIs(saved.get("READER_GROUP_STRICT"), True)
-        self.assertEqual(saved.get("BOOKBARN_TOKEN"), "t")
-
     def test_all_persistable_keys_survive_settings_page_post(self):
-        """所有「只在 PERSISTABLE_KEYS」的键都要活下来，不能只修 READER_GROUPS。
+        """所有「只在 PERSISTABLE_KEYS」的键都要活下来。
 
-        历史上这类键有 5 个（READER_GROUPS / READER_GROUP_STRICT /
-        ENABLE_KOREADER_SERVICE / scan_hash_workers / site_theme），
-        全部一保存设置就消失。
+        历史上这类键（scan_hash_workers / site_theme 等）曾一保存设置就消失，
+        这个总入口就是为防止这类丢失而加的。
         """
         conf = {key: "marker" for key in PERSISTABLE_KEYS}
-        conf["READER_GROUPS"] = {"儿童": {"mode": "whitelist", "tags": "绘本"}}
+        conf["site_theme"] = "light"
         saved = self.save_with_only(conf, {"BOOKBARN_TOKEN": "t"})
         missing = [k for k in PERSISTABLE_KEYS if k not in saved]
         self.assertEqual(missing, [], "这些持久化键被整份覆盖抹掉了: %s" % missing)
@@ -160,11 +113,11 @@ class TestSaveExtraSettingsCarryOver(unittest.TestCase):
     def test_submitted_value_wins_over_conf(self):
         """前端这次真的提交了，就用新的（否则改设置永远不生效）。"""
         saved = self.save_with_only(
-            {"READER_GROUPS": {"旧": {"mode": "whitelist"}}, "site_theme": "light"},
+            {"scan_hash_workers": 4, "site_theme": "light"},
             {"site_theme": "dark"},
         )
         self.assertEqual(saved["site_theme"], "dark")
-        self.assertEqual(saved["READER_GROUPS"], {"旧": {"mode": "whitelist"}})
+        self.assertEqual(saved["scan_hash_workers"], 4)
 
 
 class TestDumpfileBackup(unittest.TestCase):

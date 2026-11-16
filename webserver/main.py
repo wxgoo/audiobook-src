@@ -494,12 +494,12 @@ def make_app():
     # WebDAV must come before files.routes() because files has a catch-all (r"/(.*)")
     # We need to get routes from handlers module without files, add webdav, then add files
     import importlib
-    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "reader_group", "book_dedup", "author_norm", "search_index", "version"]
+    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "book_dedup", "author_norm", "search_index", "version"]
     mods = {}
     for name in names:
         with substep("import_handler:" + name):
             mods[name] = importlib.import_module("webserver.handlers." + name)
-    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, reader_group, book_dedup, author_norm, search_index = (mods[n] for n in names[:-1])
+    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, book_dedup, author_norm, search_index = (mods[n] for n in names[:-1])
     # 单独取名，避免与 main() 里若干名为 version 的局部变量撞名
     version_handler = mods["version"]
 
@@ -525,7 +525,6 @@ def make_app():
     app_routes += tts.routes()
     app_routes += folder.routes()
     app_routes += reader_dict.routes()
-    app_routes += reader_group.routes()
     app_routes += book_dedup.routes()
     # 4.6.0-9 作者归一化管理接口（体检/别名表/预览/锁定）
     app_routes += author_norm.routes()

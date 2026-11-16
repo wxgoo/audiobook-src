@@ -278,24 +278,22 @@ class PodcastProvider:
 
     @staticmethod
     def _limits_of(user):
-        """取用户生效限制（自身显式设置优先，否则回退所属读者组）。
+        """取用户的阅读范围限制（直接读用户自己的字段）。
 
         返回 (read_limit, limit_categories_set, limit_tags_set)。
         管理员一律不受限——podcast 是"用别的 App 听自己的库"，
-        管理员被组规则拦住时表现和详情页按钮全灰一样莫名其妙。
+        管理员被拦住时表现和详情页按钮全灰一样莫名其妙。
+        上游口径：直接读用户自己的字段。
         """
         if not user:
             return 0, set(), set()
         if getattr(user, "admin", False):
             return 0, set(), set()
-        from webserver.services.reader_group import ReaderGroupService
-
-        eff = ReaderGroupService.effective_limits(user)
-        read_limit = eff["read_limit"] or 0
+        read_limit = getattr(user, "read_limit", 0) or 0
         if read_limit == 0:
             return 0, set(), set()
-        cats = set(filter(None, (eff["limit_categories"] or "").split(",")))
-        tags = set(filter(None, (eff["limit_tags"] or "").split(",")))
+        cats = set(filter(None, (user.limit_categories or "").split(",")))
+        tags = set(filter(None, (user.limit_tags or "").split(",")))
         return read_limit, cats, tags
 
     @staticmethod

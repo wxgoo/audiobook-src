@@ -50,7 +50,7 @@ def folder_counts_for(cache, visible_ids):
     """Return {folder value: number of books directly in it} restricted to visible_ids.
 
     与 folder_counts 同口径（按完整路径逐本计数），但只数 visible_ids 里的书。
-    用于读者组受限用户：左侧目录树每级的 (N) 必须按「他真正读得到的书」重算，
+    用于阅读范围受限用户：左侧目录树每级的 (N) 必须按「他真正读得到的书」重算，
     否则会出现「目录显示 128 本，点进去只有 12 本」的口径漂移。
     """
     table = folder_table(cache)

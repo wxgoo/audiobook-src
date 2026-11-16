@@ -36,6 +36,17 @@ BOOKS = {
 }
 
 
+class FakeUser:
+    """阅读范围限制用户对象（对齐上游直读 user 字段）。"""
+
+    def __init__(self, read_limit=0, limit_categories="", limit_tags="", **kw):
+        self.read_limit = read_limit
+        self.limit_categories = limit_categories
+        self.limit_tags = limit_tags
+        self.admin = kw.get("admin", False)
+        self.id = kw.get("id", 1)
+
+
 class FakeMI:
     def __init__(self, category, tags):
         self._category = category
@@ -126,9 +137,7 @@ def _patch_common():
 class TestAudioBooksListCarriesTabs(unittest.TestCase):
     def _get(self, handler, allow_range=False, extra_patches=()):
         with mock.patch.multiple(audio_module, CONF={
-                "ALLOW_READ_RANGE_SETTING": allow_range}), \
-             mock.patch("webserver.services.reader_group.ReaderGroupService.effective_limits",
-                        staticmethod(lambda u: u["_eff"])):
+                "ALLOW_READ_RANGE_SETTING": allow_range}):
             for p in list(_patch_common()) + list(extra_patches):
                 p.start()
             try:
@@ -140,9 +149,7 @@ class TestAudioBooksListCarriesTabs(unittest.TestCase):
 
     def _categories(self, handler):
         with mock.patch.multiple(audio_module, CONF={
-                "ALLOW_READ_RANGE_SETTING": True}), \
-             mock.patch("webserver.services.reader_group.ReaderGroupService.effective_limits",
-                        staticmethod(lambda u: u["_eff"])):
+                "ALLOW_READ_RANGE_SETTING": True}):
             for p in _patch_common():
                 p.start()
             try:
@@ -167,7 +174,7 @@ class TestAudioBooksListCarriesTabs(unittest.TestCase):
     def test_list_tabs_match_categories_endpoint(self):
         """同一用户下，列表下发的 tab 与独立分类接口逐字一致（含顺序）。"""
         h = FakeHandler(args={}, is_admin=True,
-                        current_user={"_eff": {"read_limit": 0}})
+                        current_user=FakeUser(read_limit=0))
         rsp = self._get(h, allow_range=True)
         tab = self._categories(h)
         self.assertEqual(rsp["audioCategories"], tab["categories"])

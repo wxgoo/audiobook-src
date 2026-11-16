@@ -3,8 +3,8 @@
 基于 [PoxenStudio/mybooks](https://github.com/PoxenStudio/mybooks) 的私人图书 / 有声书服务器定制版。
 在 Calibre 书库之上提供 Web 阅读、听书、权限分级、元数据刮削、格式转换等能力。
 
-> **当前镜像：`ghcr.io/wxgoo/audiobooks:4.7.0-build.01-r44`**（Public，匿名可拉）
-> 装完即最新：镜像内含 r44 全部代码与 r44 发布清单，`/admin/version` 基线就是 `4.7.0-build.01`。
+> **当前镜像：`ghcr.io/wxgoo/audiobooks:4.7.0-build.02-r45`**（Public，匿名可拉）
+> 装完即最新：镜像内含 r45 全部代码与 r45 发布清单，`/admin/version` 基线就是 `4.7.0-build.02`。
 
 > **仓库**：Gitee [`wxgoo/audiobook-src`](https://gitee.com/wxgoo/audiobook-src) 是**主仓库**，
 > GitHub [`wxgoo/audiobook-src`](https://github.com/wxgoo/audiobook-src) 是自动镜像（每半小时单向同步 `master` 与标签）。
@@ -47,7 +47,7 @@ docker compose up -d
 别先 `gunzip` 出 2.4GB 中间文件白占磁盘：
 
 ```sh
-gunzip -c mybooks-image-4.7.0-build.01-r44.tar.gz | docker load
+gunzip -c mybooks-image-4.7.0-build.02-r45.tar.gz | docker load
 ```
 
 第 2 步**照常**改 `.env`（这一步不能省），第 3 步照常 `docker compose up -d`：
@@ -58,7 +58,7 @@ vi .env
 docker compose up -d
 ```
 
-包里已带好 `ghcr.io/wxgoo/audiobooks:4.7.0-build.01-r44` 与 `latest` 两个标签，
+包里已带好 `ghcr.io/wxgoo/audiobooks:4.7.0-build.02-r45` 与 `latest` 两个标签，
 **不用再 `docker tag`**；本地有同名 tag，Docker 就不再联网拉，
 compose 和 `.env` **一个字都不用改**（还是写着那个 GHCR 名字，但走的是本地镜像）。
 
@@ -68,7 +68,7 @@ compose 和 `.env` **一个字都不用改**（还是写着那个 GHCR 名字，
 | --- | --- |
 | `DATA_DIR` | 数据目录的**绝对路径**，空目录即可；不能是程序目录本身 |
 | `PUID` / `PGID` | SSH 里 `id 你的用户名` 查到的 uid/gid；填错会「上传不了书 / 设置存不下 / 封面不显示」 |
-| `IMAGE_TAG` | **别动**，已是 `ghcr.io/wxgoo/audiobooks:4.7.0-build.01-r44` |
+| `IMAGE_TAG` | **别动**，已是 `ghcr.io/wxgoo/audiobooks:4.7.0-build.02-r45` |
 
 端口冲突改 `HTTP_PORT`（默认 9800）；不需要 HTTPS 就删掉 compose 里 8443 那行。
 
@@ -97,7 +97,7 @@ docker run -d --name mybooks --restart always \
   --security-opt seccomp:unconfined \
   -v /你的/数据目录:/data -p 9800:80 -p 8443:443 \
   -e PUID=$(id -u) -e PGID=$(id -g) -e TZ=Asia/Shanghai \
-  ghcr.io/wxgoo/audiobooks:4.7.0-build.01-r44
+  ghcr.io/wxgoo/audiobooks:4.7.0-build.02-r45
 ```
 
 参数与 compose 一一对应：`-v ...:/data` ↔ `volumes`、`-p` ↔ `ports`、`-e` ↔ `environment`。
@@ -142,7 +142,7 @@ docker compose start
 
 - **Web 阅读与听书**：EPUB / PDF / TXT / DOCX 等在线阅读，有声书章节播放，内嵌 MyReader 阅读器。
 - **有声书管理**：自动导入、章节替换 / 删除单集 / 上传新章节；上传时可「插入为第 N 集」，删哪集补哪集，不改文件名。
-- **读者组分级权限**：按分组限制可读范围与功能，17 套预置模板。
+- **阅读范围限制**：按用户配置白名单/黑名单（标签/分类），限制可读书目；受全局开关控制，与上游 4.7.0 一致。
 - **实体书（类型互转）**：可把选中图书在电子书 ⇄ 实体书之间互转。入口在管理 → 图书管理 → 选中若干本书 → 工具栏橙色「图书类型互转」按钮（实体书功能需开启）。转换规则：无 ISBN 或已有电子书格式的文件默认跳过；若希望不做这些检查直接转，在设置里打开「允许直接转换类型」。
 - **音频转写文稿**：Whisper 转写（模型首次联网下载，离线环境用不了）。
 - **元数据刮削与归一化**：豆瓣 V2 / 百科 / NeoDB 等多源，作者名归一化、重复书清理。
@@ -153,7 +153,7 @@ docker compose start
 
 ## 和上游的区别
 
-基线：**跟随上游 `4.7.0`**（当前版本 `4.7.0-build.01`）。上游 `4.6.0 → 4.7.0` 共
+基线：**跟随上游 `4.7.0`**（当前版本 `4.7.0-build.02`）。上游 `4.6.0 → 4.7.0` 共
 114 提交 / 176 文件，我们逐条判定后手工移植——与上游没有共同祖先，不做整体合并。
 
 ### ① 上游有、我们已经跟上的
@@ -165,8 +165,15 @@ docker compose start
 
 ### ② 我们多出来的（上游没有）
 
-读者组分级权限 · 音频转写（Whisper）· TTS 朗读（edge-tts）· 微信读书批注导入 ·
+音频转写（Whisper）· TTS 朗读（edge-tts）· 微信读书批注导入 ·
 有声书章节管理 · 有声书分类 tab。
+
+> r45 起**移除了读者组分级权限**（那是我们独有的定制，上游 4.7.0 没有）。
+> 它曾是权限判定分化的最大源头，反复出"计数与列表口径不一"的 bug。
+> 现已回退到上游口径：每个用户直接配置自己的阅读范围
+> （`read_limit` / `limit_tags` / `limit_categories` + `ALLOW_READ_RANGE_SETTING`），
+> 并把散落的判定收口到 `AccessControl` 门面。旧读者组数据可用
+> `scripts/migrate_reader_group_to_fields.py` 一次性迁移。
 
 ### ③ 上游有、我们明确没跟的（产品决策）
 
@@ -181,7 +188,8 @@ docker compose start
 
 ### ④ 大量改造与打磨
 
-修上游 bug：有声书重复入库、权限判定散落、同名书误合并、epub 坏字体拖慢打开、阅读统计写库失败。
+修上游 bug：有声书重复入库、同名书误合并、epub 坏字体拖慢打开、阅读统计写库失败；
+r45 权限判定收口到统一门面（见 [`权限判定对照表`](docs/权限判定对照表.md)）。
 日常打磨：刮削源补清洗、作者名归一化、弱网缓存策略、中文文件名容错。
 运维口径：成品镜像 + 纯 `image:` compose；Gitee 主仓库 + GitHub 自动镜像；页内热更。
 
@@ -240,11 +248,11 @@ cd app && npm run generate
 
 版本号 = **`<上游 mybooks 已发布 tag>-build.<该基线上的第几次本地构建>`**。
 
-当前：**`4.7.0-build.01`** —— 上游基线 `4.7.0`，我们按主题合入后在新基线上的第一次构建。
+当前：**`4.7.0-build.02`** —— 上游基线 `4.7.0`，该基线上的第 2 次本地构建。
 
 | 情况 | 版本号怎么变 |
 |---|---|
-| 只改本地代码 | 构建号 +1（`4.7.0-build.01` → `4.7.0-build.02`） |
+| 只改本地代码 | 构建号 +1（`4.7.0-build.02` → `4.7.0-build.03`） |
 | **上游正式发 tag 且我们按主题合入** | **整体改号**：基线段跟上游走、构建号在新基线上**从 1 重新起算**（`4.6.0-build.28` → `4.7.0-build.01`） |
 | 上游只发了 `develop`、没发 tag | **不跟号**（避免与上游未来正式发布的内容脱节） |
 

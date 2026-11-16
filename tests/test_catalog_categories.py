@@ -107,19 +107,15 @@ class TestCatalogCategories(unittest.TestCase):
         self.assertEqual(len(_run(h, allow_range=True)), 3)
 
     def test_whitelist_filters_by_name(self):
-        eff = {"read_limit": 1, "limit_categories": "历史", "limit_tags": ""}
-        h = StubHandler(current_user={"_eff": eff})
-        with mock.patch("webserver.services.reader_group.ReaderGroupService.effective_limits",
-                        staticmethod(lambda u: u["_eff"])):
-            names = [c["name"] for c in _run(h, allow_range=True)]
+        user = SimpleNamespace(read_limit=1, limit_categories="历史", limit_tags="")
+        h = StubHandler(current_user=user)
+        names = [c["name"] for c in _run(h, allow_range=True)]
         self.assertEqual(names, ["历史"])
 
     def test_blacklist_removes_by_name(self):
-        eff = {"read_limit": 2, "limit_categories": "科幻", "limit_tags": ""}
-        h = StubHandler(current_user={"_eff": eff})
-        with mock.patch("webserver.services.reader_group.ReaderGroupService.effective_limits",
-                        staticmethod(lambda u: u["_eff"])):
-            names = [c["name"] for c in _run(h, allow_range=True)]
+        user = SimpleNamespace(read_limit=2, limit_categories="科幻", limit_tags="")
+        h = StubHandler(current_user=user)
+        names = [c["name"] for c in _run(h, allow_range=True)]
         self.assertEqual(names, ["历史", "文学"])
 
     def test_scoped_counts_replace_count_and_drop_zero(self):

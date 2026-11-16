@@ -130,9 +130,9 @@ class TestDownloadFailures(unittest.TestCase):
         self.assertEqual(sess.calls, 3)
 
     def test_451_message_has_path_and_way_out(self):
-        msg = VC._download_failure("webserver/services/reader_group.py",
+        msg = VC._download_failure("webserver/services/scan_service.py",
                                    VC.RawFetchError(451))
-        self.assertIn("webserver/services/reader_group.py", msg)
+        self.assertIn("webserver/services/scan_service.py", msg)
         self.assertIn("451", msg)
         self.assertIn("部署包", msg)          # 兜底办法必须写出来
         self.assertIn("发布侧", msg)          # 明确不是本机网络问题

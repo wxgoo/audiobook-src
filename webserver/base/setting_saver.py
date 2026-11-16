@@ -25,7 +25,6 @@ ADMIN_SETTING_KEYS = (
     "ALLOW_GUEST_UPLOAD",
     "ENABLE_SHARE_LINK",
     "REQUIRE_LOGIN",
-    "READER_GROUPS_ENABLED",
     "ALLOW_REGISTER",
     "BOOK_NAMES_FORMAT",
     "BOOK_NAV",
@@ -212,13 +211,6 @@ PERSISTABLE_KEYS = frozenset(ADMIN_SETTING_KEYS) | frozenset({
     # 手工部署可写进 auto.py 的扫描调参：必须在这里，否则设置页保存时 save_partial
     # 只回写白名单键、dumpfile() 整份覆盖 auto.py，会把手改的值静默抹回默认 4。
     "scan_hash_workers",
-    # 读者组分级权限（移植自 audiobook）：组定义随设置持久化
-    "READER_GROUPS",
-    # 读者组总开关（4.6.0-19）：关闭时组规则全链路失效
-    "READER_GROUPS_ENABLED",
-    # 白名单组「一个条件都没填」时是否当作「什么都读不到」。
-    # 不放进白名单的话，设置页保存时会把它抹掉，表现为权限突然全放开。
-    "READER_GROUP_STRICT",
 })
 
 
@@ -332,9 +324,9 @@ TITLE_TEMPLATE="%%s | %(site_title)s"
         # 设置页的 POST（handlers/admin.py:AdminSettings）自己 new 一个 loader、clear()
         # 之后只填入前端提交的键（还要再过一遍 ADMIN_SETTING_KEYS），所以「只在
         # PERSISTABLE_KEYS、不在 ADMIN_SETTING_KEYS」的键每次保存都会从 auto.py 消失。
-        # 读者组分组 READER_GROUPS 就是这么丢的：分组本身由 reader_group._persist 走
+        # 历史教训：曾有个分组配置（READER_GROUPS）只由自己的 _persist 走
         # save_partial 写得好好的，管理员之后随便保存一下别的设置，它就被整份覆盖抹掉，
-        # 表现为「分组又没有了」。
+        # 表现为「分组又没有了」。这个总入口就是为防止这类丢失而加的。
         #
         # 统一在这个总入口补一次：CONF 里有、args 里没有的持久化键原样带回。
         # 放在 save_extra_settings 而不是 POST 里，是为了覆盖所有调用方（save_partial、

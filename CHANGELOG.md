@@ -15,7 +15,74 @@
 > 早期文档里若出现 `git diff master..opt/p0-p1`，请改用 tag `4.6.0-build.27` 与当前 master 比对。
 
 > 更早的变更记录（`4.6.0-build.21` 及以前、旧编号时代）已精简归档，
-> 完整历史见 git 提交记录（`git log`）。
+> 完整历史见 git 提交记录（`git log`）。---
+
+## 4.7.0-build.02-r45（2026-11-16，**移除读者组定制层 + 统一权限判定**，含前端产物，须重建镜像）
+
+主题：把权限体系从「6 套机制并行、口径靠人肉同步」收敛到与上游 4.7.0 一致，
+并消除历史上反复出现的「计数与列表口径不一」「管理员豁免这边写那边漏」类 bug。
+
+### ① 关键前提：读者组是我们独有的定制，上游 4.7.0 根本没有
+
+实测上游 4.7.0 的 `handlers/__init__.py` 路由与 `services/` 目录都没有 `reader_group`，
+但**上游有完整的「按用户阅读范围限制可见书籍」能力**：`Reader.read_limit/limit_tags/
+limit_categories` 字段 + `BaseHandler.is_book_visible()/is_book_in_reading_range()` +
+`ALLOW_READ_RANGE_SETTING` 开关。两者逐行等价。所以本次精确区分：
+
+- **删掉「组」这一层**（我们加的封装）：`READER_GROUPS`/`READER_GROUPS_ENABLED`/
+  `READER_GROUP_STRICT` 三个设置键、`services/reader_group.py` + `handlers/reader_group.py` +
+  `ReaderGroupEditor.vue`、17 套预置模板、`Reader.extra["reader_group"]` 成员归属、
+  `effective_limits()` 的组回退逻辑。
+- **保留「阅读范围限制」**（上游也有的正式功能）：每个用户自己的三个字段 + 全局开关，
+  判定回退到直接读用户字段（与上游逐行等价）。
+
+### ② 数据迁移（保住靠组继承的限制）
+
+新增 `scripts/migrate_reader_group_to_fields.py`：遍历 Reader，删除前调 `effective_limits()`
+算出生效限制，仅对「自身无显式设置」的用户写回 `read_limit/limit_tags/limit_categories`
+（有自身设置的保持原值；`group-missing` 哨兵也固化，避免删组后权限静默全开）。
+支持 `--dry-run` 预览、执行前自动备份 sqlite、交互确认。随镜像发布，升级后可选执行。
+
+### ③ 判定回退上游口径（base.py + 4 个调用点）
+
+- `webserver/handlers/base.py` 7 个判定块（`is_book_visible` / `is_library_restricted` /
+  `is_book_in_reading_range` / `_filter_tags` / `_filter_categories_by_reading_range` /
+  `_scope_key` / `_build_scoped_counts`）从 `effective_limits()` 改直读用户字段。
+- 判定本体收口到模块级 `_book_matches_limits()`（从被删的 reader_group 搬入）：比上游内联版
+  更严谨——白名单空条件=什么都看不到、黑名单空条件=全库可读、分类与标签「或」关系。
+  书列表与统计共用同一函数，根治「树里 328 本点进去 12 本」。
+- `audio.py` / `meta.py` / `podcast_provider.py` / `dav_provider.py` 的调用点同步改上游口径。
+
+### ④ 统一权限门面 AccessControl（用户选的"统一判定入口"）
+
+现实核查：5 套机制里，`BookAccessService`（访客/分享）、`modules`+`ModuleGateMixin`（模块）、
+`Reader.can_*`（操作权限位）**本身已是门面**，再包一层只是换名字、零收益且冒回归风险。
+所以门面只做两件有价值的事：
+
+- **真正散落的管理员豁免收口**：新建 `webserver/services/access_control.py`，
+  `is_admin()` 成为单一口径来源；`BaseHandler.is_admin()` 内部转调门面——
+  **74 处调用点一行不改**即获得一致口径（零回归风险）。
+- **统一 import 入口**：re-export `BookAccessService` / `modules` 的判定（纯别名，不复制逻辑），
+  新代码从一个模块 import 即可。
+
+### ⑤ 顺手修的口径不一致（用户同意"顺手修+加回归测试"）
+
+- `is_library_restricted()` 原来没检查 `ALLOW_READ_RANGE_SETTING` 全局开关：开关关闭时
+  用户实际能看全库，却被误判"受限"、错误隐藏统计页。现加开关前置，与 `is_book_visible`
+  同前提；加回归测试 `test_is_library_restricted_respects_global_switch`。
+
+### ⑥ 清理与验证
+
+- 删除 5 个读者组测试；改写 5 个引用 `effective_limits` 的测试为直读用户字段口径
+  （audiobooks category/list、catalog_categories、setting_saver、version_dist_paths）。
+- 三语文案删 130+ 个读者组键；前端 settings.vue 删读者组设置区块与组件；重编 dist
+  （reader_group/读者组命中 0 个 chunk）。
+- 新增 `docs/权限判定对照表.md`：5 套机制 × 典型场景逐格预期，作为回归与验收依据。
+- 验证：权限相关单测 115 passed；可执行全量 2187 passed / 18 failed（18 个均为
+  `social_tornado` 缺失的环境问题，与 r44 基线逐条一致）；前端 lint 0 error、generate 成功；
+  容器实测三条主链路见下方发布记录。
+
+
 ---
 
 ## 4.7.0-build.01-r44（2026-11-16，**跟随上游 4.7.0**，含前端产物，须重建镜像）

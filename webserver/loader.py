@@ -70,7 +70,7 @@ settings = {
         py = os.path.join(d, filename)
         pyc = os.path.join(d, filename + "c")
         logging.info("saving settings file: %s" % py)
-        # 覆盖前先留一份上一版：设置被误抹时（读者组分组就丢过两次），
+        # 覆盖前先留一份上一版：设置被误抹时（历史上有分组配置丢过两次），
         # auto.py.bak 是唯一能把内容捞回来的地方。只留最近一份，不会无限增长。
         # 备份失败只告警——磁盘满/只读不该让这次保存一起失败。
         try:
