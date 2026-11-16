@@ -337,6 +337,11 @@
                   </template>
                 </v-select>
               </template>
+              <scan-ignore-dirs-editor
+                v-else-if="f.type === 'scan_ignore_dirs'"
+                :key="f.key + '-scan_ignore_dirs'"
+                v-model="scanIgnoreDirs"
+              ></scan-ignore-dirs-editor>
               <book-nav-editor
                 v-else-if="f.type === 'book_nav'"
                 :key="f.key + '-book_nav'"
@@ -1288,6 +1293,7 @@ import BookNavEditor, { createCategory } from "~/components/BookNavEditor.vue";
 import ReaderDictEditor from "~/components/ReaderDictEditor.vue";
 import ReaderGroupEditor from "~/components/ReaderGroupEditor.vue";
 import HomepageCardsEditor from "~/components/HomepageCardsEditor.vue";
+import ScanIgnoreDirsEditor from "~/components/ScanIgnoreDirsEditor.vue";
 import draggable from "vuedraggable";
 import { normalizeHomepageConfig } from "~/utils/homepage";
 import { normalizeFriendType } from "~/utils/friendMeta";
@@ -1398,7 +1404,11 @@ const SEARCH_ALIASES = {
     主页: ["INDEX_PAGE_TYPE", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"], 默认页: ["INDEX_PAGE_TYPE"], 首页类型: ["INDEX_PAGE_TYPE"],
     首页卡片: ["HOMEPAGE_CONFIG"], 自定义卡片: ["HOMEPAGE_CONFIG"], 卡片: ["HOMEPAGE_CONFIG"], 作者卡片: ["HOMEPAGE_CONFIG"], 标签卡片: ["HOMEPAGE_CONFIG"], 丛书卡片: ["HOMEPAGE_CONFIG"], 语言卡片: ["HOMEPAGE_CONFIG"], 评分卡片: ["HOMEPAGE_CONFIG"],
     项目链接: ["HIDE_PROJECT_LINKS"], 隐藏链接: ["HIDE_PROJECT_LINKS"], 开源链接: ["HIDE_PROJECT_LINKS"],
-    友情链接: ["FRIENDS", "ENABLE_FRIEND_LINKS"], 友链: ["FRIENDS", "ENABLE_FRIEND_LINKS"], 链接: ["FRIENDS", "ENABLE_FRIEND_LINKS", "HIDE_PROJECT_LINKS", "AI_API_URL", "static_host", "SITE_URL"],
+    友情链接: ["FRIENDS", "ENABLE_FRIEND_LINKS"], 友链: ["FRIENDS", "ENABLE_FRIEND_LINKS"],
+    忽略目录: ["SCAN_IGNORE_DIRS"], 忽略: ["SCAN_IGNORE_DIRS"], 排除目录: ["SCAN_IGNORE_DIRS"],
+    模块: ["ENABLE_MODULE_MULTIUSER", "ENABLE_MODULE_COMMUNITY", "ENABLE_MODULE_SHARED_READING", "ENABLE_MODULE_AUDIO", "ENABLE_MODULE_PHYSICAL", "ENABLE_MODULE_AI"],
+    開關: ["ENABLE_MODULE_MULTIUSER", "ENABLE_MODULE_COMMUNITY", "ENABLE_MODULE_SHARED_READING", "ENABLE_MODULE_AUDIO", "ENABLE_MODULE_PHYSICAL", "ENABLE_MODULE_AI"],
+    链接: ["FRIENDS", "ENABLE_FRIEND_LINKS", "HIDE_PROJECT_LINKS", "AI_API_URL", "static_host", "SITE_URL"],
     网址: ["AI_API_URL", "static_host", "SITE_URL"], 地址: ["AI_API_URL", "static_host", "smtp_server", "SITE_URL"],
     // 站点与外观 · 首页与列表
     随机: ["MAIN_PAGE_RANDOM_COUNT"], 推荐: ["RECOMMEND_ENABLE", "RECOMMEND_USE_CROWD", "ENABLE_BOOK_RECOMMEND_TO_OTHERS", "MAIN_PAGE_RANDOM_COUNT"], 智能: ["RECOMMEND_ENABLE"],
@@ -1877,6 +1887,7 @@ export default {
     "reader-dict-editor": ReaderDictEditor,
     "reader-group-editor": ReaderGroupEditor,
     "homepage-cards-editor": HomepageCardsEditor,
+    "scan-ignore-dirs-editor": ScanIgnoreDirsEditor,
     draggable,
   },
   created() {
@@ -1900,6 +1911,63 @@ export default {
 
     // al = 搜索别名，供搜索匹配用
     this.groups = [
+      {
+        id: "modules",
+        icon: "mdi-view-module-outline",
+        title: "settings.group_modules",
+        sections: [
+          {
+            id: "sec-modules",
+            icon: "mdi-view-module-outline",
+            title: "settings.sec_modules",
+            desc: "settings.sec_modules_desc",
+            fields: [
+              {
+                icon: "mdi-account-multiple",
+                key: "ENABLE_MODULE_MULTIUSER",
+                label: "settings.module_multiuser",
+                type: "checkbox",
+                tips: "settings.module_multiuser_tips",
+              },
+              {
+                icon: "mdi-forum-outline",
+                key: "ENABLE_MODULE_COMMUNITY",
+                label: "settings.module_community",
+                type: "checkbox",
+                tips: "settings.module_community_tips",
+              },
+              {
+                icon: "mdi-book-open-page-variant-outline",
+                key: "ENABLE_MODULE_SHARED_READING",
+                label: "settings.module_shared_reading",
+                type: "checkbox",
+                tips: "settings.module_shared_reading_tips",
+              },
+              {
+                icon: "mdi-headphones",
+                key: "ENABLE_MODULE_AUDIO",
+                label: "settings.module_audio",
+                type: "checkbox",
+                tips: "settings.module_audio_tips",
+              },
+              {
+                icon: "mdi-bookshelf",
+                key: "ENABLE_MODULE_PHYSICAL",
+                label: "settings.module_physical",
+                type: "checkbox",
+                tips: "settings.module_physical_tips",
+              },
+              {
+                icon: "mdi-robot",
+                key: "ENABLE_MODULE_AI",
+                label: "settings.module_ai",
+                type: "checkbox",
+                tips: "settings.module_ai_tips",
+              },
+            ],
+          },
+        ],
+      },
       {
         id: "site",
         icon: "mdi-web",
@@ -2450,6 +2518,13 @@ export default {
             fields: [
               { icon: "mdi-import", key: "scan_upload_path", label: "settings.scan_upload_path" },
               {
+                icon: "mdi-folder-off-outline",
+                key: "SCAN_IGNORE_DIRS",
+                label: "settings.scan_ignore_dirs",
+                type: "scan_ignore_dirs",
+                tips: "settings.scan_ignore_dirs_hint",
+              },
+              {
                 icon: "mdi-server",
                 key: "ENABLE_SERVER_FILE_IMPORT",
                 label: "settings.enable_server_file_import",
@@ -2923,6 +2998,10 @@ export default {
         });
 
         this.ensureSettingKeysReactive();
+        this.scanIgnoreDirs = Array.isArray(this.settings["SCAN_IGNORE_DIRS"])
+          ? this.settings["SCAN_IGNORE_DIRS"].slice()
+          : [];
+        this.scanIgnoreDirsSnapshot = JSON.parse(JSON.stringify(this.scanIgnoreDirs));
         this.bookNavList = this.parseBookNav(this.settings["BOOK_NAV"] || "");
         this.snapshot = JSON.parse(JSON.stringify(this.settings));
         this.bookNavSnapshot = JSON.parse(JSON.stringify(this.bookNavList));
@@ -2959,6 +3038,8 @@ export default {
     forceLiteGroups: false,
     forceCacheSize: false,
     bookNavList: [],
+    scanIgnoreDirs: [],
+    scanIgnoreDirsSnapshot: "[]",
     thanksToNames: [],
     thanksToShow: false,
     appliedToken: false,
@@ -3117,6 +3198,15 @@ export default {
       ) {
         const nav = this.flatIndex.find((r) => r.key === "BOOK_NAV");
         if (nav) items.push(nav);
+      }
+      // ScanIgnoreDirsEditor 改的是 scanIgnoreDirs，同样要到保存时才序列化回
+      // settings.SCAN_IGNORE_DIRS，故单独补进「有变更」清单
+      if (
+        JSON.stringify(this.scanIgnoreDirsSnapshot) !== JSON.stringify(this.scanIgnoreDirs) &&
+        !seen["SCAN_IGNORE_DIRS"]
+      ) {
+        const item = this.flatIndex.find((r) => r.key === "SCAN_IGNORE_DIRS");
+        if (item) items.push(item);
       }
       const order = {};
       this.groups.forEach((g, gi) => {
@@ -3759,6 +3849,11 @@ export default {
       // 若先改写 live settings，保存失败会留下用户没动过的假 diff 且无自愈出口
       const payload = JSON.parse(JSON.stringify(this.settings));
       payload["BOOK_NAV"] = this.serializeBookNav(this.bookNavList);
+      // 扫描忽略目录：提交前规范化（去首尾空白、去空行）；非法名在前端已阻止保存，
+      // 服务端还会再清洗一次（双保险）。
+      payload["SCAN_IGNORE_DIRS"] = (payload["SCAN_IGNORE_DIRS"] || [])
+        .map((name) => (name || "").trim())
+        .filter(Boolean);
       // showToken is view state only; the server drops incomplete entries.
       payload["READER_MYDICTS"] = (payload["READER_MYDICTS"] || []).map((dict) => {
         const entry = { ...dict };
@@ -3790,6 +3885,8 @@ export default {
         this.$store.commit("refresh_sys");
         // 服务端确认后才把规范化结果落到本地状态与 localStorage
         this.settings["BOOK_NAV"] = payload["BOOK_NAV"];
+        this.settings["SCAN_IGNORE_DIRS"] = payload["SCAN_IGNORE_DIRS"];
+        this.scanIgnoreDirsSnapshot = JSON.parse(JSON.stringify(payload["SCAN_IGNORE_DIRS"]));
         this.settings["READER_MYDICTS"] = payload["READER_MYDICTS"];
         this.settings["site_language"] = payload["site_language"];
         if (this.settings["site_language"] !== "") {

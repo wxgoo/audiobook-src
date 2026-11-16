@@ -23,6 +23,9 @@ from tornado.iostream import StreamClosedError
 from webserver import loader
 from webserver import constants
 from webserver.base.formatter import BookFormatter
+# 有声书模块可整块关闭（设置 → 模块开关）。门控在原有登录/邀请闸之后再过一道：
+# 关掉后 JSON 接口返回 module.disabled、文件流类接口 404，数据只隐藏不删除。
+from webserver.base.modules import MODULE_AUDIO, ModuleGateMixin
 from webserver.base.pagination import encode_cursor, parse_id_cursor
 from webserver.base import audio_category_agg
 from webserver.base import category_icons
@@ -436,7 +439,9 @@ class AudioUtils:
         return True, _("音频文件不存在")
 
 
-class AudioDetail(BaseHandler):
+class AudioDetail(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     def _extract_m4b_chapters(self, file_path, file_size, book_id, file):
         try:
             from mutagen.mp4 import MP4
@@ -603,7 +608,9 @@ def _visible_audio_ids(handler):
     return {bid for bid, m in meta.items() if book_matches_limits(m, eff)}
 
 
-class AudioBooks(BaseHandler):
+class AudioBooks(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @js
     async def get(self):
         """获取有音频的书籍列表。
@@ -734,7 +741,9 @@ def build_audio_tab_categories(catalog, cat_map, visible, keep_empty=False):
     return category_icons.decorate(rows)
 
 
-class AudioBookCategories(BaseHandler):
+class AudioBookCategories(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     """有声书页的分类 tab：{err, total, categories:[{name,count,icon,color}]}。
 
     §分类必须与分类浏览页一致§
@@ -767,7 +776,9 @@ class AudioBookCategories(BaseHandler):
             return {"err": "server.error", "msg": str(e)}
 
 
-class AudioConversion(BaseHandler):
+class AudioConversion(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @staticmethod
     def get_progress(bid):
         try:
@@ -1074,7 +1085,9 @@ class AudioConversion(BaseHandler):
             return {"err": "server.error", "msg": str(e)}
 
 
-class AudioConversionCancel(BaseHandler):
+class AudioConversionCancel(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @js
     @is_admin
     def post(self, book_id):
@@ -1111,7 +1124,9 @@ class AudioConversionCancel(BaseHandler):
             return {"err": "server.error", "msg": str(e)}
 
 
-class AudioDelete(BaseHandler):
+class AudioDelete(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @js
     @is_admin
     def post(self, book_id):
@@ -1387,7 +1402,9 @@ def _sync_audio_set(book_id, has_audio):
         logging.exception("[AUDIO] invalidate audio agg failed for book %s", book_id)
 
 
-class AudioReplace(BaseHandler):
+class AudioReplace(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     """替换单个音频章节：只覆盖文件内容，文件名保持不变。
 
     此前站点只能「删整本音频」或「重新导入」，而导入对同名文件是纯增量
@@ -1461,7 +1478,9 @@ class AudioReplace(BaseHandler):
         }
 
 
-class AudioChapterDelete(BaseHandler):
+class AudioChapterDelete(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     """删除单个音频章节（只删一个文件，不是删整本 .audio/）。
 
     与 AudioDelete 的区别：AudioDelete 会 shutil.rmtree 整本音频，且
@@ -1503,7 +1522,9 @@ class AudioChapterDelete(BaseHandler):
         return {"err": "ok", "msg": _("已删除该章节"), "data": {"filename": target}}
 
 
-class AudioChapterUpload(BaseHandler):
+class AudioChapterUpload(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     """上传新章节：可指定「插入到第 N 集」，绝不覆盖已有文件。
 
     文件名决定播放顺序（natural_sort_key 自然排序）与 VIP 免费章判定位置。
@@ -1618,7 +1639,11 @@ class AudioChapterUpload(BaseHandler):
         }
 
 
-class AudioFile(BaseHandler):
+class AudioFile(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+    # 文件流：模块关闭时回 404，别把 JSON/HTML 错误页喂给播放器与下载客户端
+    module_gate_json = False
+
     # 异步读盘的分块大小：太大占用内存，太小增加线程池往返次数
     STREAM_CHUNK_SIZE = 128 * 1024
 
@@ -1789,7 +1814,9 @@ class AudioFile(BaseHandler):
             raise web.HTTPError(500, "内部错误")
 
 
-class AudioCollection(BaseHandler):
+class AudioCollection(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     def create_biz_key(self):
         user = self.get_current_user()
         # 生成32位随机key
@@ -1947,7 +1974,11 @@ class AudioCollection(BaseHandler):
             return {"err": "server.error", "msg": str(e)}
 
 
-class AudioCollectionDownloadFile(BaseHandler):
+class AudioCollectionDownloadFile(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+    # 文件流：模块关闭时回 404，别把 JSON/HTML 错误页喂给播放器与下载客户端
+    module_gate_json = False
+
     def get(self, book_id):
         """音频合集文件下载接口"""
         try:
@@ -2059,7 +2090,9 @@ class AudioCollectionDownloadFile(BaseHandler):
             raise web.HTTPError(500, "Internal server error")
 
 
-class AudioPurchase(BaseHandler):
+class AudioPurchase(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @js
     @auth
     def post(self, book_id):
@@ -2216,7 +2249,9 @@ def _now_ms():
     return int(time.time() * 1000)
 
 
-class AudioPlaybackProgress(BaseHandler):
+class AudioPlaybackProgress(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     """有声书播放进度的服务端存取（4.6.0-19）。
 
     此前进度只存浏览器 localStorage：换设备/换浏览器/清缓存即丢，服务器

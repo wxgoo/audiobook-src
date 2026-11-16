@@ -23,6 +23,7 @@ import tornado
 from webserver import loader
 from webserver.handlers.base import BaseHandler
 from webserver.services.book_access_service import BookAccessService
+from webserver.base.modules import MODULE_AUDIO, ModuleGateMixin
 
 CONF = loader.get_settings()
 
@@ -50,7 +51,9 @@ def _lang_from_voice(voice: str) -> str:
     return match.group(1) if match else "en-US"
 
 
-class EdgeTTSProxy(BaseHandler):
+class EdgeTTSProxy(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     """Handles both the voice listing (GET) and the synthesis request (POST)
     at the single `/api/tts/edge` path, matching the Next.js route's shape."""
 

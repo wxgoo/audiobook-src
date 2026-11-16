@@ -17,6 +17,7 @@ from webserver.models import BookShare
 from webserver.services.book_access_service import BookAccessService
 from webserver.services.book_share_service import RESULT_BAD_PASSWORD, RESULT_LOCKED, RESULT_OK, BookShareService, ShareParamError
 from webserver.services import book_takedown
+from webserver.base.modules import MODULE_SHARED_READING, ModuleGateMixin
 
 CONF = loader.get_settings()
 
@@ -59,7 +60,9 @@ class ShareHandlerMixin:
         return data if isinstance(data, dict) else None
 
 
-class AdminBookShareHandler(BaseHandler, ShareHandlerMixin):
+class AdminBookShareHandler(ModuleGateMixin, BaseHandler, ShareHandlerMixin):
+    module_id = MODULE_SHARED_READING
+
 
     @js
     @is_admin
@@ -95,7 +98,9 @@ class AdminBookShareHandler(BaseHandler, ShareHandlerMixin):
         return {"err": "ok", "share": self._share_dict(share), "msg": _("分享已保存")}
 
 
-class AdminShareCancelHandler(BaseHandler, ShareHandlerMixin):
+class AdminShareCancelHandler(ModuleGateMixin, BaseHandler, ShareHandlerMixin):
+    module_id = MODULE_SHARED_READING
+
 
     @js
     @is_admin
@@ -105,7 +110,9 @@ class AdminShareCancelHandler(BaseHandler, ShareHandlerMixin):
         return {"err": "ok", "msg": _("分享已取消")}
 
 
-class AdminShareDeleteHandler(BaseHandler, ShareHandlerMixin):
+class AdminShareDeleteHandler(ModuleGateMixin, BaseHandler, ShareHandlerMixin):
+    module_id = MODULE_SHARED_READING
+
 
     @js
     @is_admin
@@ -115,7 +122,9 @@ class AdminShareDeleteHandler(BaseHandler, ShareHandlerMixin):
         return {"err": "ok", "msg": _("分享已删除")}
 
 
-class AdminShareListHandler(BaseHandler, ShareHandlerMixin):
+class AdminShareListHandler(ModuleGateMixin, BaseHandler, ShareHandlerMixin):
+    module_id = MODULE_SHARED_READING
+
 
     @js
     @is_admin
@@ -132,7 +141,9 @@ class AdminShareListHandler(BaseHandler, ShareHandlerMixin):
         return {"err": "ok", "total": total, "shares": [self._share_dict(row, titles.get(row.book_id, "")) for row in rows]}
 
 
-class ShareInfoHandler(BaseHandler, ShareHandlerMixin):
+class ShareInfoHandler(ModuleGateMixin, BaseHandler, ShareHandlerMixin):
+    module_id = MODULE_SHARED_READING
+
 
     def _payload(self, share, granted):
         book = self.get_book(share.book_id, raise_exception=False)

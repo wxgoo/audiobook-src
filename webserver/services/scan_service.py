@@ -396,6 +396,58 @@ class ScanService(AsyncService):
         return list(ScanService.invalid_folder)
 
     @staticmethod
+    @staticmethod
+    def _scan_ignore_dir_names():
+        r"""SCAN_IGNORE_DIRS 的归一化集合：只保留合法目录名，非法/空值忽略。
+
+        规则与上游一致（按**目录名精确匹配**，不含路径、不支持通配符）：
+        非字符串忽略、strip 后为空或 "." / ".." 忽略、
+        含 ``/ \ : * ? " < > |`` 或控制字符（ord < 32）忽略、去重。
+        """
+        raw = CONF.get("SCAN_IGNORE_DIRS", [])
+        if not isinstance(raw, (list, tuple, set)):
+            return frozenset()
+        names = set()
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            name = item.strip()
+            if not name or name in (".", ".."):
+                continue
+            if any(ch in name for ch in '/\\:*?"<>|') or any(ord(ch) < 32 for ch in name):
+                continue
+            names.add(name)
+        return frozenset(names)
+
+    @staticmethod
+    def _is_ignored_scan_subpath(fpath, ignore_names, is_dir=None, real_path=None, scan_root=None):
+        """路径是否位于忽略目录之下：只比对相对扫描根的目录层级名。
+
+        扫描根本身不跳过；扫描根之外的路径（上传临时目录等）不受影响；
+        普通文件只查父目录层级（文件名与忽略名相同不算命中）。
+        """
+        if not ignore_names:
+            return False
+        root = scan_root if scan_root is not None else CONF.get("scan_upload_path", "")
+        if not root:
+            return False
+        try:
+            root_real = os.path.realpath(root)
+            real = real_path if real_path is not None else os.path.realpath(fpath)
+        except (OSError, ValueError):
+            return False
+        if real != root_real and not real.startswith(root_real + os.sep):
+            return False
+        rel = os.path.relpath(real, root_real)
+        if rel == ".":
+            return False
+        parts = rel.split(os.sep)
+        if is_dir is None:
+            is_dir = os.path.isdir(fpath)
+        if not is_dir:
+            parts = parts[:-1]
+        return any(part in ignore_names for part in parts)
+
     def os_walk_error_handler(e):
         if e.errno == errno.EACCES:
             logging.error(f"[IMPORT]权限不足，跳过目录: {e.filename}")
@@ -1122,6 +1174,8 @@ class ScanService(AsyncService):
         visited: dict = {}
         file_dir: dict = {}
         skipped_dirs = 0
+        # 本轮忽略目录集合：遍历层过滤 + 路径层判断都用它
+        ignore_names = self._scan_ignore_dir_names()
         for p in dirs:
             # 归一化扫描根：尾斜杠/冗余斜杠会让下面「根一次 realpath + 后缀拼接」
             # 产生坏键（realpath 吞尾斜杠而 dirpath 切片不随——"…/imports/" 的
@@ -1146,6 +1200,13 @@ class ScanService(AsyncService):
                 # 上是逐分量 round-trip）成为重扫剩余成本的大头。键值与逐目录
                 # realpath 逐字节相等，存量 scan_dir_snapshots 零迁移。
                 root_real = os.path.realpath(p)
+                if ScanService._is_ignored_scan_subpath(
+                    p,
+                    ignore_names,
+                    scan_root=CONF.get("scan_upload_path", ""),
+                ):
+                    logging.info("[SCAN] Ignore by scan_ignore_dirs: %s", p)
+                    continue
                 for dirpath, dirnames, filenames in os.walk(p, onerror=ScanService.os_walk_error_handler):
                     if dirpath.startswith(p):
                         real_dirpath = root_real if dirpath == p else root_real + dirpath[len(p):]
@@ -1156,7 +1217,12 @@ class ScanService(AsyncService):
                     # scandir 原始条目数（过滤前口径）：写读两侧必须同一定义，否则隐藏目录
                     # 增删会导致永久 miss 或永久重走。本计数含点开头条目（文件循环里再跳过）。
                     entry_count = len(dirnames) + len(filenames)
-                    dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                    # 忽略目录在**遍历层**就被挡掉：os.walk 不会进入它，其后代自然排除。
+                    # entry_count 仍按过滤前口径算（隐藏/忽略目录增删不能被误判成已扫完）。
+                    dirnames[:] = [
+                        d for d in dirnames
+                        if not d.startswith(".") and d not in ignore_names
+                    ]
                     try:
                         dir_mtime = os.stat(dirpath).st_mtime_ns
                     except OSError:
@@ -1225,6 +1291,7 @@ class ScanService(AsyncService):
             return filelist
         if not rows:
             return filelist
+        ignore_names = self._scan_ignore_dir_names()
         seen = set(filelist)
         added = 0
         for (p,) in rows:
@@ -1236,6 +1303,15 @@ class ScanService(AsyncService):
             except (ValueError, OSError):
                 continue
             if not inside or not os.path.isfile(p):
+                continue
+            # 忽略目录里的待处理记录不能借「并入待处理」这条路绕过忽略规则
+            if ScanService._is_ignored_scan_subpath(
+                p,
+                ignore_names,
+                is_dir=False,
+                real_path=real,
+                scan_root=scan_root,
+            ):
                 continue
             seen.add(p)
             filelist.append(p)

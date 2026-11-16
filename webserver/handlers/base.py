@@ -31,6 +31,7 @@ from webserver.base.pagination import decode_cursor, encode_cursor, parse_id_cur
 from webserver.base.query_cache import VersionedCache, library_version
 from webserver.base.global_state import get_global_state
 from webserver.base.sidebar import get_sidebar_items
+from webserver.base import modules as modules_module
 from webserver.services.resource_service import ResourceService
 from webserver.services.perf_monitor import PerfMonitor
 from webserver.services.book_access_service import BookAccessService
@@ -2305,7 +2306,9 @@ class BaseHandler(web.RequestHandler):
                     CONF["CHUNK_UPLOAD_SIZE"] if "CHUNK_UPLOAD_SIZE" in CONF else "0MB"
                 ),
                 "icon": CONF["site_icon"] if "site_icon" in CONF else "favicon_1",
-                "socials": CONF["SOCIALS"],
+                # 多用户模块关闭 → 社交登录入口没有意义（没有人可登录）
+                "socials": CONF["SOCIALS"] if modules_module.module_enabled(
+                    modules_module.MODULE_MULTIUSER, CONF) else [],
                 "friends": self._build_friends_with_favicon(),
                 "footer": CONF["FOOTER"] if "FOOTER" in CONF else "",
                 "footer_watermark": CONF.get("FOOTER_WATERMARK", ""),
@@ -2329,9 +2332,19 @@ class BaseHandler(web.RequestHandler):
                 # 读取期下发：迁移标记未置位时补齐旧默认缺的 authors/friends/booklists，
                 # 置位后以 stored 为权威原样返回；两种情况都不改写用户存的配置（见 sidebar.py）
                 "sidebar_items": get_sidebar_items(CONF),
+                # 模块快照：前端据 sys.modules.<id> 决定导航、菜单、详情页按钮与设置区块的显隐
+                "modules": modules_module.snapshot(CONF),
                 "invited_enabled": self.need_invited(),
                 "showUserInfo": CONF.get("ENABLE_AUTHOR_INFO", False),
-                "mynexus_enabled": CONF.get("ENABLE_MYNEXUS", False),
+                # AI 模块整块关闭 → AI 相关入口与开关一并失效（不只是隐藏菜单）
+                "ai_enabled": (
+                    CONF.get("AI_ENABLED", False)
+                    and modules_module.module_enabled(modules_module.MODULE_AI, CONF)
+                ),
+                "mynexus_enabled": (
+                    CONF.get("ENABLE_MYNEXUS", False)
+                    and modules_module.module_enabled(modules_module.MODULE_AI, CONF)
+                ),
             }
         )
         return info
@@ -2353,10 +2366,16 @@ class BaseHandler(web.RequestHandler):
             scoped = await self.run_calibre_read_async(self.scoped_counts, key)
             stats = scoped["stats"] if scoped else await self.run_calibre_read_async(self._library_stats)
         else:
-            stats = BaseHandler._stats_cache.get("stats", version)
+            # 缓存 key 必须带上模块状态：关掉有声书/实体书模块后统计口径变了，
+            # 沿用旧 key 会让用户看到上一版的计数。
+            stats_key = "stats:%d:%d" % (
+                modules_module.module_enabled(modules_module.MODULE_AUDIO, CONF),
+                modules_module.module_enabled(modules_module.MODULE_PHYSICAL, CONF),
+            )
+            stats = BaseHandler._stats_cache.get(stats_key, version)
             if stats is None:
                 stats = await self.run_calibre_read_async(self._library_stats)
-                BaseHandler._stats_cache.put("stats", version, stats)
+                BaseHandler._stats_cache.put(stats_key, version, stats)
         return self._sys_info_with(stats)
 
 

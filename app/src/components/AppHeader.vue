@@ -283,7 +283,7 @@
                             width="3"
                             class="mr-2"
                         ></v-progress-circular>
-                        <v-btn v-if="isAiFeatureEnabled" :color="isFocused ? (ai_enabled ? 'orange darken-4' : 'grey') : 'transparent'" class="black--text" rounded @click="toggleAi">AI</v-btn>
+                        <v-btn v-if="isAiFeatureEnabled && moduleOn('ai')" :color="isFocused ? (ai_enabled ? 'orange darken-4' : 'grey') : 'transparent'" class="black--text" rounded @click="toggleAi">AI</v-btn>
                     </template>
                 </v-text-field>
                 <v-spacer></v-spacer>
@@ -430,6 +430,7 @@
         </AppDialog>
 
         <AppDialog
+            v-if="moduleOn('community')"
             v-model="memoDialog"
             type="action"
             :title="$t('appHeader.memoDialogTitle')"
@@ -615,6 +616,16 @@ export default {
             sidebar_items: [],
             socials: [],
             friends: [],
+            // 功能模块快照（multiuser / community / shared_reading / audio / physical / ai）；
+            // 服务端还没下发前按全开处理，避免首屏入口先显示再消失
+            modules: {
+                multiuser: true,
+                community: true,
+                shared_reading: true,
+                audio: true,
+                physical: true,
+                ai: true,
+            },
             allow: {
                 register: true,
                 download: true,
@@ -640,6 +651,17 @@ export default {
     };
     },
     computed: {
+        /**
+         * 功能模块是否开启（模块级开关，见 webserver/base/modules.py）。
+         * 服务端还没下发 sys.modules 时按开启处理：宁可多显示一秒，
+         * 也不要在首屏把入口闪没。
+         */
+        moduleOn() {
+            return (id) => {
+                const mods = (this.sys && this.sys.modules) || {};
+                return mods[id] !== false;
+            };
+        },
         unreadCount() {
             return Math.max(this.totalUnread, this.messages.length);
         },
@@ -691,7 +713,7 @@ export default {
                     groups: [
                         { icon: "mdi-account-cog", href: "/user/usersettings", text: "appHeader.user_setting", color: "blue darken-1" },
                         { icon: "mdi-shield-account", href: "/soledbooks", text: "appHeader.soledBooks", color: "deep-orange"},
-                        { icon: "mdi-notebook", href: "/expected", text: "expected.title", color: "green"},
+                        ...(this.moduleOn("community") ? [{ icon: "mdi-notebook", href: "/expected", text: "expected.title", color: "green"}] : []),
                     ],
                 }
             ];
@@ -710,14 +732,14 @@ export default {
                         // r9：入口改叫「账号管理」。这一页对管理员只剩「改用户名/改密码」，
                         // 对普通用户仍是各设置项；叫「用户管理」会让管理员觉得自己
                         // 也能被这里限制，实际并不会。
-                        { icon: "mdi-account", href: "/admin/users", text: "appHeader.accountManagement", color: "deep-orange"},
+                        ...(this.moduleOn("multiuser") ? [{ icon: "mdi-account", href: "/admin/users", text: "appHeader.accountManagement", color: "deep-orange"}] : []),
                         { icon: "mdi-import", href: "/admin/imports", text: "appHeader.importBooks", color: "green"},
                         { icon: "mdi-library-shelves", href: "/admin/books", text: "appHeader.bookManagement", color: "blue darken-2"},
                         // build.27：作者归一化不再单列左侧树入口，已并入「工具箱 → 作者归一 / 清理」
 
                         ...(this.sys.allow.share_link ? [{ icon: "mdi-cloud-outline", href: "/admin/shares", text: "appHeader.shareManagement", color: "teal" }] : []),
-                        { icon: "mdi-notebook", href: "/admin/all-expected", text: "expected.allPageTitle", color: "green"},
-                        ...(this.sys.allow.user_memos ? [{ icon: "mdi-message-text-outline", href: "/admin/user-memos", text: "memos.pageTitle", color: "blue" }] : []),
+                        ...(this.moduleOn("community") ? [{ icon: "mdi-notebook", href: "/admin/all-expected", text: "expected.allPageTitle", color: "green"}] : []),
+                        ...(this.moduleOn("community") && this.sys.allow.user_memos ? [{ icon: "mdi-message-text-outline", href: "/admin/user-memos", text: "memos.pageTitle", color: "blue" }] : []),
                         ...(this.sys.allow.book_review ? [{ icon: "mdi-comment-text-multiple-outline", href: "/admin/book-reviews", text: "adminBookReviews.pageTitle", color: "deep-orange"}] : []),
                         { icon: "mdi-math-log", href: "/admin/syslog", text: "appHeader.syslog", color: "green"},
                         { icon: "mdi-toolbox-outline", href: "/admin/toolbox", text: "appHeader.toolbox", color: "deep-orange"},
@@ -760,9 +782,12 @@ export default {
             // 管理员配置的侧边栏显示项：空数组表示全部显示（旧配置），
             // 仅含 "none" 表示全部隐藏（设置页全不勾选时写入的哨兵值）
             const showItem = (key) => !this.sys.sidebar_items || this.sys.sidebar_items.length === 0 || this.sys.sidebar_items.includes(key);
+
+            // moduleOn 见 computed：模板里也要用（AI 按钮、留言对话框），
+            // 局部函数模板访问不到，故做成 computed 属性。
             const navLinks = [
                 ...(showItem("folders") && this.sys.allow.folder ? [{ icon: "mdi-folder-multiple-outline", href: "/folder", text: "appHeader.folders", count: this.sys.folders, color: "amber darken-2" }] : []),
-                ...(showItem("audiobooks") ? [{ icon: "mdi-headphones", href: "/audiobooks", text: "appHeader.audioBooks", count: this.sys.audiobooks, color: "purple"}] : []),
+                ...(showItem("audiobooks") && this.moduleOn("audio") ? [{ icon: "mdi-headphones", href: "/audiobooks", text: "appHeader.audioBooks", count: this.sys.audiobooks, color: "purple"}] : []),
                 // 实体书入口由两个开关叠加控制：
                 // 1. SIDEBAR_ITEMS 勾选项（侧边栏显示项目，printbooks）— 管理员可勾选/取消
                 // 2. ENABLE_PHYSICAL_BOOKS（站点与外观 → 实体书功能开关）
@@ -815,15 +840,15 @@ export default {
                 .concat(this.user.is_login ? userLinks : [])
                 .concat(this.user.is_admin ? adminLinks : [])
                 .concat(this.user.is_login ? readingLinks : [])
-                .concat(this.user.is_login && showItem("booklists") ? booklistLinks: [])
+                .concat(this.user.is_login && this.moduleOn("shared_reading") && showItem("booklists") ? booklistLinks: [])
                 .concat(navLinks)
-                .concat(this.sys.allow.user_memos ? memoLink : [])
+                .concat(this.moduleOn("community") && this.sys.allow.user_memos ? memoLink : [])
                 // 友情链接显隐独立于 SIDEBAR_ITEMS：旧逻辑 showItem("friends") 在
                 // 「管理员保存过设置页 + 存储列表是旧默认（缺 friends）」时会把 friends
                 // 判为「管理员主动取消勾选」而永久隐藏，非管理员前台就看不到友情链接。
                 // 现改为独立站点开关 sys.allow.friend_links（默认 true，老后端无此字段时
                 // 回退 showItem 兼容），保证所有用户一致可见。
-                .concat((this.sys.allow.friend_links !== undefined ? this.sys.allow.friend_links : showItem("friends")) && this.sys.friends.length > 0 ? friendLinks : [])
+                .concat((this.sys.allow.friend_links !== undefined ? this.sys.allow.friend_links : showItem("friends")) && this.moduleOn("shared_reading") && this.sys.friends.length > 0 ? friendLinks : [])
         },
     },
     mounted() {

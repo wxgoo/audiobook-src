@@ -78,6 +78,7 @@ ADMIN_SETTING_KEYS = (
     # auto.py 的，没登记的键等于不存在 —— 管理员一旦保存设置，模块开关就
     # 被静默抹回默认值。modules.py 里那条注释说的就是这个。
     "ENABLE_MODULE_MULTIUSER",
+    "SCAN_IGNORE_DIRS",
     "ENABLE_MODULE_COMMUNITY",
     "ENABLE_MODULE_SHARED_READING",
     "ENABLE_MODULE_AUDIO",
@@ -187,6 +188,7 @@ PERSISTABLE_KEYS = frozenset(ADMIN_SETTING_KEYS) | frozenset({
     # PERSISTABLE_KEYS 管「dumpfile 时写回 auto.py」。只进前者的话，保存
     # 其他设置时这六个键不会被带上，模块开关会在磁盘上被抹掉。
     "ENABLE_MODULE_MULTIUSER",
+    "SCAN_IGNORE_DIRS",
     "ENABLE_MODULE_COMMUNITY",
     "ENABLE_MODULE_SHARED_READING",
     "ENABLE_MODULE_AUDIO",

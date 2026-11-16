@@ -16,6 +16,7 @@ from webserver.handlers.base import BaseHandler, auth, js, is_admin
 from webserver.models import ScanFile
 from webserver.services.scan_service import ScanService, SCAN_EXT as SERVER_SCAN_EXT, ImportOptions
 from webserver.services.audios_import import AudioBookImporter
+from webserver.base.modules import MODULE_AUDIO, MODULE_PHYSICAL, ModuleGateMixin
 
 CONF = loader.get_settings()
 SCAN_EXT = ["azw", "azw3", "epub", "mobi", "pdf", "txt"]
@@ -358,7 +359,9 @@ class ImportStatus(BaseHandler):
                     logging.error(f"Error closing scanner: {e}")
 
 
-class BatchAddRun(BaseHandler):
+class BatchAddRun(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_PHYSICAL
+
     @js
     @is_admin
     def post(self):
@@ -448,7 +451,9 @@ class BatchAddRun(BaseHandler):
             return {"err": "server.error", "msg": str(e)}
 
 
-class BatchAddStatus(BaseHandler):
+class BatchAddStatus(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_PHYSICAL
+
     @js
     @is_admin
     def get(self):
@@ -479,7 +484,9 @@ class BatchAddStatus(BaseHandler):
                     logging.error(f"Error closing scanner: {e}")
 
 
-class AudioImportRun(BaseHandler):
+class AudioImportRun(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @js
     @is_admin
     def post(self):
@@ -494,7 +501,9 @@ class AudioImportRun(BaseHandler):
         return {"err": "ok", "msg": _("有声书导入任务已启动")}
 
 
-class AudioImportStatus(BaseHandler):
+class AudioImportStatus(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @js
     @is_admin
     def get(self):

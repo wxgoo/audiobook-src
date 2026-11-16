@@ -71,10 +71,21 @@ def _read(path):
 
 
 def _git(upstream_dir, *args):
-    out = subprocess.run(
-        ["git", "-C", upstream_dir] + list(args),
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
-    )
+    """跑一条 git 命令。
+
+    容错：``git show <ref>:<path>`` 在 blob 缺失时会去 promisor remote 现拉，
+    网络抖动就会卡死在这里（曾经把 compare 拖到超时）。所以：
+      - 超时上限放宽到 180s；
+      - 超时/失败一律当作「取不到该文件」返回，调用方按「无法判定」处理，
+        **绝不中断整轮比对**——少判几个文件比整轮失败好。
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", upstream_dir] + list(args),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+        )
+    except subprocess.TimeoutExpired:
+        return 1, "", "git %s 超时（blob 懒加载卡住；可先 git fetch --unshallow 再试）" % " ".join(args)
     return out.returncode, out.stdout.strip(), out.stderr.strip()
 
 
@@ -185,12 +196,17 @@ def cmd_compare(args):
     changed = _changed_files(args.upstream_dir, args.base, args.target)
     matrix = {"auto": [], "conflict": [], "ours_only": [], "never_merge": []}
 
+    skipped_unreadable = []
     for rel in changed:
         if any(part in SKIP_DIRS for part in rel.split("/")):
             continue
         theirs = _upstream_file(args.upstream_dir, args.target, rel)
         base = _upstream_file(args.upstream_dir, args.base, rel)
         ours = _ours_file(rel)
+        if theirs is None and base is None:
+            # 取不到上游这份文件（blob 缺失 / 网络卡住）：不猜，单独记下来
+            skipped_unreadable.append(rel)
+            continue
         if rel in NEVER_MERGE_WHOLE:
             matrix["never_merge"].append(rel)
         if ours is None:
@@ -217,6 +233,8 @@ def cmd_compare(args):
     print("  可自动吸收       : %d" % summary["auto"])
     print("  需人工判定(冲突) : %d" % summary["conflict"])
     print("  仅我们有         : %d" % summary["ours_only"])
+    if skipped_unreadable:
+        print("  ⚠ 取不到(未判定) : %d" % len(skipped_unreadable))
     if matrix["never_merge"]:
         print("  ⚠ 禁止整体合并   : %s" % ", ".join(matrix["never_merge"]))
     if matrix["conflict"]:
@@ -224,6 +242,7 @@ def cmd_compare(args):
         for item in matrix["conflict"][:20]:
             print("  %3d  %s" % (item["conflicts"], item["path"]))
 
+    matrix["unreadable"] = skipped_unreadable
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(matrix, f, ensure_ascii=False, indent=2)

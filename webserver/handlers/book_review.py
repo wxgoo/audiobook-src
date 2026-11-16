@@ -16,6 +16,7 @@ from webserver.handlers.base import BaseHandler, auth, js
 from webserver.i18n import _
 from webserver.models import BookReview, Reader
 from webserver.services.book_review_service import BookReviewService
+from webserver.base.modules import MODULE_SHARED_READING, ModuleGateMixin
 
 CONF = loader.get_settings()
 MAX_REVIEW_COMMENT_LENGTH = 5000
@@ -58,7 +59,9 @@ class BookSocialStatsHandler(BaseHandler):
         return {"err": "ok", **stats}
 
 
-class BookReviewHandler(BaseHandler):
+class BookReviewHandler(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_SHARED_READING
+
     @js
     @auth
     def get(self, id):
@@ -105,7 +108,9 @@ class BookReviewHandler(BaseHandler):
         return {"err": "ok", "msg": _("已删除")}
 
 
-class BookReviewListHandler(BaseHandler):
+class BookReviewListHandler(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_SHARED_READING
+
     @js
     def get(self, id):
         """评论卡片列表，见 plan §2.4c：不做日期筛选/分页，只取最近更新的最多 50 条，当前用户置顶。"""

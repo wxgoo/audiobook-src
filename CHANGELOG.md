@@ -16,6 +16,111 @@
 
 > 更早的变更记录（`4.6.0-build.21` 及以前、旧编号时代）已精简归档，
 > 完整历史见 git 提交记录（`git log`）。
+---
+
+## 4.6.0-build.28-r43（2026-11-16，**跟随上游 4.7.0**，含前端产物，须重建镜像）
+
+这是本项目第一次**按「跟随上游」的流程**走完整一轮：拉上游 → 规模评估 → 逐文件三方比对
+→ 逐条判定 → 移植。工具与判定报告见
+[`docs/跟随上游-4.7.0-判定报告.md`](docs/跟随上游-4.7.0-判定报告.md) 与
+`scripts/upstream/follow-upstream.py`。
+
+### ① 上游现状（脚本实测）
+
+上游已发 **`4.7.0`**（我们基线 `4.6.0`），`4.6.0..4.7.0` = **114 提交 / 176 文件**
+（+18999 / −8133 行）。三方比对结果：**可自动吸收 111 / 需人工判定 58 / 仅我们有 7**，
+禁止整体合并 1（`webserver/settings.py`，上游默认值与键名有破坏性变更）。
+
+> **关键前提**：我们与上游**没有共同祖先**（仓库是「导出上游源码」建的，
+> 上游 git 历史不在本仓库里），所以 `git merge` / `rebase` / `cherry-pick` 全部不可行。
+> 跟随上游只能「文件级三方比对 + 逐条手工移植」。
+
+### ② 安全类逐条核对：**这一轮上游没有安全漏洞需要我们补**
+
+| 上游提交 | 内容 | 我们的状态 | 判定 |
+|---|---|---|---|
+| `755b4f08` / `ef30fa83` | 封面背景图库路径穿越、并发写 | 无此功能（无 `cover_background.py`） | 不跟（无攻击面） |
+| `8f629701` / `8142ee83` | 图库上传权限与文件类型校验 | 同上 | 不跟 |
+| `c0245c78` | 匿名 OPDS 收紧登录闸 | `opds_anonymous_allowed()` 未接线 → 匿名入口不存在 | 不跟 |
+| `8ccab741` | 必须登录时下载直链回 401 挑战 | **已有**（`opds.py` 设了 `WWW-Authenticate` + 401） | 已吸收 |
+| `f3fde9ff` / `fd1c605f` | 社交注册新用户漏默认权限 | 无社交注册路径 | 不跟 |
+
+### ③ 已吸收：上游修了我们早就修过的问题
+
+- `63cab1d7`（dev 模式首页落到「服务正在启动中」）：我们的 `AppHeader.vue` 早已用
+  `commit("sync_sys", rsp.sys)` + `language !== 'auto'` + footer 不回写 `rsp.sys`（r35 修的同一处）。
+- `bac37687`（侧边栏登录按钮样式）：我们已有 `.login-button` 高亮样式。
+
+### ④ 移植一：模块化门控接线（**本轮最大项**）
+
+**发现**：我们早就有 `webserver/base/modules.py`（模块表 + `ModuleGateMixin` 全套实现），
+但**一个 handler 都没接**——设置里的模块勾选框存在，开了没用。这是典型的「有能力、
+无接线」半成品。
+
+按上游口径接了 **47 处**：
+
+| 文件 | 处数 | 模块 |
+|---|---|---|
+| `handlers/audio.py` | 14 | `MODULE_AUDIO`（含我们比上游多的 Replace / ChapterDelete / ChapterUpload 等） |
+| `handlers/booklist.py` | 13 | `MODULE_SHARED_READING` |
+| `handlers/share.py` | 5 | `MODULE_SHARED_READING` |
+| `handlers/scan.py` | 4 | `MODULE_AUDIO` / `MODULE_PHYSICAL` |
+| `handlers/toolbox.py` | 4 | `MODULE_AUDIO` |
+| `handlers/admin.py` | 4 | `MODULE_MULTIUSER` / `MODULE_SHARED_READING` / `MODULE_AI` |
+| `handlers/book_review.py` | 2 | `MODULE_SHARED_READING` |
+| `handlers/tts.py` | 1 | `MODULE_AUDIO` |
+
+（上游 57 处比我们多 10 处：那些类我们没有，不是漏接。）
+
+配套改动：
+
+- `handlers/base.py` 5 处：下发 `sys.modules` 快照；`socials` 受多用户模块影响；
+  `ai_enabled` / `mynexus_enabled` 受 AI 模块影响；**统计缓存 key 带上模块状态**
+  （否则关模块后计数不刷新）。
+- 前端 `AppHeader.vue` 9 处：新增 `moduleOn(id)`（**默认开启、只有显式 `false` 才关**，
+  防首屏入口闪没），用于有声书入口、书单、留言、友情链接、用户管理、期望书单、AI 按钮、留言对话框。
+- 设置页新增「功能模块」区块（6 个勾选框）+ 三语 15 个文案；模块开关进
+  `PERSISTABLE_KEYS` / `ADMIN_SETTING_KEYS`。
+- 新增 `tests/test_module_gate_wiring.py`（7 例）：门控接线、文件流走 404、
+  漏写 `module_id` 即炸、开关可逆且**不删数据**。
+
+### ⑤ 移植二：扫描导入忽略目录 `SCAN_IGNORE_DIRS`（上游 `0d7dc96b`）
+
+我们刚做完自动导入，「哪些目录不参与扫描」是刚需，上游这一轮正好补上。
+
+- 后端 `services/scan_service.py`：`_scan_ignore_dir_names()` 归一化 +
+  `_is_ignored_scan_subpath()` 路径判断；**双防线**——遍历层在 `os.walk` 的 `dirnames`
+  里直接剔除（不进入该目录，后代自然排除），路径层挡住「显式扫描路径」与
+  「并入待处理记录」两条绕过路径。
+- 服务端清洗 `handlers/admin.py` 的 `sanitize_scan_ignore_dirs()`：与前端校验同口径，
+  形成双重保障。
+- 前端新增 `components/ScanIgnoreDirsEditor.vue`（非法名/重名阻止保存）+
+  设置页「导入规则」区块接入 + 三语 7 个文案。
+- 新增 `tests/test_scan_ignore_dirs.py`（18 例）：归一化、路径判断、服务端清洗。
+
+### ⑥ 工具：重建「跟随上游」能力
+
+- 新增 `scripts/upstream/follow-upstream.py`：`fetch` 拉上游 → `assess` 评估规模 →
+  `compare` 逐文件三方比对出冲突矩阵。只读本仓库、只用标准库、冲突判定真做三方合并、
+  CRLF 归一、硬约束 `webserver/settings.py` 始终进「禁止整体合并」。
+- 新增 `tests/test_follow_upstream_tool.py`（7 例）锁工具契约。
+- 上一笔清理删掉的「跟随上游」方法论（原 `docs/上游比对与跟进-4.6.1.md`，25KB）
+  已全文并入本文件「跟随上游：方法论与实况」一节，并更新为当前实况。
+
+### ⑦ 暂不移植的（判定理由见报告）
+
+访客按 IP 每日下载配额、阅读历史按书/按天删除、书籍字数统计、AI 聊天对话框
+（与我们 `MyNexusChatDialog` 重叠）、封面背景图库（含安全面，要跟得连安全修复一起带）、
+PDF 阅读器切换（待比对是否等价）。另：`app/pnpm-lock.yaml` 不手工合并（重新 `npm ci`）、
+`app/src/assets/fonts/*.woff2` 与 favicon 是素材不是功能。
+
+### 验证
+
+- 受影响用例 **95 passed**（门控 7 + 忽略目录 18 + 友链 4 + sys_info + sidebar + 版本锁 + 清单 + 安装入口）；
+- 前端 `npm run lint` 0 error；`npm run generate` 重新出 dist（`moduleOn` / `scan_ignore_dirs` /
+  `shared_reading` 均在产物中）；
+- 全部 shell 与 py 文件语法通过。
+
 
 ---
 

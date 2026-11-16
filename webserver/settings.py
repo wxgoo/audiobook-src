@@ -106,6 +106,9 @@ settings = {
     "ENABLE_PHYSICAL_BOOKS": True,
     # 功能模块总开关，见 webserver/base/modules.py。
     # 默认全开：升级过来的人不该因为新增了这层开关而突然少一半功能。
+    # 扫描导入时忽略的目录名（按目录名精确匹配，不含路径、不支持通配符）。
+    # 命中的目录及其子目录在扫描时被跳过；待处理记录也不会借「并入待处理」绕过。
+    "SCAN_IGNORE_DIRS": [],
     "ENABLE_MODULE_MULTIUSER": True,
     "ENABLE_MODULE_COMMUNITY": True,
     "ENABLE_MODULE_SHARED_READING": True,

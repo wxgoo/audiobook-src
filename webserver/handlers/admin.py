@@ -58,6 +58,7 @@ from webserver.constants import (
     AUTO_FILL_META,
 )
 from webserver.i18n import apply_localized_default_settings
+from webserver.base.modules import MODULE_AI, MODULE_MULTIUSER, MODULE_SHARED_READING, ModuleGateMixin
 
 CONF = loader.get_settings()
 USER_UPDATE_TS_MAP = {}
@@ -67,7 +68,9 @@ DEFAULT_META_SOURCES = ["baidu", "xinhua"]  # douban v1 已下线（build.27-r12
 LOG_PATH = "/data/log/mybooks.log"
 
 
-class AdminUsers(BaseHandler):
+class AdminUsers(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_MULTIUSER
+
     @js
     @auth
     def get(self):
@@ -381,7 +384,9 @@ class AdminUsers(BaseHandler):
         return {"err": "ok"}
 
 
-class AdminBookReviews(BaseHandler):
+class AdminBookReviews(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_SHARED_READING
+
     """管理员"用户评论"管理页：分页列出所有评论，支持按状态过滤，以及通过/屏蔽/恢复操作。
     见 plan/Social_Reading_Plan.md §2.6。"""
 
@@ -505,6 +510,32 @@ class AdminOwnerMode(BaseHandler):
         self.redirect("/", 302)
 
 
+def sanitize_scan_ignore_dirs(value):
+    """SCAN_IGNORE_DIRS 的服务端清洗：与前端校验同口径，形成双重保障。
+
+    规则（与 webserver/services/scan_service.py 的归一化一致）：
+    非列表返回空列表；非字符串元素忽略；strip 后为空 / "." / ".." 忽略；
+    含 ``/ \\ : * ? " < > |`` 或控制字符（ord < 32）忽略；去重。
+    """
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    names = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if not name or name in (".", ".."):
+            continue
+        if any(ch in name for ch in '/\\:*?"<>|') or any(ord(ch) < 32 for ch in name):
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
 class AdminSettings(BaseHandler):
     @js
     @auth
@@ -614,6 +645,8 @@ class AdminSettings(BaseHandler):
 
         if "READER_MYDICTS" in args:
             args["READER_MYDICTS"] = reader_dict.sanitize_mydicts(args["READER_MYDICTS"])
+        if "SCAN_IGNORE_DIRS" in args:
+            args["SCAN_IGNORE_DIRS"] = sanitize_scan_ignore_dirs(args["SCAN_IGNORE_DIRS"])
         perf.sanitize(args, CONF)
 
         args["META_ALL_SOURCES"] = BookSearch.all_sources()
@@ -988,7 +1021,9 @@ class AdminBookFill(BaseHandler):
         return {"err": "ok", "msg": _("任务启动成功！请耐心等待，稍后再来刷新页面")}
 
 
-class AdminBookAIFill(BaseHandler):
+class AdminBookAIFill(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AI
+
     """Admin API: 批量使用 AI 更新指定书籍的信息"""
 
     @js
@@ -1994,7 +2029,9 @@ class AdminResources(BaseHandler):
         return {"err": "ok", "resources": resources}
 
 
-class AdminAITestConnection(BaseHandler):
+class AdminAITestConnection(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AI
+
     @js
     @is_admin
     async def post(self):

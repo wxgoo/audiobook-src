@@ -43,6 +43,7 @@ from webserver.toolbox import epub_merge_lib
 from webserver.toolbox.utils.styles import TOC_STYLES as EB_TOC_STYLES, list_presets as eb_list_presets
 from webserver.toolbox.utils.epub_beautify_lib import validate_note_mark as eb_validate_note_mark
 from webserver.services.background_service import BackgroundTask
+from webserver.base.modules import MODULE_AUDIO, ModuleGateMixin
 
 CONF = get_settings()
 
@@ -1027,7 +1028,9 @@ class AdminSrtToolRestart(BaseHandler):
         return {"err": "ok", "msg": msg}
 
 
-class AdminMimoTTSConvert(BaseHandler):
+class AdminMimoTTSConvert(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @js
     @is_admin
     def post(self):
@@ -1098,7 +1101,9 @@ class AdminMimoTTSConfig(BaseHandler):
         return {"err": "ok", "msg": _("已清除已保存的配置")}
 
 
-class AdminMimoTTSProgress(BaseHandler):
+class AdminMimoTTSProgress(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @js
     @is_admin
     def get(self):
@@ -1126,7 +1131,9 @@ class AdminMimoTTSProgress(BaseHandler):
         return {"err": "ok", "data": result}
 
 
-class AdminMimoTTSTest(BaseHandler):
+class AdminMimoTTSTest(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @js
     @is_admin
     def post(self):
@@ -1207,7 +1214,9 @@ class AdminMimoTTSCloneDelete(BaseHandler):
         return {"err": "clone.not_found", "msg": _("克隆音色「%s」不存在") % voice_name}
 
 
-class AdminMimoTTSCloneAudio(BaseHandler):
+class AdminMimoTTSCloneAudio(ModuleGateMixin, BaseHandler):
+    module_id = MODULE_AUDIO
+
     @is_admin
     def get(self):
         voice_name = self.get_argument("voice_name", "").strip()
