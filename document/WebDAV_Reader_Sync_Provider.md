@@ -18,7 +18,7 @@
 3. 检查 `can_login()`；
 4. 成功后写入 `environ["mybooks.user"]`。
 
-注意 provider 侧取用户 id 用的是 wsgidav 自己填的 `environ["wsgidav.auth.user_name"]`，再回库查 `user.id`——两套 environ 键并存，扩展时勿混淆。
+r47 起 provider 侧统一通过 `_get_reader_from_environ(environ)` 解析用户：优先读 auth 写入的 `environ["mybooks.user"]`（Reader 对象，免查库），缺失时回退用 `environ["wsgidav.auth.user_name"]` 查库。所有出口都走这一个入口，杜绝对象/字符串混淆导致的"误判无用户→全放行"。
 
 ## 3. 每用户隔离模型（已实现）
 
@@ -54,6 +54,30 @@ if not CONF.get("ALLOW_READ_RANGE_SETTING", False):
 
 与 web 侧 `BaseHandler.is_book_visible()` 的首行判断完全一致。管理员豁免、白名单(=1)/黑名单(=2) 判定也均对齐。
 
+### r47 修复：书目树完全隔离（堵住越权读漏洞）
+
+**问题**：r46 及以前，阅读范围过滤只作用在"列表枚举"路径（`BooksCollection.get_dynamic_members()` 及各分类/标签列表）。但有 8 个**直接定位单本书**的分支（`handle_category/tags/authors/recent/favorite/wants/reading/read_done` 的路径含 book_id 时）和唯一的下载出口 `WebDavResource.get_content()` **完全不做阅读范围/私藏判定**。用户只要知道 book_id，就能构造 URL 读到白名单之外或他人私藏的书——列表过滤形同虚设，属高危数据泄露。
+
+**修复**：新增 `_can_access_book(environ, book_id, mi=None)` 作为所有出口的唯一校验点，判定顺序：
+
+1. **未解析到用户 → 拒绝（fail-closed）**。WebDAV `require_authentication()=True`、`is_share_anonymous()=False`，恒要求认证，不存在合法匿名访问。
+2. **管理员 → 全放行**（含 superuser 视角）。
+3. **版权下架 → 拒绝**（出口兜底，目录层已过滤）。
+4. **他人私藏 → 拒绝**（`others_soled_books_id()`）。
+5. **全局开关关闭 → 放行**（与 web 侧一致）。
+6. **阅读范围判定**：无条件从缓存重取**完整元数据**（含 `#category`/`tags`）后转调公共函数 `reading_range.book_matches_limits()`。不能用 `_build_book_item()` 的产物判定——它只有 `fmt_*`/`title`/`id`，缺分类标签，会让白名单误拒所有书。
+
+接线位置：
+
+- 8 个直链分支在构造 `WebDavResource` **之前**调用 `_can_access_book`，越界书返回 `None` → 404（目录层也隐藏）。
+- `WebDavResource.get_content()` 在**下载配额扣费之前**调用，越界访问抛 403 且不误扣配额。构造时持有 provider 引用（`provider=self`），9 个构造点全部传入，无 fail-open。
+- `handle_authors` 维度：先收集可见书（`_can_access_book`）再取其作者，避免作者名泄露越界书的存在。
+- 虚拟书目路径层加 `posixpath.normpath` + 拒绝 `..` 段（sync 文件系统层的穿越由 `FilesystemProvider` 自带 containment 校验）。
+
+**口径单一来源**：判定本体抽到 `webserver/services/reading_range.py`（只依赖 `webserver.constants`，无 Tornado/wsgidav 依赖）。`handlers/base.py._book_matches_limits`、`services/access_control.py.AccessControl.is_admin/reading_range_of`、WebDAV 三处全部转调它。网页列表 / 网页统计 / WebDAV 书目树共用同一份判定，改一处全站生效，杜绝 r46 那种"两份口径靠人肉同步"的漂移。
+
+**与"跟上游一致"的关系**：不新增任何 per-user 数据模型或定制权限层，仍是上游 4.7.0 的"全库视图 + 用户阅读范围字段"语义；本修复只是把这一语义**在 WebDAV 的所有出口强制一致地执行**，属于补齐安全缺口而非引入偏离上游的新机制。
+
 ## 5. 配置
 
 | 键 | 默认 | 说明 |
@@ -66,9 +90,9 @@ if not CONF.get("ALLOW_READ_RANGE_SETTING", False):
 
 ## 6. 测试
 
-`tests/test_webdav_user_isolation.py`（沙箱无 wsgidav，用纯函数复刻 + 源码核对）：
-
-- 每用户 sync 路径互不重叠；
-- 全局开关关闭 → WebDAV 全放行（r46 修复点）；
-- 管理员豁免、白名单/黑名单判定；
-- 源码核对：确认 `_get_user_reading_range` 含全局开关判断、`WEBDAV_SYNC_FOLDER_NAME` 默认值存在。
+- `tests/test_reading_range.py`：公共判定模块可直接 import 测试——管理员豁免、阅读范围字段读取、白名单(=1)/黑名单(=2) 全矩阵（含"白名单空条件不得误放行""黑名单空条件全库可读"两个关键边界）、dict 与元数据对象两种入参结果一致。
+- `tests/test_webdav_user_isolation.py`（沙箱无 wsgidav，用纯函数复刻 + 源码核对）：
+  - 每用户 sync 路径互不重叠；
+  - 全局开关关闭 → WebDAV 全放行（r46 修复点）；
+  - 管理员豁免、白名单/黑名单判定；
+  - **r47 源码核对**：统一用户解析（对象优先+字符串回退）、fail-closed、8 个直链分支全过校验、`get_content()` 校验在扣费之前、管理员豁免、判定转调公共模块、路径穿越拒绝、作者维度过滤。

@@ -17,6 +17,51 @@
 > 更早的变更记录（`4.6.0-build.21` 及以前、旧编号时代）已精简归档，
 > 完整历史见 git 提交记录（`git log`）。---
 
+## 4.7.0-build.04-r47（2026-11-17，**WebDAV 书目树完全隔离 + 阅读范围判定收口**，纯后端+测试+文档，须重建镜像）
+
+主题：按"尽量与上游一致"收敛——放弃 EPUB 详情页内嵌等定制，聚焦一件事：堵住 WebDAV
+的越权读漏洞，并把散落两处的阅读范围判定收口成全站唯一来源。不新增任何 per-user 数据模型
+或定制权限层，仍是上游 4.7.0 的"全库视图 + 用户阅读范围字段"语义，只是强制在所有出口一致执行。
+
+### ① 公共判定模块 reading_range.py（唯一口径来源）
+
+- 新增 `webserver/services/reading_range.py`：只依赖 `webserver.constants`，无 Tornado/wsgidav 依赖。
+  把判定本体 `book_matches_limits` 从 `handlers/base.py` 迁出；`is_admin` / `reading_range_of`
+  成为豁免与范围字段读取的唯一实现。
+- `handlers/base.py._book_matches_limits` 改为转调公共模块（保留函数壳，既有调用点/测试不变）；
+  `services/access_control.py.AccessControl.is_admin/reading_range_of` 也转调，门面与纯模块同一份语义。
+- 这样网页列表 / 网页统计 / WebDAV 书目树三处共用一份判定，杜绝 r46 那种"两份口径靠人肉同步"的漂移。
+  顺带修掉上游内联版的一个边界：白名单空条件不再错误放行全库。
+
+### ② WebDAV 书目树完全隔离（高危越权读修复）
+
+- **问题**：r46 及以前，阅读范围过滤只作用在建表枚举/列表；8 个"直接定位单本书"分支
+  （category/tags/authors/recent/favorite/wants/reading/read_done 的 book_id 直链）与下载出口
+  `get_content()` 完全不判定，用户凭 book_id 可读到白名单外/他人私藏的书。
+- **修复**：新增 `_can_access_book()` 作为所有出口唯一校验点，顺序为：无用户拒绝(fail-closed) →
+  管理员全放行 → 下架拒绝 → 他人私藏拒绝 → 全局开关关闭放行 → 阅读范围判定（重取完整元数据后
+  转调公共模块）。8 个直链分支在构造资源前校验（越界返回 404），`get_content()` 在下载配额扣费前
+  校验（越界 403 且不误扣费），9 个资源构造点全部传 provider 引用，无 fail-open。
+- 统一 `environ` 用户解析：优先 `mybooks.user`（auth 写入的 Reader 对象），回退用户名查库，
+  消除"对象/字符串混淆→误判无用户→全放行"隐患。
+- `handle_authors` 只枚举可见书作者，避免作者名泄露越界书；虚拟路径层加 `normpath` + 拒绝 `..` 段。
+- 与"跟上游一致"兼容：不引入任何新机制，仅把上游既有的"阅读范围"语义在 WebDAV 全出口强制一致执行。
+
+### ③ 测试与文档
+
+- 新增 `tests/test_reading_range.py`（判定全矩阵，dict/元数据对象两种入参）；
+  扩展 `tests/test_webdav_user_isolation.py`（fail-closed、8 分支全校验、扣费前校验、路径穿越、
+  作者过滤等源码核对）。新增+相关测试 53 项全绿。
+- 更新 `document/WebDAV_Reader_Sync_Provider.md`：补 r47 完全隔离设计与口径单一来源说明。
+
+### 验证与影响
+
+- WebDAV 恒要求认证（require_authentication=True、is_share_anonymous=False），fail-closed 语义成立。
+- 本版**无前端源码改动**，dist 保持 771 基线、index.html 哈希不变，pack 门禁无需改。
+- 全量 pytest 的 19 个 collection error 与 r44/r45/r46 基线一致（缺 social_tornado），非本版引入。
+
+---
+
 ## 4.7.0-build.03-r46（2026-11-17，**借鉴 anx-calibre-manager 的 4 项能力**，含前端产物，须重建镜像）
 
 主题：把考察 `anx-calibre-manager` 后确认有价值的 4 项能力移植进来——登录失败锁定、
