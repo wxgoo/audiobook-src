@@ -4,7 +4,7 @@
   "base_revision": "4.7.0-build.02-r45",
   "version": "4.6.0-build.27",
   "date": "2026-11-17",
-  "summary": "借鉴 anx-calibre-manager 移植 4 项能力：登录失败锁定、PWA、浏览器内 EPUB 朗读、WebDAV 用户隔离补齐",
+  "summary": "借鉴 anx-calibre-manager 移植 4 项能力：登录失败锁定、PWA、浏览器内 EPUB 朗读、WebDAV 用户隔离补齐（含容器实测发现并修正的 PWA 图标路径问题）",
   "notes": [],
   "requires_dist": true,
   "hotfixable": false,
@@ -12,18 +12,18 @@
   "dist_files": [
     {
       "path": "app/dist/200.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/ListBook/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/ListMeta/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/_nuxt/0d13e89.js",
@@ -46,14 +46,14 @@
       "bytes": 133038
     },
     {
+      "path": "app/dist/_nuxt/b5f69e0.js",
+      "sha256": "9046d184f113b377344a6ff5cd8bfc8a4d6b1dc1ed7849573c49bc84da710760",
+      "bytes": 197153
+    },
+    {
       "path": "app/dist/_nuxt/css/71b27f7.css",
       "sha256": "deff9d61b8f8a71177c75e6787e7abd51d5eb9afcbad4373f3393711639ce778",
       "bytes": 37921
-    },
-    {
-      "path": "app/dist/_nuxt/d69ce2c.js",
-      "sha256": "47eeeebaf461f87c559151c7dff057a58110144b220b3a51a8b836079c0d431c",
-      "bytes": 197154
     },
     {
       "path": "app/dist/_nuxt/f136f80.js",
@@ -67,233 +67,233 @@
     },
     {
       "path": "app/dist/active/success/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/all-expected/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/book-reviews/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/books/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/imports/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/resources/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/settings/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/shares/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/syslog/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/takedowns/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/toolbox/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/trash/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/user-memos/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/users/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/admin/version/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/all/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/audiobooks/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/author/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/booklists/liked/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/booklists/mylists/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/booklists/publics/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/categories/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/expected/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/favorites/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/folder/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/history/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/install/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/language/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/login/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
-      "path": "app/dist/logo/pwa-192.png",
+      "path": "app/dist/logout/index.html",
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/manifest.json",
+      "sha256": "07394dde4ad9d9379517871ee82dc539059e36c10c5b2463347c971b7872f662",
+      "bytes": 610
+    },
+    {
+      "path": "app/dist/memos/index.html",
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/opds-readme/index.html",
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/printbooks/index.html",
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/publisher/index.html",
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/pwa/pwa-192.png",
       "sha256": "67b25003b8dda23f0d62dcaba13619dbf07637225a2ac2df7fa9a8097fd2f04c",
       "bytes": 21409
     },
     {
-      "path": "app/dist/logo/pwa-512.png",
+      "path": "app/dist/pwa/pwa-512.png",
       "sha256": "ff7a2327e0f79d2f3529d233ea95e33b4e10452260a1589449942f114d8fd92a",
       "bytes": 47739
     },
     {
-      "path": "app/dist/logout/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
-    },
-    {
-      "path": "app/dist/manifest.json",
-      "sha256": "b2d71a23c2437aefaeb2039ab0c50a5e3f9c1df242286794ff90a2dfe8d95518",
-      "bytes": 612
-    },
-    {
-      "path": "app/dist/memos/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
-    },
-    {
-      "path": "app/dist/opds-readme/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
-    },
-    {
-      "path": "app/dist/printbooks/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
-    },
-    {
-      "path": "app/dist/publisher/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
-    },
-    {
       "path": "app/dist/rating/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/read-done/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/reading/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/search/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/series/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/signup/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/soledbooks/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/starting/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/static/epubreader/js/tts.js",
@@ -307,143 +307,143 @@
     },
     {
       "path": "app/dist/tag/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/audio_transcode/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/author_clean/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/author_norm/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/author_tools/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/book_dedup/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/bookbarn_acceptor/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/chinese_converter/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/epub_beautify/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/epub_fixer/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/epub_merge/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/epub_split/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/format_tools/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/formats_pruning/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/merge_formats_tool/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/mimo_tts/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/minify_pdf/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/rare_book_downloader/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/review_book_language/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/srt_tool/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/text_processor/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/text_replace/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/txt_encoding_fixer/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/user/usersettings/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/visits/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/wants/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/webdav-readme/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     },
     {
       "path": "app/dist/welcome/index.html",
-      "sha256": "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f",
-      "bytes": 5089
+      "sha256": "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca",
+      "bytes": 5088
     }
   ],
   "dist_deleted": [
@@ -517,10 +517,10 @@
       "app/dist/_nuxt/6de9307.js",
       "app/dist/_nuxt/7ef9256.js",
       "app/dist/_nuxt/a0d5089.js",
+      "app/dist/_nuxt/b5f69e0.js",
       "app/dist/_nuxt/c3753ae.js",
       "app/dist/_nuxt/css/565a087.css",
       "app/dist/_nuxt/css/71b27f7.css",
-      "app/dist/_nuxt/d69ce2c.js",
       "app/dist/_nuxt/f136f80.js",
       "app/dist/_nuxt/fonts/materialdesignicons-subset.11fc132.woff2",
       "app/dist/_nuxt/fonts/materialdesignicons-subset.8f70705.woff2",
@@ -554,14 +554,14 @@
       "app/dist/install/index.html",
       "app/dist/language/index.html",
       "app/dist/login/index.html",
-      "app/dist/logo/pwa-192.png",
-      "app/dist/logo/pwa-512.png",
       "app/dist/logout/index.html",
       "app/dist/manifest.json",
       "app/dist/memos/index.html",
       "app/dist/opds-readme/index.html",
       "app/dist/printbooks/index.html",
       "app/dist/publisher/index.html",
+      "app/dist/pwa/pwa-192.png",
+      "app/dist/pwa/pwa-512.png",
       "app/dist/rating/index.html",
       "app/dist/read-done/index.html",
       "app/dist/reading/index.html",
@@ -618,9 +618,9 @@
       "app/nuxt.config.js",
       "app/package-lock.json",
       "app/package.json",
-      "app/public/logo/pwa-192.png",
-      "app/public/logo/pwa-512.png",
       "app/public/manifest.json",
+      "app/public/pwa/pwa-192.png",
+      "app/public/pwa/pwa-512.png",
       "app/public/static/epubreader/js/tts.js",
       "app/public/sw.js",
       "docker-compose.yml",
