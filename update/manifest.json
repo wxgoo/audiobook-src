@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "revision": "4.7.0-build.05",
-  "base_revision": "4.7.0-build.04",
+  "revision": "4.7.0-build.06",
+  "base_revision": "4.7.0-build.05",
   "version": "4.6.0-build.27",
   "date": "2026-11-17",
-  "summary": "永久取消版本号 -rN 后缀；升级检测改四元组比较器；首个无 r 版本",
+  "summary": "发版改号彻底一键化：compose 纳入 --set 自动改写，消除最后一处手工步骤",
   "notes": [],
   "requires_dist": true,
   "hotfixable": false,
@@ -14,31 +14,13 @@
   "reason": "本次改动包含镜像级文件（Dockerfile / conf / 依赖 / 工具链 / 删除的前端文件），在线替换无法生效，请把 .env 的 IMAGE_TAG 换成新 tag 后重新 docker compose up -d",
   "files": [
     {
-      "path": "webserver/handlers/admin.py",
-      "sha256": "978984a441bc0df7edf1aa97709a0a5170ca17c43502b7c15f77b4c69eca9c25",
-      "bytes": 86048
-    },
-    {
-      "path": "webserver/services/book_barn.py",
-      "sha256": "d252967f60370834faff230d71b8905264d1ffc1428e31b4521fe71a9b95fd30",
-      "bytes": 28513
-    },
-    {
-      "path": "webserver/services/version_check.py",
-      "sha256": "daaf9fca409759f2fffc4633978d32a001c8d15819c1e9aaa08896f2efae482d",
-      "bytes": 25585
-    },
-    {
       "path": "webserver/version.py",
-      "sha256": "d83016c6d4888f9c08f748bbd875b86e3d8ef07cc62ce2369272592d7bb14515",
+      "sha256": "6249b52877249fc99e510acc4e0d47771f3c7a099eebe60d9f1c2284d85801b5",
       "bytes": 655
     }
   ],
   "changed": {
     "hotfix": [
-      "webserver/handlers/admin.py",
-      "webserver/services/book_barn.py",
-      "webserver/services/version_check.py",
       "webserver/version.py"
     ],
     "dist": [],
@@ -55,22 +37,16 @@
       "CHANGELOG.md",
       "README.md",
       "scripts/check-version-lock.py",
-      "scripts/gen-update-manifest.py",
-      "scripts/pack.sh",
-      "scripts/sync-hotfix.sh",
-      "scripts/verify-pkg-manifest.sh",
-      "tests/test-pkg-manifest-guard.sh",
-      "tests/test_version_check_rev_key.py",
       "tests/test_version_lock.py"
     ],
     "ignored": []
   },
   "deploy_commands": [
     "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.7.0-build.05.tar.gz.sha256",
+    "sha256sum -c audiobook-deploy-4.7.0-build.06.tar.gz.sha256",
     "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
     "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.7.0-build.05.tar.gz",
+    "tar -xzf audiobook-deploy-4.7.0-build.06.tar.gz",
     "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }
