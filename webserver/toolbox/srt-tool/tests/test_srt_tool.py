@@ -414,8 +414,8 @@ class TestCLI:
 
 
 def test_version_declared():
-    assert srt_core.__version__ == "1.2.0"
-    assert make_srt.__version__ == "1.2.0"
+    assert srt_core.__version__ == "1.3.0"
+    assert make_srt.__version__ == "1.3.0"
 
 
 def test_gui_smoke():

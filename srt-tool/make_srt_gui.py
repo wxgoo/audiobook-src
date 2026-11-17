@@ -30,14 +30,17 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 import tkinter as tk
 
 from make_srt import AUDIO_EXTS, CACHE_DIR, find_audios
-from srt_core import (cache_key, load_cache, merge_segments, save_cache,
-                      transcribe_audio, write_srt, __version__)
+from srt_core import (SUBTITLE_PRESETS, build_timeline, cache_key,
+                      convert_script, layout_timeline, load_timeline,
+                      save_timeline, transcribe_audio, write_ass, write_srt,
+                      write_txt, __version__)
 
 SETTINGS_FILE = CACHE_DIR / "gui_settings.json"
-MODEL_CHOICES = ["tiny", "base", "small", "medium", "large-v3"]
-LANG_CHOICES = ["auto", "zh", "en"]
+MODEL_CHOICES = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"]
+LANG_CHOICES = ["auto", "zh", "en", "yue", "ja", "ko"]
 DEVICE_CHOICES = ["auto", "cpu", "cuda"]
 COMPUTE_CHOICES = ["auto", "int8", "float16"]
+SCRIPT_CHOICES = ["original", "simplified", "traditional"]
 
 AUDIO_FILETYPES = [
     ("音频文件", " ".join("*" + e for e in sorted(AUDIO_EXTS))),
@@ -99,6 +102,14 @@ class SrtGuiApp:
         self.v_cache = tk.BooleanVar(value=True)
         self.v_condprev = tk.BooleanVar(value=False)
         self.v_dryrun = tk.BooleanVar(value=False)
+        # ★ v1.3（借鉴 OneAsr）
+        self.v_preset = tk.StringVar(value="standard")
+        self.v_script = tk.StringVar(value="original")
+        self.v_hotwords = tk.StringVar()
+        self.v_beautify = tk.BooleanVar(value=False)
+        self.v_ass = tk.BooleanVar(value=False)
+        self.v_txt = tk.BooleanVar(value=False)
+        self.v_savetl = tk.BooleanVar(value=False)
         self.v_status = tk.StringVar(value="就绪")
 
     def _build_ui(self) -> None:
@@ -165,6 +176,33 @@ class SrtGuiApp:
         check(self.v_condprev, "喂回上文（易复读，不建议）")
         check(self.v_dryrun, "只列出文件")
 
+        # ★ v1.3：OneAsr 式预设 / 字形 / 热词 / 多格式输出
+        r4 = ttk.Frame(opt)
+        r4.pack(fill="x", padx=4, pady=(2, 4))
+        add_pair(r4, "断行预设", combo(r4, self.v_preset,
+                                    list(SUBTITLE_PRESETS), 10), 12)
+        add_pair(r4, "中文字形", combo(r4, self.v_script,
+                                    SCRIPT_CHOICES, 11), 12)
+        add_pair(r4, "热词", ttk.Entry(r4, textvariable=self.v_hotwords,
+                                     width=22), 4)
+
+        r5 = ttk.Frame(opt)
+        r5.pack(fill="x", padx=4, pady=(0, 6))
+
+        def check5(var, text):
+            cb = ttk.Checkbutton(r5, text=text, variable=var)
+            cb.pack(side="left", padx=(0, 10))
+            self._opt_widgets.append(cb)
+            return cb
+
+        check5(self.v_beautify, "成稿美化")
+        check5(self.v_ass, "另存 ASS")
+        check5(self.v_txt, "另存 TXT")
+        check5(self.v_savetl, "存 timeline 边车")
+        ttk.Label(opt, text="（预设：short 短句 / standard 标准 / loose 长句；"
+                            "改预设不用重新识别，可直接用 srt_tools.py render 重排）"
+                  ).pack(anchor="w", padx=4)
+
         prog = ttk.Frame(self.root)
         prog.pack(fill="x", **pad)
         self.bar = ttk.Progressbar(prog, maximum=100.0)
@@ -223,6 +261,10 @@ class SrtGuiApp:
             "overwrite": self.v_overwrite.get(), "merge": self.v_merge.get(),
             "cache": self.v_cache.get(), "condprev": self.v_condprev.get(),
             "dryrun": self.v_dryrun.get(),
+            "preset": self.v_preset.get(), "script": self.v_script.get(),
+            "hotwords": self.v_hotwords.get().strip(),
+            "beautify": self.v_beautify.get(), "ass": self.v_ass.get(),
+            "txt": self.v_txt.get(), "savetl": self.v_savetl.get(),
         }
 
     def _collect_params(self) -> dict | None:
@@ -236,6 +278,14 @@ class SrtGuiApp:
             return None
         if s["model"] not in MODEL_CHOICES:
             messagebox.showerror("参数错误", f"模型必须是 {MODEL_CHOICES} 之一。")
+            return None
+        if s["preset"] not in SUBTITLE_PRESETS:
+            messagebox.showerror("参数错误",
+                                 f"断行预设必须是 {list(SUBTITLE_PRESETS)} 之一。")
+            return None
+        if s["script"] not in SCRIPT_CHOICES:
+            messagebox.showerror("参数错误",
+                                 f"中文字形必须是 {SCRIPT_CHOICES} 之一。")
             return None
         try:
             s["beam"] = int(s["beam"])
@@ -332,8 +382,9 @@ class SrtGuiApp:
 
         n = len(todo)
         q.put(("total", n))
-        key_extra = f"beam={params['beam']}|cond={params['condprev']}"
-        merge_on = params["merge"]
+        # v1.3：排版参数不进缓存键（改预设/美化/字形直接复用 timeline）
+        key_extra = (f"beam={params['beam']}|cond={params['condprev']}"
+                     f"|hot={params['hotwords']}")
         ok = fail = cached_hits = 0
         t_start = time.time()
 
@@ -345,12 +396,11 @@ class SrtGuiApp:
             try:
                 key = cache_key(audio, params["model"], params["lang"],
                                 extra=key_extra)
-                cached = (load_cache(CACHE_DIR, key)
-                          if params["cache"] else None)
-                if cached is not None:
-                    segments = cached
+                tl = (load_timeline(CACHE_DIR, key)
+                      if params["cache"] else None)
+                if tl is not None:
                     cached_hits += 1
-                    q.put(("log", f"[{i}/{n}] {audio.name} ← 缓存命中"))
+                    q.put(("log", f"[{i}/{n}] {audio.name} ← 缓存（timeline）"))
                 else:
                     q.put(("log", f"[{i}/{n}] 识别 {audio.name} ..."))
                     t0 = time.time()
@@ -365,6 +415,8 @@ class SrtGuiApp:
                         compute_type=params["compute"],
                         beam_size=params["beam"],
                         condition_on_previous=params["condprev"],
+                        word_timestamps=True,
+                        hotwords=params["hotwords"] or None,
                         on_progress=on_progress,
                         should_stop=stop_event.is_set)
                     if stop_event.is_set():
@@ -372,14 +424,42 @@ class SrtGuiApp:
                                f"已停止：{audio.name} 未完成，未写出字幕"))
                         break
                     q.put(("log", f"    耗时 {time.time() - t0:.0f}s"))
+                    tl = build_timeline(segments, source=audio.name,
+                                        language=params["lang"])
                     if params["cache"]:
-                        save_cache(CACHE_DIR, key, segments)
-                if merge_on:
-                    segments = merge_segments(segments,
-                                              max_gap=params["gap"],
-                                              max_chars=params["maxchars"])
-                write_srt(segments, srt_path)
-                q.put(("log", f"    → {srt_path}（{len(segments)} 段）"))
+                        save_timeline(CACHE_DIR, key, tl)
+                if params["merge"]:
+                    # OneAsr 式：timeline → 预设断行
+                    cues = layout_timeline(
+                        tl, preset=params["preset"],
+                        max_chars=params["maxchars"], max_gap=params["gap"],
+                        beautify=params["beautify"], script=params["script"])
+                else:
+                    from srt_core import beautify_text
+                    cues = []
+                    for s in (tl.get("segments") or []):
+                        s = dict(s)
+                        if params["beautify"]:
+                            s["text"] = beautify_text(s.get("text", ""))
+                        if params["script"] != "original":
+                            s["text"] = convert_script(s.get("text", ""),
+                                                       params["script"])
+                        cues.append(s)
+                write_srt(cues, srt_path)
+                extra = []
+                if params["ass"]:
+                    write_ass(cues, srt_path.with_suffix(".ass"))
+                    extra.append("+ASS")
+                if params["txt"]:
+                    write_txt(cues, srt_path.with_suffix(".txt"))
+                    extra.append("+TXT")
+                if params["savetl"]:
+                    srt_path.with_suffix(".timeline.json").write_text(
+                        json.dumps(tl, ensure_ascii=False, indent=1),
+                        encoding="utf-8")
+                    extra.append("+timeline")
+                q.put(("log", f"    → {srt_path}（{len(cues)} 段"
+                              f"{' '.join(extra)}）"))
                 ok += 1
             except Exception as e:                         # noqa: BLE001
                 q.put(("log", f"    失败: {e}"))
@@ -461,13 +541,18 @@ class SrtGuiApp:
                              ("lang", self.v_lang), ("device", self.v_device),
                              ("compute", self.v_compute), ("ext", self.v_ext),
                              ("beam", self.v_beam), ("gap", self.v_gap),
-                             ("maxchars", self.v_maxchars)):
+                             ("maxchars", self.v_maxchars),
+                             ("preset", self.v_preset), ("script", self.v_script),
+                             ("hotwords", self.v_hotwords)):
                 if isinstance(data.get(key), str):
                     var.set(data[key])
             for key, var in (("overwrite", self.v_overwrite),
                              ("merge", self.v_merge), ("cache", self.v_cache),
                              ("condprev", self.v_condprev),
-                             ("dryrun", self.v_dryrun)):
+                             ("dryrun", self.v_dryrun),
+                             ("beautify", self.v_beautify),
+                             ("ass", self.v_ass), ("txt", self.v_txt),
+                             ("savetl", self.v_savetl)):
                 if isinstance(data.get(key), bool):
                     var.set(data[key])
         except Exception:

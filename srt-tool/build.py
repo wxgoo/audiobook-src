@@ -28,6 +28,8 @@ COLLECT_NAME = "make_srt"
 TARGETS = [
     ("make_srt", ROOT / "make_srt.py", True),
     ("make_srt_gui", ROOT / "make_srt_gui.py", False),
+    # ★ v1.3：OneAsr 式 render / transcript / align / status 后期工具
+    ("srt_tools", ROOT / "srt_tools.py", True),
 ]
 
 REQUIRED_MODULES = ("faster_whisper", "ctranslate2", "PyInstaller")
@@ -64,7 +66,7 @@ def clean() -> None:
 def write_spec(onefile: bool) -> None:
     """Generate PyInstaller spec with faster_whisper data and ctranslate2 libs.
 
-    两个目标各自 Analysis/PYZ/EXE；onedir 模式共用一个 COLLECT 目录，
+    每个目标各自 Analysis/PYZ/EXE；onedir 模式共用一个 COLLECT 目录，
     _internal 只存一份（GUI 版依赖是 CLI 版的超集，顺带装下 tcl/tk）。
     """
     lines = [
@@ -76,11 +78,17 @@ def write_spec(onefile: bool) -> None:
         "",
     ]
 
-    for name, entry, console in TARGETS:
-        tag = "cli" if console else "gui"
+    exe_vars: list[str] = []
+    gui_tag = None
+    for idx, (name, entry, console) in enumerate(TARGETS):
+        tag = f"t{idx}"          # 唯一 tag：现在有两个带控制台的目标
+        exe_vars.append(f"exe_{tag}")
+        if not console:
+            gui_tag = tag
         lines += [
             f"a_{tag} = Analysis(",
-            f'    [r"{entry}"],',
+            # 用相对路径：spec 不绑死本机绝对路径（PyInstaller 以 ROOT 为 cwd 运行）
+            f'    [r"{entry.relative_to(ROOT)}"],',
             '    pathex=["."],',
             "    binaries=binaries,",
             "    datas=datas,",
@@ -121,10 +129,12 @@ def write_spec(onefile: bool) -> None:
             ]
 
     if not onefile:
-        # a_gui.binaries/a_gui.datas 是超集（含 tkinter 的 tcl/tk），一份共用
+        # GUI 分析的 binaries/datas 是超集（含 tkinter 的 tcl/tk），一份共用
+        bin_tag = gui_tag or "t0"
         lines += [
             "coll = COLLECT(",
-            "    exe_cli, exe_gui, a_gui.binaries, a_gui.datas,",
+            f"    {', '.join(exe_vars)}, a_{bin_tag}.binaries, "
+            f"a_{bin_tag}.datas,",
             f"    name='{COLLECT_NAME}',",
             "    upx=False,",
             ")",
