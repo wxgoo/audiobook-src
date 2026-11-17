@@ -609,8 +609,8 @@ DIST_FILES=$(grep -c "^${PFX}app/dist/" "$LIST.f" || true)
 [ "$DIST_FILES" = "771" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 771）"
 
 DIST_IDX=$(tar -xzOf "$OUT" "${PFX}app/dist/index.html" 2>/dev/null | sha256sum | cut -d' ' -f1)
-[ "$DIST_IDX" = "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f" ] \
-    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 ec16723b…，r46 PWA head 变更后的新哈希）"
+[ "$DIST_IDX" = "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca" ] \
+    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 61d38406…，r46 PWA 图标路径修正后的哈希）"
 
 grep -qx "${PFX}app/dist/static/pdfjs/web/viewer.html" "$LIST" \
     || gate_bad "包内缺 app/dist/static/pdfjs/web/viewer.html"
@@ -633,7 +633,7 @@ if [ "$gate_fail" != "0" ]; then
     rm -f "$OUT"
     exit 1
 fi
-echo "  门禁 OK：app/dist $DIST_FILES 个文件，index.html 2c02df40…（4901 字节），pdfjs viewer 在包内，成员共 $PKG_FILES 个"
+echo "  门禁 OK：app/dist $DIST_FILES 个文件，index.html ${DIST_IDX:0:8}…（$(wc -c < app/dist/index.html | tr -d ' ') 字节），pdfjs viewer 在包内，成员共 $PKG_FILES 个"
 
 # ---------- 验包 ----------
 echo "==> [4/4] 验包"

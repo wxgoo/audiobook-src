@@ -35,7 +35,7 @@ export default {
     link: [
       { rel: 'shortcut icon', type: 'image/x-icon', href: '/logo/favicon.ico' },
       { rel: 'manifest', href: '/manifest.json' },
-      { rel: 'apple-touch-icon', href: '/logo/pwa-192.png' }
+      { rel: 'apple-touch-icon', href: '/pwa/pwa-192.png' }
     ]
   },
 

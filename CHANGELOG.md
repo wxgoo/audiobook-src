@@ -38,6 +38,9 @@ PWA、浏览器内 EPUB 朗读、WebDAV 用户隔离补齐。均复用项目既�
 ### ② PWA（轻量手写，零新依赖）
 
 - 新增 `app/public/manifest.json` + `app/public/sw.js` + 192/512 标准图标（从 logo 生成）。
+  **图标放 `app/public/pwa/` 而非 `logo/`**：Dockerfile 构建时把 `app/dist/logo` 替换成
+  指向用户数据 `/data/books/logo` 的软链，放 logo 目录的图标进镜像后会丢失导致 404
+  （容器实测发现并修正）。
   sw 只缓存应用静态壳（`/`、`/_nuxt/`、`/static/`、`/logo/`、`/icons/` 等），
   **绝不缓存 API 与书籍数据**（`/api`、`/read`、`/get`、`/books`、`/s` 等），
   避免缓存私有数据/读到过期书目/串登录态。network-first 导航 + cache-first 静态资源。
