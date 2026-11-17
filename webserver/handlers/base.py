@@ -37,6 +37,7 @@ from webserver.services.perf_monitor import PerfMonitor
 from webserver.services.book_access_service import BookAccessService
 from webserver.services.book_share_service import BookShareService
 from webserver.services import book_takedown
+from webserver.services.reading_range import book_matches_limits as _book_matches_limits_shared
 from webserver.services.search_index import get_search_index
 from webserver.models import Item, Message, Reader
 from webserver import constants
@@ -340,20 +341,9 @@ def _book_matches_limits(book, eff) -> bool:
     书列表（is_book_in_reading_range）与统计（_build_scoped_counts）共用本函数，
     保证「看到的数字」与「点进去能读到的书」一致。
     """
-    read_limit = int(eff.get("read_limit") or 0)
-    if read_limit == 0:
-        return True
-    limit_categories = set(filter(None, (eff.get("limit_categories") or "").split(",")))
-    limit_tags = set(filter(None, (eff.get("limit_tags") or "").split(",")))
-    if not limit_categories and not limit_tags:
-        return read_limit != 1
-
-    book_category = book.get(constants.CALIBRE_COLUMN_CATEGORY) or ""
-    book_tags = set(book.get("tags") or [])
-    matched = (limit_categories and book_category in limit_categories) or bool(
-        limit_tags and book_tags & limit_tags
-    )
-    return matched if read_limit == 1 else not matched
+    # r47：判定本体已抽到 webserver.services.reading_range（网页/统计/WebDAV 三处共用），
+    # 此处保留同名包装以兼容既有调用点与测试，实际逻辑委托给公共模块。
+    return _book_matches_limits_shared(book, eff)
 
 
 class BaseHandler(web.RequestHandler):

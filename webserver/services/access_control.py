@@ -29,6 +29,7 @@
 """
 
 from webserver.services.book_access_service import BookAccessService
+from webserver.services.reading_range import is_admin as _is_admin, reading_range_of as _reading_range_of
 from webserver.base import modules as _modules
 
 
@@ -43,9 +44,8 @@ class AccessControl:
         BaseHandler.is_admin() 内部转调这里；所有需要管理员豁免的判定
         （包括阅读范围、书籍归属、后台接口）共用这一份语义。
         """
-        if superuser:
-            return True
-        return bool(getattr(user, "admin", False)) if user is not None else False
+        # r47：判定本体抽到 services/reading_range.py（WebDAV 也共用），此处转调。
+        return _is_admin(user, superuser)
 
     # ---- 阅读范围：直接读用户字段（上游 4.7.0 口径）----
     @staticmethod
@@ -55,13 +55,7 @@ class AccessControl:
         上游口径：直接读用户自己的三个字段（读者组定制层已随 r45 移除）。
         allow_range_setting=False 时视为不限（全局开关关闭的快路）。
         """
-        if not allow_range_setting or user is None:
-            return {"read_limit": 0, "limit_categories": "", "limit_tags": ""}
-        return {
-            "read_limit": getattr(user, "read_limit", 0) or 0,
-            "limit_categories": getattr(user, "limit_categories", "") or "",
-            "limit_tags": getattr(user, "limit_tags", "") or "",
-        }
+        return _reading_range_of(user, allow_range_setting)
 
     @staticmethod
     def book_visible(handler, book) -> bool:

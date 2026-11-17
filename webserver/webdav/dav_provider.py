@@ -4,14 +4,21 @@ import re
 import logging
 import time
 import pwd
+import posixpath
 from webserver.i18n import _
 from io import BytesIO
 from urllib.parse import unquote
 from wsgidav.dav_provider import DAVProvider, DAVCollection, DAVNonCollection
 from wsgidav.fs_dav_provider import FilesystemProvider
 from wsgidav.dav_error import DAVError, HTTP_FORBIDDEN
-from webserver import loader
+from webserver import loader, constants
 from webserver.services import book_takedown
+# r47：阅读范围判定统一走纯函数模块（与 web 侧同一份口径），不引入 Tornado 重依赖
+from webserver.services.reading_range import (
+    book_matches_limits as _book_matches_limits_shared,
+    is_admin as _is_admin,
+    reading_range_of as _reading_range_of,
+)
 
 CONF = loader.get_settings()
 
@@ -88,10 +95,12 @@ def safe_xml(text):
 
 
 class WebDavResource(DAVNonCollection):
-    def __init__(self, path, environ, book, cache):
+    def __init__(self, path, environ, book, cache, provider=None):
         super(WebDavResource, self).__init__(path, environ)
         self.book = book
         self.cache = cache
+        # r47：持有 provider 引用，供 get_content() 下载出口做统一可见性校验
+        self._dav_provider = provider
         self.formats = SUPPORTED_FORMATS
         self.fmt = None
         self.file_path = None
@@ -134,8 +143,13 @@ class WebDavResource(DAVNonCollection):
 
     def get_content(self):
         logging.info(f"****** Getting content for book ID {self.id}, path: {self.file_path}")
-        # 版权下架：WebDAV 是 WSGI 旁路，不经过 BaseHandler.prepare() 的门禁，
-        # 必须在真正 open() 之前拦住（这里是所有 WebDAV GET 的唯一出口）。
+        # r47：统一出口校验（阅读范围 + 他人私藏 + 下架）。必须在下载配额扣费之前，
+        # 且对 admin 豁免——避免越界访问被误扣配额。WebDAV 是 WSGI 旁路，不经过
+        # BaseHandler.prepare() 门禁，这里是所有 WebDAV GET 的最后一道闸。
+        if self._dav_provider is not None:
+            if not self._dav_provider._can_access_book(self.environ, self.id, mi=self.book):
+                raise DAVError(HTTP_FORBIDDEN, context_info=_("无权访问该书（阅读范围受限或已下架）"))
+        # 版权下架兜底（_can_access_book 已含，这里保留独立的下架提示）
         if book_takedown.is_takedown(self.id):
             raise DAVError(HTTP_FORBIDDEN, context_info=book_takedown.notice())
         if self.file_path and os.path.exists(self.file_path):
@@ -338,7 +352,8 @@ class BooksCollection(VirtualCollection):
                         base + book_name,
                         self.environ,
                         item,
-                        self.provider.cache
+                        self.provider.cache,
+                        self.provider,
                     ))
                 except Exception as e:
                     logging.error(f"Error fetching book {book_id}: {e}")
@@ -474,6 +489,14 @@ class MyBooksDavProvider(DAVProvider):
         path = path.rstrip("/")
         if not path:
             path = "/"
+
+        # r47：路径穿越显式防御。双重 unquote 可能把 %252e%252e 还原成 ..，
+        # 不依赖 WsgiDAV/FilesystemProvider 的第三方 containment 行为，这里先拒绝
+        # 任何 .. 段，并校验规范化结果仍以 / 开头、未跳出根。
+        norm = posixpath.normpath(path)
+        if '..' in path.split('/') or not norm.startswith('/'):
+            logging.warning(f"[WebDAV isolation] path traversal rejected: '{original_path}' -> '{path}'")
+            return None
 
         # Log the decoded path for debugging
         if original_path != path:
@@ -614,8 +637,13 @@ class MyBooksDavProvider(DAVProvider):
                 if not mi:
                     return None
 
+                # r47：直接定位单本书的出口同样要做阅读范围/私藏/下架校验，
+                # 否则用户凭 book_id 就能绕过列表过滤读到越界的书（返回 None → 404）。
+                if not self._can_access_book(environ, book_id, mi=mi):
+                    logging.warning(f"[WebDAV isolation] deny book {book_id} at direct path {path}")
+                    return None
                 item = self._build_book_item(book_id, mi)
-                return WebDavResource(path, environ, item, self.cache)
+                return WebDavResource(path, environ, item, self.cache, self)
             except Exception as e:
                 logging.error(f"Error getting book {parts[2]}: {e}")
                 return None
@@ -663,8 +691,13 @@ class MyBooksDavProvider(DAVProvider):
                 if not mi:
                     return None
 
+                # r47：直接定位单本书的出口同样要做阅读范围/私藏/下架校验，
+                # 否则用户凭 book_id 就能绕过列表过滤读到越界的书（返回 None → 404）。
+                if not self._can_access_book(environ, book_id, mi=mi):
+                    logging.warning(f"[WebDAV isolation] deny book {book_id} at direct path {path}")
+                    return None
                 item = self._build_book_item(book_id, mi)
-                return WebDavResource(path, environ, item, self.cache)
+                return WebDavResource(path, environ, item, self.cache, self)
             except Exception as e:
                 logging.error(f"Error getting book {parts[2]}: {e}")
                 return None
@@ -674,7 +707,29 @@ class MyBooksDavProvider(DAVProvider):
         if len(parts) == 1:
             children = []
             try:
-                for author in self.cache.all_field_names('authors'):
+                # r47：作者维度同样按「当前用户可见的书」收敛，避免受限用户从作者名
+                # 枚举推断出全库（含越界书）的作者。与 web 侧 _filter_categories_by_reading_range
+                # 的口径一致：只暴露可见书涉及的作者。
+                all_authors = self.cache.all_field_names('authors')
+                restricted = CONF.get(constants.ALLOW_READ_RANGE_SETTING, False)
+                user = self._get_reader_from_environ(environ)
+                if restricted and user is not None and not _is_admin(user):
+                    eff = _reading_range_of(user, allow_range_setting=True)
+                    if int(eff.get('read_limit') or 0) != 0:
+                        # 收集可见书的作者集合（复用统一出口校验，含私藏/下架/范围）
+                        visible_authors = set()
+                        try:
+                            all_ids = [v[0] for v in self.cache.backend.conn.get("SELECT id FROM books")]
+                        except Exception:
+                            all_ids = []
+                        for bid in all_ids:
+                            if not self._can_access_book(environ, bid):
+                                continue
+                            mi = self.cache.get_metadata(bid, get_cover=False, get_user_categories=False)
+                            if mi and getattr(mi, 'authors', None):
+                                visible_authors.update(str(a) for a in mi.authors)
+                        all_authors = [a for a in all_authors if str(a) in visible_authors]
+                for author in all_authors:
                     # Author should be string
                     author_str = safe_xml(str(author))
                     child_path = path if path.endswith('/') else path + '/'
@@ -700,30 +755,89 @@ class MyBooksDavProvider(DAVProvider):
                 if not mi:
                     return None
 
+                # r47：直接定位单本书的出口同样要做阅读范围/私藏/下架校验，
+                # 否则用户凭 book_id 就能绕过列表过滤读到越界的书（返回 None → 404）。
+                if not self._can_access_book(environ, book_id, mi=mi):
+                    logging.warning(f"[WebDAV isolation] deny book {book_id} at direct path {path}")
+                    return None
                 item = self._build_book_item(book_id, mi)
-                return WebDavResource(path, environ, item, self.cache)
+                return WebDavResource(path, environ, item, self.cache, self)
             except Exception as e:
                 logging.error(f"Error getting book {parts[2]}: {e}")
                 return None
         return None
 
-    def _get_user_id_from_environ(self, environ):
-        """从environ中获取用户ID"""
-        # WebDAV认证后，用户信息应该在environ中
-        # 这需要与auth.py中的认证逻辑配合
+    def _get_reader_from_environ(self, environ):
+        """从 environ 统一解析当前 Reader 对象（webdav 侧唯一的取用户入口）。
+
+        r47：消除两套 environ 键并存的隐患——
+          * ``mybooks.user``：auth.basic_auth_user 写入的 **Reader 对象**（优先，免查库）；
+          * ``wsgidav.auth.user_name``：WsgiDAV 写入的 **用户名字符串**，回退查库。
+        调用方不要再各自拼 username/查库，避免对象/字符串混淆导致误判为「无用户→全放行」。
+        """
+        user = environ.get('mybooks.user')
+        if user is not None and getattr(user, 'id', None):
+            return user
         username = environ.get('wsgidav.auth.user_name', None)
         if not username or not self.get_session_func:
             return None
-
         try:
-            # 获取数据库session
             from webserver.models import Reader
             session = self.get_session_func()
-            user = session.query(Reader).filter(Reader.username == username).first()
-            return user.id if user else None
+            return session.query(Reader).filter(Reader.username == username).first()
         except Exception as e:
-            logging.error(f"Error getting user ID: {e}")
+            logging.error(f"Error resolving reader from environ: {e}")
             return None
+
+    def _get_user_id_from_environ(self, environ):
+        """从environ中获取用户ID（转调统一用户解析）。"""
+        user = self._get_reader_from_environ(environ)
+        return user.id if user else None
+
+    def _can_access_book(self, environ, book_id, mi=None):
+        """WebDAV 书目树的统一出口校验：阅读范围 + 他人私藏 + 版权下架。
+
+        r47 安全缺口修复：8 个「直接定位单本书」分支与 get_content() 下载出口
+        过去完全不做阅读范围/私藏判定，用户只要知道 book_id 就能读到白名单外
+        或他人私藏的书，列表过滤形同虚设。本方法作为所有出口的唯一校验点：
+
+          * 未解析到用户（不应发生，WebDAV 恒要求认证）→ 拒绝（fail-closed）；
+          * 管理员（含 superuser 视角）→ 全放行；
+          * 版权下架 / 他人私藏 → 拒绝；
+          * 阅读范围：全局开关关闭时不限制，否则用与 web 侧同一份
+            ``book_matches_limits`` 判定。
+
+        mi 为已取到的元数据对象；为 None 时按需查缓存。返回 True 表示可读。
+        """
+        user = self._get_reader_from_environ(environ)
+        if user is None:
+            logging.warning(f"[WebDAV isolation] no authenticated user for book {book_id}, deny")
+            return False
+        if _is_admin(user):
+            return True
+        # 版权下架（目录层已过滤，这里是出口兜底）
+        if book_takedown.is_takedown(book_id):
+            return False
+        # 他人私藏
+        if book_id in self.others_soled_books_id(environ):
+            return False
+        # 阅读范围：全局开关关闭 → 不限制
+        if not CONF.get(constants.ALLOW_READ_RANGE_SETTING, False):
+            return True
+        eff = _reading_range_of(user, allow_range_setting=True)
+        if int(eff.get('read_limit') or 0) == 0:
+            return True
+        # 阅读范围按「分类/标签」判定，必须用含 #category/tags 的完整元数据。
+        # 调用方传入的 mi 若来自 _build_book_item（只有 fmt_*/title/id，无分类标签），
+        # 会让白名单误拒所有书——所以这里无条件从缓存重取完整元数据，保证口径正确。
+        try:
+            full_mi = self.cache.get_metadata(book_id, get_cover=False, get_user_categories=False)
+        except Exception as e:
+            logging.error(f"[WebDAV isolation] get_metadata({book_id}) failed: {e}")
+            return False
+        if not full_mi:
+            return False
+        return bool(_book_matches_limits_shared(full_mi, eff))
 
     def _get_user_reading_range(self, environ):
         """获取当前用户的阅读范围设置，返回 (read_limit, limit_categories_set, limit_tags_set)
@@ -757,22 +871,17 @@ class MyBooksDavProvider(DAVProvider):
             return 0, set(), set()
 
     def _is_book_in_reading_range(self, mi, read_limit, limit_cats, limit_tags):
-        """检查书籍是否在用户的阅读范围内"""
-        if read_limit == 0:
-            return True
-        book_category = ""
-        try:
-            cat_val = mi.get('#category')
-            if cat_val:
-                book_category = str(cat_val)
-        except Exception:
-            pass
-        book_tags = set(mi.tags or [])
-        matched = (
-            (limit_cats and book_category in limit_cats)
-            or bool(limit_tags and book_tags & limit_tags)
-        )
-        return matched if read_limit == 1 else not matched
+        """检查书籍是否在用户的阅读范围内（r47：转调公共判定，与 web 侧同一口径）。
+
+        入参仍保持 (read_limit, set, set) 元组形式以兼容列表枚举调用点，内部转成
+        公共函数需要的 eff dict（set → 逗号分隔字符串）。
+        """
+        eff = {
+            'read_limit': read_limit,
+            'limit_categories': ','.join(sorted(limit_cats or ())),
+            'limit_tags': ','.join(sorted(limit_tags or ())),
+        }
+        return bool(_book_matches_limits_shared(mi, eff))
 
     def _get_reading_state_books(self, environ, filter_func, title):
         """获取符合条件的阅读状态书籍"""
@@ -816,8 +925,13 @@ class MyBooksDavProvider(DAVProvider):
                 mi = self.cache.get_metadata(book_id, get_cover=False)
                 if not mi:
                     return None
+                # r47：直接定位单本书的出口同样要做阅读范围/私藏/下架校验，
+                # 否则用户凭 book_id 就能绕过列表过滤读到越界的书（返回 None → 404）。
+                if not self._can_access_book(environ, book_id, mi=mi):
+                    logging.warning(f"[WebDAV isolation] deny book {book_id} at direct path {path}")
+                    return None
                 item = self._build_book_item(book_id, mi)
-                return WebDavResource(path, environ, item, self.cache)
+                return WebDavResource(path, environ, item, self.cache, self)
             except Exception as e:
                 logging.error(f"Error getting book {parts[1]}: {e}")
                 return None
@@ -844,8 +958,13 @@ class MyBooksDavProvider(DAVProvider):
                 if not mi:
                     return None
 
+                # r47：直接定位单本书的出口同样要做阅读范围/私藏/下架校验，
+                # 否则用户凭 book_id 就能绕过列表过滤读到越界的书（返回 None → 404）。
+                if not self._can_access_book(environ, book_id, mi=mi):
+                    logging.warning(f"[WebDAV isolation] deny book {book_id} at direct path {path}")
+                    return None
                 item = self._build_book_item(book_id, mi)
-                return WebDavResource(path, environ, item, self.cache)
+                return WebDavResource(path, environ, item, self.cache, self)
             except Exception as e:
                 logging.error(f"Error getting book {parts[1]}: {e}")
                 return None
@@ -870,8 +989,13 @@ class MyBooksDavProvider(DAVProvider):
                 if not mi:
                     return None
 
+                # r47：直接定位单本书的出口同样要做阅读范围/私藏/下架校验，
+                # 否则用户凭 book_id 就能绕过列表过滤读到越界的书（返回 None → 404）。
+                if not self._can_access_book(environ, book_id, mi=mi):
+                    logging.warning(f"[WebDAV isolation] deny book {book_id} at direct path {path}")
+                    return None
                 item = self._build_book_item(book_id, mi)
-                return WebDavResource(path, environ, item, self.cache)
+                return WebDavResource(path, environ, item, self.cache, self)
             except Exception as e:
                 logging.error(f"Error getting book {parts[1]}: {e}")
                 return None
@@ -897,8 +1021,13 @@ class MyBooksDavProvider(DAVProvider):
                 if not mi:
                     return None
 
+                # r47：直接定位单本书的出口同样要做阅读范围/私藏/下架校验，
+                # 否则用户凭 book_id 就能绕过列表过滤读到越界的书（返回 None → 404）。
+                if not self._can_access_book(environ, book_id, mi=mi):
+                    logging.warning(f"[WebDAV isolation] deny book {book_id} at direct path {path}")
+                    return None
                 item = self._build_book_item(book_id, mi)
-                return WebDavResource(path, environ, item, self.cache)
+                return WebDavResource(path, environ, item, self.cache, self)
             except Exception as e:
                 logging.error(f"Error getting book {parts[1]}: {e}")
                 return None
@@ -923,8 +1052,13 @@ class MyBooksDavProvider(DAVProvider):
                 if not mi:
                     return None
 
+                # r47：直接定位单本书的出口同样要做阅读范围/私藏/下架校验，
+                # 否则用户凭 book_id 就能绕过列表过滤读到越界的书（返回 None → 404）。
+                if not self._can_access_book(environ, book_id, mi=mi):
+                    logging.warning(f"[WebDAV isolation] deny book {book_id} at direct path {path}")
+                    return None
                 item = self._build_book_item(book_id, mi)
-                return WebDavResource(path, environ, item, self.cache)
+                return WebDavResource(path, environ, item, self.cache, self)
             except Exception as e:
                 logging.error(f"Error getting book {parts[1]}: {e}")
                 return None
