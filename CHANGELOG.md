@@ -17,6 +17,31 @@
 > 更早的变更记录（`4.6.0-build.21` 及以前、旧编号时代）已精简归档，
 > 完整历史见 git 提交记录（`git log`）。---
 
+## 4.7.0-build.05（2026-11-17，**取消版本号 `-rN` 后缀**，首个无 r 版本，须重建镜像）
+
+主题：永久取消版本号里的 `-rN` 交付修订号后缀。此前每次发版 build 号由 `--set` 自动改，
+但 `-rN` 要手工 r46→r47 到处补（.env / compose / README / 测试夹具 / 清单），反复残留出错。
+既然 `build.N` 已在同上游基线内唯一标识每次交付，`-rN` 语义冗余，本次彻底去掉。
+
+### 版本号简化
+- 版本格式：`<上游 tag>-build.<N>`（如 `4.7.0-build.05`），不再有 `-rN`。本版 build 号由 04 递增到 05。
+- 升级检测比较器 `webserver/services/version_check.py` 新增 `_ver_key()`：解析成
+  `(major, minor, patch, build)` 四元组比较，正确处理跨基线 build 重置
+  （4.6.0-build.27 → 4.7.0-build.01 仍判为新版本）；容忍读旧 `-rN` 串但忽略其值，
+  防御 Gitee raw 旧清单缓存。`status()` / `need_persist` / admin.py / book_barn.py 四处调用点统一改用。
+- 出包门禁断言：`pack.sh` / `verify-pkg-manifest.sh` 的 revision 格式断言由 `-rN` 改为
+  `-build.<N>`；`sync-hotfix.sh` 的 `rev_of()` 改抽 build 号。
+- `check-version-lock.py` 的 `--set` 旧值识别正则补可选 `-rN`，确保残留旧号能被整体替换。
+- 新增 `tests/test_version_check_rev_key.py`（版本比较零覆盖的补齐）；相关测试夹具与 shell 测试同步改无 r。
+
+### 影响与兼容
+- 按全新安装处理，**不承担历史升级兼容负担**：老部署重装即可，无需平滑升级。
+- 版本锁 `/admin/version`、清单 revision / base_revision、镜像 tag 全部改为无 r 口径。
+- 历史 CHANGELOG 条目、文档示例里的 `-rN` 作为历史记录保留，不改写。
+- 本版无前端产物改动，dist 保持 771 基线、index.html 哈希不变。
+
+---
+
 ## 4.7.0-build.04-r47（2026-11-17，**WebDAV 书目树完全隔离 + 阅读范围判定收口**，纯后端+测试+文档，须重建镜像）
 
 主题：按"尽量与上游一致"收敛——放弃 EPUB 详情页内嵌等定制，聚焦一件事：堵住 WebDAV
