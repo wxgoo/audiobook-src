@@ -726,7 +726,15 @@ class MyBooksDavProvider(DAVProvider):
             return None
 
     def _get_user_reading_range(self, environ):
-        """获取当前用户的阅读范围设置，返回 (read_limit, limit_categories_set, limit_tags_set)"""
+        """获取当前用户的阅读范围设置，返回 (read_limit, limit_categories_set, limit_tags_set)
+
+        r46：与 web 侧 is_book_visible（base.py）口径一致——
+        全局开关 ALLOW_READ_RANGE_SETTING 关闭时直接全放行（返回 0 范围），
+        之前 WebDAV 不看这个开关，导致关闭阅读范围后 web 全库可见、
+        但 WebDAV 仍按用户字段过滤，两边对不上。
+        """
+        if not CONF.get("ALLOW_READ_RANGE_SETTING", False):
+            return 0, set(), set()
         username = environ.get('wsgidav.auth.user_name', None)
         if not username or not self.get_session_func:
             return 0, set(), set()

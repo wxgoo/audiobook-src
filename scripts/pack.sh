@@ -158,11 +158,11 @@ if [ "${1:-}" = "--check" ]; then
                 fail=1
             fi
             dtotal=$(find "$D/app/dist" -type f 2>/dev/null | wc -l | tr -d ' ')
-            # r31 基线 768（r30 是 766）：+2 来自 CategoryTabs.vue 抽成公共组件
-            # 后的新 chunk 与 manifest 变化；已用 .nuxt/dist/server/client.manifest.json
-            # 对比磁盘确认零残留零丢失后才挪的基线，别在未做引用核对时随手改这个数。
-            if [ "$dtotal" -ne 768 ]; then
-                echo "  !! app/dist 文件数 $dtotal != 基线 768 —— 先跑 sh scripts/check-dist.sh 定位缺什么"
+            # r46 基线 771（r31~r45 是 768）：+5 来自 PWA（manifest.json + sw.js +
+            # pwa-192/pwa-512 图标）与内置阅读器朗读（static/epubreader/js/tts.js）。
+            # 已用 git ls-files 与磁盘对比确认：git 跟踪 766 → 磁盘 771，零残留零丢失。
+            if [ "$dtotal" -ne 771 ]; then
+                echo "  !! app/dist 文件数 $dtotal != 基线 771 —— 先跑 sh scripts/check-dist.sh 定位缺什么"
                 fail=1
             fi
         fi
@@ -606,11 +606,11 @@ tar -tzf "$OUT" > "$LIST" || gate_bad "无法读取包内成员清单"
 grep -v '/$' "$LIST" > "$LIST.f" || true
 
 DIST_FILES=$(grep -c "^${PFX}app/dist/" "$LIST.f" || true)
-[ "$DIST_FILES" = "768" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 768）"
+[ "$DIST_FILES" = "771" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 771）"
 
 DIST_IDX=$(tar -xzOf "$OUT" "${PFX}app/dist/index.html" 2>/dev/null | sha256sum | cut -d' ' -f1)
-[ "$DIST_IDX" = "2c02df40e218bbbdd282fc1c7d818c6b0768f3b8941410a9d8c966e3cdf6084d" ] \
-    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 2c02df40…，4901 字节）"
+[ "$DIST_IDX" = "ec16723b88c5c7bb883e808ece3792664e586d09e38d8479ebbfb4dfc95cd54f" ] \
+    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 ec16723b…，r46 PWA head 变更后的新哈希）"
 
 grep -qx "${PFX}app/dist/static/pdfjs/web/viewer.html" "$LIST" \
     || gate_bad "包内缺 app/dist/static/pdfjs/web/viewer.html"

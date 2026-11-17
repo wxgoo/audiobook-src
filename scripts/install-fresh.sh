@@ -21,7 +21,7 @@
 #
 # 本脚本做的事：
 #   1) 前置检查（docker / compose v2 / Linux 软链）
-#   2) 校验 app/dist（768）与 myreader-dist 的 119 根软链，打印包内清单基线
+#   2) 校验 app/dist（771）与 myreader-dist 的 119 根软链，打印包内清单基线
 #   3) 生成仓库根 .env；有 .git 时写进 .git/info/exclude（避免误提交）
 #   4) 建数据目录
 #   5) 调 scripts/deploy.sh 完成构建、指纹校验、启动与进程验证

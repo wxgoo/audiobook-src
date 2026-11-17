@@ -16,6 +16,7 @@ from urllib.parse import quote_plus, unquote_plus, urlsplit
 
 from webserver.handlers.base import BaseHandler
 from webserver.models import Reader
+from webserver.services import login_guard
 from webserver.wap.data_provider import WapDataProvider, PAGE_SIZE
 from webserver.wap.renderer import WapRenderer
 from webserver import loader
@@ -28,6 +29,7 @@ _LOGIN_ERRORS = {
     "nouser": "用户不存在",
     "inactive": "账号未激活，请先激活后登录",
     "noperm": "账号暂无登录权限，请联系管理员",
+    "locked": "尝试次数过多，账号已临时锁定，请稍后再试",
 }
 
 
@@ -347,10 +349,16 @@ class WapLogin(WapBaseHandler):
             .filter(Reader.username == username)
             .first()
         )
-        if not user:
-            self.redirect(f"/wap/login?err=nouser&next={next_enc}")
+        # 登录失败锁定（r46）：与 Web 端 SignIn 共用同一套计数（存 Reader.extra）。
+        remain = login_guard.remaining_lock_seconds(user)
+        if remain:
+            self.redirect(f"/wap/login?err=locked&next={next_enc}")
             return
-        if user.get_secure_password(password) != user.password:
+        if not user:
+            self.redirect(f"/wap/login?err=invalid&next={next_enc}")
+            return
+        if not login_guard.secure_equal(user.get_secure_password(password), user.password):
+            login_guard.record_result(user, ok=False)
             self.redirect(f"/wap/login?err=invalid&next={next_enc}")
             return
         if not user.is_active():
@@ -360,6 +368,7 @@ class WapLogin(WapBaseHandler):
             self.redirect(f"/wap/login?err=noperm&next={next_enc}")
             return
 
+        login_guard.record_result(user, ok=True)
         self.login_user(user)
         self.redirect(next_url)
 

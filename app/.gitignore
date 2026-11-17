@@ -94,7 +94,11 @@ typings/
 .idea
 
 # Service worker
+# r46：本项目手写 public/sw.js 作为源资源（轻量 PWA，只缓存静态壳），需要进版本库；
+# 旧的 sw.* 通配是 Nuxt 脚手架默认规则（防自动生成的 sw 被提交），这里开白名单。
 sw.*
+!public/sw.js
+!dist/sw.js
 
 # macOS
 .DS_Store

@@ -832,7 +832,17 @@
         "timeoutMessage": "超时未完成，可继续等待稍后刷新尝试",
         "timeout": "解析超时",
         "contentError": "获取正文失败！{msg}",
-        "tocParsing": "正在解析目录，可先阅读正文，目录稍后自动出现"
+        "tocParsing": "正在解析目录，可先阅读正文，目录稍后自动出现",
+        "tts": {
+            "title": "朗读",
+            "play": "朗读本章",
+            "pause": "暂停",
+            "resume": "继续",
+            "stop": "停止",
+            "voice": "声音",
+            "rate": "语速",
+            "selectHint": "提示：选中文字可只朗读选中部分"
+        }
     },
     "common": {
         "cancel": "取消",
@@ -1013,6 +1023,10 @@
         "allow_guest_upload": "允许访客上传书籍（无需注册和登录,请确保清楚开启后的风险）",
         "allow_share_link": "允许为书籍创建分享链接，其他人可以通过链接直接阅读",
         "require_login_tips": "开启后整站变成私人图书馆：未登录访客一律跳转登录页，下面的访客阅读/下载/上传/推送四项会自动置灰。",
+        "login_max_attempts": "登录失败锁定阈值（次）",
+        "login_max_attempts_tips": "网页/WAP 登录连续输错密码达到此次数后，临时锁定该 IP 与该账号的组合，防止暴力破解。设备凭据（OPDS、推送、WebDAV、MCP）不受影响。",
+        "login_lock_seconds": "锁定时长（秒）",
+        "login_lock_seconds_tips": "账号被锁定后需等待的秒数，默认 600 秒（10 分钟）。到期自动解锁，期间用正确密码登录也会失败。",
         "guest_locked_by_login": "已由「必须登录后才能访问」接管，此时该项不生效（置灰不代表配置被清除，关掉总开关后会原样恢复）。",
         "share_link_tips": "分享链接是唯一的例外：它独立于「必须登录」，持有效分享授权的人即使未登录也能直接阅读被分享的那本书。",
         "guest_login_relation_note": "三层权限的边界",

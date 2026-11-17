@@ -21,6 +21,7 @@ from webserver.base.appearance import (
     read_appearance,
 )
 from webserver.services.book_access_service import BookAccessService
+from webserver.services import login_guard
 from webserver.services.mail import MailService
 from webserver.services.sync_service import MyReaderSyncService
 from webserver.handlers.base import BaseHandler, auth, js
@@ -436,9 +437,18 @@ class SignIn(BaseHandler):
             .filter(Reader.username == username)
             .first()
         )
+        # 登录失败锁定（r46）：先于密码校验检查，命中则不再验证密码，
+        # 统一错误文案，避免泄露「用户是否存在」或「是否因失败被锁」。
+        remain = login_guard.remaining_lock_seconds(user)
+        if remain:
+            return {
+                "err": "permission.locked",
+                "msg": _("尝试次数过多，账号已临时锁定，请 %d 秒后再试") % remain,
+            }
         if not user:
-            return {"err": "params.no_user", "msg": _("无此用户")}
-        if user.get_secure_password(password) != user.password:
+            return {"err": "params.invalid", "msg": _("用户名或密码错误")}
+        if not login_guard.secure_equal(user.get_secure_password(password), user.password):
+            login_guard.record_result(user, ok=False)
             return {"err": "params.invalid", "msg": _("用户名或密码错误")}
         if not user.is_active():
             return {
@@ -454,6 +464,7 @@ class SignIn(BaseHandler):
             }
         logging.debug("PERM = %s", user.permission)
 
+        login_guard.record_result(user, ok=True)
         self.login_user(user)
         return {"err": "ok", "msg": _("ok")}
 

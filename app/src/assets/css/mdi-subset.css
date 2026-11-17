@@ -1134,6 +1134,10 @@
   content: "\F0A12";
 }
 
+.mdi-shield-alert-outline::before {
+  content: "\F0ECD";
+}
+
 .mdi-shield-check-outline::before {
   content: "\F0CC8";
 }
@@ -1272,6 +1276,10 @@
 
 .mdi-timer::before {
   content: "\F13AB";
+}
+
+.mdi-timer-lock-outline::before {
+  content: "\F1AD7";
 }
 
 .mdi-timer-outline::before {

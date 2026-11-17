@@ -829,7 +829,17 @@
         "timeoutMessage": "逾時未完成，可繼續等待稍後重新整理嘗試",
         "timeout": "解析逾時",
         "contentError": "取得內文失敗！{msg}",
-        "tocParsing": "正在解析目錄，可先閱讀正文，目錄稍後自動出現"
+        "tocParsing": "正在解析目錄，可先閱讀正文，目錄稍後自動出現",
+        "tts": {
+            "title": "朗讀",
+            "play": "朗讀本章",
+            "pause": "暫停",
+            "resume": "繼續",
+            "stop": "停止",
+            "voice": "聲音",
+            "rate": "語速",
+            "selectHint": "提示：選取文字可只朗讀選取部分"
+        }
     },
     "common": {
         "cancel": "取消",
@@ -1007,6 +1017,10 @@
         "allow_guest_upload": "允許訪客上傳書籍（無需註冊和登入，請確保清楚開啟後的風險）",
         "allow_share_link": "允許為書籍建立分享連結，其他人可以透過連結直接閱讀",
         "require_login_tips": "開啟後整站變成私人圖書館：未登入訪客一律跳轉登入頁，下方的訪客閱讀/下載/上傳/推送四項會自動置灰。",
+        "login_max_attempts": "登入失敗鎖定閾值（次）",
+        "login_max_attempts_tips": "網頁/WAP 登入連續輸錯密碼達到此次數後，暫時鎖定該 IP 與該帳號的組合，防止暴力破解。裝置憑據（OPDS、推送、WebDAV、MCP）不受影響。",
+        "login_lock_seconds": "鎖定時長（秒）",
+        "login_lock_seconds_tips": "帳號被鎖定後需等待的秒數，預設 600 秒（10 分鐘）。到期自動解鎖，期間用正確密碼登入也會失敗。",
         "guest_locked_by_login": "已由「必須登入後才能存取」接管，此時該項不生效（置灰不代表設定被清除，關掉總開關後會原樣恢復）。",
         "share_link_tips": "分享連結是唯一的例外：它獨立於「必須登入」，持有效分享授權的人即使未登入也能直接閱讀被分享的那本書。",
         "guest_login_relation_note": "三層權限的邊界",

@@ -2278,6 +2278,23 @@ export default {
                 type: "checkbox", al: ["必须登录", "私人图书馆", "需登录", "login required"],
                 tips: "settings.require_login_tips",
               },
+              // 登录失败锁定（r46）：连续输错密码达阈值后临时锁定该 (IP, 用户名)。
+              {
+                icon: "mdi-shield-alert-outline",
+                key: "LOGIN_MAX_ATTEMPTS",
+                label: "settings.login_max_attempts",
+                type: "number",
+                tips: "settings.login_max_attempts_tips",
+                al: ["登录失败", "锁定", "暴力破解", "login attempt"],
+              },
+              {
+                icon: "mdi-timer-lock-outline",
+                key: "LOGIN_LOCK_SECONDS",
+                label: "settings.login_lock_seconds",
+                type: "number",
+                tips: "settings.login_lock_seconds_tips",
+                al: ["锁定时长", "锁定时间", "lockout"],
+              },
               // 以下四项带 lockOn：REQUIRE_LOGIN 开启时置灰不可点（后端 allow_flags 也恒报 False），
               // 但保存值保留，关掉总开关后原样恢复。
               { icon: "mdi-read", key: "ALLOW_GUEST_READ", label: "settings.allow_guest_read", type: "checkbox", lockOn: "REQUIRE_LOGIN", tips: "settings.guest_locked_by_login" },

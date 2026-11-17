@@ -21,6 +21,8 @@ export default {
       { name: 'format-detection', content: 'telephone=no' },
       { name: 'apple-mobile-web-app-capable', content: 'yes' },
       { name: 'apple-mobile-web-app-status-bar-style', content: 'black' },
+      // PWA（r46）：主题色与 manifest，与 app/public/manifest.json 保持一致
+      { name: 'theme-color', content: '#1976D2' },
       //{ name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, minimal-ui' },
       { name: 'keywords', content: '在线阅读 电子书 推送 kindle epub mobi pdf azw3 poxenstudio mybooks talebook ebook' },
@@ -31,7 +33,9 @@ export default {
       },
     ],
     link: [
-      { rel: 'shortcut icon', type: 'image/x-icon', href: '/logo/favicon.ico' }
+      { rel: 'shortcut icon', type: 'image/x-icon', href: '/logo/favicon.ico' },
+      { rel: 'manifest', href: '/manifest.json' },
+      { rel: 'apple-touch-icon', href: '/logo/pwa-192.png' }
     ]
   },
 
@@ -52,6 +56,8 @@ export default {
     "~/plugins/i18n.js",
     // 外观设置（顶栏品牌色 / 侧栏图标配色 / 深浅色…）：把 store 状态落到 CSS 变量与 Vuetify 主题
     { src: "~/plugins/appearance.js", mode: "client" },
+    // PWA（r46）：生产环境注册 service worker，仅缓存应用静态壳
+    { src: "~/plugins/pwa-register.js", mode: "client" },
     // 发版后旧页面去取已删除的 chunk 会失败：自动刷新一次，避免用户看到白屏
     { src: "~/plugins/chunk-reload.js", mode: "client" }
   ],

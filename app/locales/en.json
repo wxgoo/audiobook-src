@@ -719,6 +719,10 @@
         "allow_guest_upload": "Allow guests to upload books (no registration or login required, please ensure you understand the risks of enabling this)",
         "allow_share_link": "Allow creating share links for books; anyone with the link can read directly",
         "require_login_tips": "Turns the whole site into a private library: unauthenticated visitors are redirected to the login page, and the four guest options below are automatically greyed out.",
+        "login_max_attempts": "Failed login lockout threshold (attempts)",
+        "login_max_attempts_tips": "Web/WAP login is temporarily locked for the IP + account pair after this many consecutive wrong passwords, to stop brute force. Device credentials (OPDS, push, WebDAV, MCP) are not affected.",
+        "login_lock_seconds": "Lockout duration (seconds)",
+        "login_lock_seconds_tips": "How long the account stays locked, 600 seconds (10 min) by default. It unlocks automatically after expiry; even the correct password fails during the lockout.",
         "guest_locked_by_login": "Controlled by \"Require login to access\" — this option has no effect while it is on. Greyed out does not mean the setting was erased: it is restored as soon as you turn the master switch off.",
         "share_link_tips": "Share links are the one exception: they are independent of \"Require login\", so anyone holding a valid share grant can read that book even without signing in.",
         "guest_login_relation_note": "How the three permission layers relate",
@@ -1309,7 +1313,17 @@
         "timeoutMessage": "Timeout not completed, you can continue to wait and refresh later",
         "timeout": "Parsing Timeout",
         "contentError": "Failed to fetch content! {msg}",
-        "tocParsing": "Parsing the chapter list; you can start reading now, chapters will appear shortly"
+        "tocParsing": "Parsing the chapter list; you can start reading now, chapters will appear shortly",
+        "tts": {
+            "title": "Read aloud",
+            "play": "Read this page",
+            "pause": "Pause",
+            "resume": "Resume",
+            "stop": "Stop",
+            "voice": "Voice",
+            "rate": "Speed",
+            "selectHint": "Tip: select text to read only the selection"
+        }
     },
     "common": {
         "cancel": "Cancel",

@@ -243,6 +243,9 @@ settings = {
     "ENABLE_PODCAST_SERVICE": False,
     "ENABLE_WEBDAV_SERVICE": True,
     "WEBDAV_SYNC_FOLDER": False,
+    # WebDAV 每用户同步目录名与对外挂载前缀（默认 reader，即 /data/reader/<user_id>/、
+    # 对外 /reader/）。r46 前此项无默认值，靠 CONF.get() 的 None 兜底，这里显式补齐。
+    "WEBDAV_SYNC_FOLDER_NAME": "reader",
     "ENABLE_DATA_SYNC": True,
     "ENABLE_KOREADER_SERVICE": True,
     "MYREADER_SYNC_PATH": "/data/sync/",
@@ -348,6 +351,11 @@ settings = {
     # 私人图书馆标准模式：所有页面与 /api 一律要求登录，访客权限（ALLOW_GUEST_*）随之失效。
     # 开启后 INVITE_MODE 被覆盖（访问码是比登录更弱的门，不叠加），见 BaseHandler.need_invited。
     'REQUIRE_LOGIN' : False,
+
+    # 登录失败锁定（r46）：交互登录连续失败达到阈值后临时锁定该 (IP, 用户名)。
+    # 只作用于 SignIn / WapLogin，设备凭据类入口不计入。状态存 Reader.extra。
+    'LOGIN_MAX_ATTEMPTS' : 5,    # 允许的连续失败次数，达到即锁定；0 或负数按 5 处理
+    'LOGIN_LOCK_SECONDS' : 600,  # 锁定时长（秒），默认 10 分钟
 
     'ALLOW_GUEST_READ' : True,
     'ALLOW_GUEST_PUSH' : True,

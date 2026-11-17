@@ -1,0 +1,26 @@
+{
+  "name": "MyBooks 个人书库",
+  "short_name": "MyBooks",
+  "description": "个人电子书/有声书库，支持阅读、收听与推送到阅读设备。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#1976D2",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/logo/pwa-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo/pwa-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ]
+}
