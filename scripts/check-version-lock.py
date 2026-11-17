@@ -3,9 +3,9 @@
 """版本锁检查（防版本回退 / 防被交付标签覆盖）。
 
 背景：本 fork 的运行期版本统一为「上游 mybooks 已发布 tag + 第 N 次本地构建」，
-形式是 `<上游 tag>-build.<N>`（例：`4.7.0-build.05`）。**基线段跟随上游 tag 走**：
+形式是 `<上游 tag>-build.<N>`（例：`4.7.0-build.06`）。**基线段跟随上游 tag 走**：
 上游正式发 tag 且我们按主题合入后，整体改号，构建号在新基线上**从 1 重新起算**
-（`4.7.0-build.05` → `4.7.0-build.05`）。
+（`4.7.0-build.06` → `4.7.0-build.06`）。
 
 旧的 `4.8.x` 号段已封存，与当前基线是纯号段重置，不对应任何版本先后关系
 （详见 README 对照表）。
@@ -15,13 +15,13 @@
 - **构建号不得回退**（同一基线内 `build.N` 只能递增；换基线时允许重置为 1）；
 - 不得被交付标签顶掉、不得被构建参数写成空串。
 
-注意：`4.7.0-build.05` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.7.0`。
+注意：`4.7.0-build.06` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.7.0`。
 本程序不发布 npm 包、package.json 无 `engines` 校验，因此该排序差异无实际影响；
 同一上游基线的本地构建之间用 `build.N` 区分，版本检测不能只靠 `>` 比较，须比较 `build.N` 段。
 
 用法：
     python3 scripts/check-version-lock.py [--root <仓库或发布包根目录>]
-    python3 scripts/check-version-lock.py --set 4.7.0-build.05   # 一条命令改全部载体
+    python3 scripts/check-version-lock.py --set 4.7.0-build.06   # 一条命令改全部载体
 
 退出码：0 全部通过；1 有断言失败。
 
@@ -37,8 +37,8 @@ import re
 import sys
 from pathlib import Path
 
-VERSION_LOCK = "4.7.0-build.05"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
-PKG_VERSION_LOCK = "4.7.0-build.05"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
+VERSION_LOCK = "4.7.0-build.06"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
+PKG_VERSION_LOCK = "4.7.0-build.06"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
 
 # 基线段 = 上游已发布 tag；构建号段 = 该基线上的第几次本地构建。
 # 两者分开，才能在「上游发新 tag → 整体改号 → 构建号重置」时做正确的回退判定。
@@ -109,7 +109,10 @@ def read(root: Path, rel: str) -> str:
 # 会立即被下面的检查断言抓出来（这正是防线的工作方式：改版工具与检查器互为镜像）。
 CARRIERS = {
     "webserver/version.py": 2,          # VERSION 行 + 文件尾注释
-    "docker-compose.yml": 2,            # GIT_VERSION + 注释示例
+    "docker-compose.yml": None,         # 版本串数量随形态而异：纯镜像形态 1 处 image tag
+                                        # / 本地构建形态 2 处（GIT_VERSION + 注释示例），
+                                        # 故不限次数、全量替换。build 号一致性由下方 compose
+                                        # 校验段独立强校验，这里放宽次数不降低防护。
     ".env.example": 1,                   # IMAGE_TAG（交付给别人的镜像标签）
     "Dockerfile": 1,                    # ARG GIT_VERSION 默认值
     "app/package.json": 1,

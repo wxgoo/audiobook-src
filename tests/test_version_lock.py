@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """版本锁（防反弹）回归测试。
 
-背景：本 fork 自本版起把运行期版本统一为 `4.7.0-build.05`（上游已发布 tag 4.6.0
-+ 第 05 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
+背景：本 fork 自本版起把运行期版本统一为 `4.7.0-build.06`（上游已发布 tag 4.6.0
++ 第 06 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
 回退（写回 4.8.x、写回裸 4.6.0）、被构建参数顶成空串、Dockerfile/Makefile
 守卫被删除，都必须失败。
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKER = ROOT / "scripts" / "check-version-lock.py"
-LOCK = "4.7.0-build.05"
+LOCK = "4.7.0-build.06"
 FILES = [
     "webserver/version.py",
     "docker-compose.yml",
@@ -153,17 +153,60 @@ def test_set_accepts_new_base_and_rejects_sealed(tmp_path):
     """--set 接受换基线（4.6.0 → 4.7.0），拒绝封存号段（4.8.x）与裸 tag。"""
     root = make_fixture(tmp_path)
     r = subprocess.run(
-        [sys.executable, str(CHECKER), "--root", str(root), "--set", "4.7.0-build.05"],
+        [sys.executable, str(CHECKER), "--root", str(root), "--set", "4.7.0-build.06"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
     src = (root / "webserver" / "version.py").read_text(encoding="utf-8")
-    assert 'VERSION = "4.7.0-build.05"' in src
+    assert 'VERSION = "4.7.0-build.06"' in src
 
     for bad in ("4.8.0-build.01", "4.7.0", "4.7.1-build.01"):
         r = subprocess.run(
             [sys.executable, str(CHECKER), "--root", str(root), "--set", bad],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         assert r.returncode != 0, "%s 应被拒绝：%s" % (bad, r.stdout)
+
+
+def test_set_auto_updates_compose_image_tag_no_manual_step(tmp_path):
+    """--set 必须自动改写纯镜像形态 compose 的 image tag，无需任何手工补刀。
+
+    回归点：CARRIERS 曾把 compose 预期写死「2 处」（本地构建形态的
+    GIT_VERSION + 注释示例），但当前 compose 是与上游一致的纯镜像形态，
+    只有 1 处 image tag，于是 --set 因 1 != 2 拒绝盲改，每次发版都得
+    手工改 compose。此用例把「一键改全部载体（含 compose）」钉死。
+
+    做法：构造完整载体副本（含脚本自身与测试文件），在副本上跑 --set 到
+    「当前 LOCK 的下一个 build 号」，再用副本里那份「常量已随 --set 同步改写」
+    的脚本复检，应全绿。目标号由当前 LOCK 动态推导、不绑定具体版本字面量——
+    本测试文件自身也是 --set 载体，静态写死的版本号会被 --set 连带改写而失效。
+    """
+    base, cur_n = LOCK.rsplit("-build.", 1)
+    target = "%s-build.%02d" % (base, int(cur_n) + 1)   # 如 build.06 → build.07
+
+    full_files = FILES + ["scripts/check-version-lock.py", "tests/test_version_lock.py"]
+    for rel in full_files:
+        src = ROOT / rel
+        dst = tmp_path / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+
+    checker = tmp_path / "scripts" / "check-version-lock.py"
+    r = subprocess.run(
+        [sys.executable, str(checker), "--root", str(tmp_path), "--set", target],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    comp = (tmp_path / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "ghcr.io/wxgoo/audiobooks:%s" % target in comp, \
+        "compose 的 image tag 没被 --set 自动改写：\n" + comp
+    assert LOCK not in comp, \
+        "compose 里还残留旧构建号 %s：\n%s" % (LOCK, comp)
+
+    # 改完后用同一份（常量已同步）的脚本复检：证明一键改完即可发版，无手工步骤
+    r2 = subprocess.run(
+        [sys.executable, str(checker), "--root", str(tmp_path)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    assert r2.returncode == 0, \
+        "--set 改完后版本锁复检应通过（说明无需手工补刀）：\n" + r2.stdout + r2.stderr
 
 
 def test_package_json_rollback_is_rejected(tmp_path):
