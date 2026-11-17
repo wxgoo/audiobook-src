@@ -8,8 +8,8 @@
 用法（在仓库根目录）：
 
     python3 scripts/gen-update-manifest.py \
-        --revision 4.6.0-build.27-r8 \
-        --base-revision 4.6.0-build.27-r7 \
+        --revision 4.7.0-build.05 \
+        --base-revision 4.7.0-build.04 \
         --base-commit <上一版 commit sha> \
         --summary "修了什么"
 
@@ -160,7 +160,7 @@ def git_blob_bytes(rel):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--revision", required=True, help="本次发布修订号，如 4.6.0-build.27-r8")
+    ap.add_argument("--revision", required=True, help="本次发布版本号，如 4.7.0-build.05（无 -rN）")
     ap.add_argument("--base-revision", required=True, help="上一版修订号，在线更新的前置条件")
     ap.add_argument("--base-commit", required=True, help="上一版在 Gitee 上的 commit sha")
     ap.add_argument("--summary", default="", help="一句话更新说明")

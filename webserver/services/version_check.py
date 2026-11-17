@@ -6,8 +6,10 @@
 --------
 * 唯一发布源：Gitee 仓库 `wxgoo/audiobook-src` 的 `update/manifest.json`。
   公开仓库，用 raw 直链读取，不需要 token / 不需要容器里装 git。
-* 版本口径：`revision`（形如 4.6.0-build.27-r7），不是 `VERSION`。
-  VERSION 固定 4.6.0-build.27，本地修订靠 -rN 区分，避免"改了代码却检测不到"。
+* 版本口径：`revision`（形如 4.7.0-build.05），不是 `VERSION`。
+  VERSION 是运行期构建号；revision 是发布清单里的交付版本，靠 build 号区分，
+  避免"改了代码却检测不到"。首个无 r 版本为 4.7.0-build.05（此前为 -rN 后缀，
+  比较器 _ver_key 仍兼容读旧串）。
 * 更新分级：
     - manifest.requires_dist = true → 前端产物/镜像级文件有变，只提示重新 deploy/upgrade；
     - 否则 → 按 manifest.files 从 Gitee 下载，逐个 sha256 校验，备份、替换、重启进程。
@@ -22,6 +24,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -187,8 +190,32 @@ def fetch_latest_commits():
         return []
 
 
+# 版本号比较（首个无 r 版本 build.05 起）
+# ---------------------------------------------------------------------------
+# 历史：revision 形如 4.6.0-build.27-r7，比较靠 _rev_num() 抽 -r 后的数字。
+# 取消 -rN 后 revision 形如 4.7.0-build.05，只靠 build 号，且换上游基线时
+# build 会重置（4.6.0-build.27 → 4.7.0-build.01），单纯抽数字会误判回退。
+# 统一改为解析成 (major, minor, patch, build) 四元组比较，跨基线天然正确。
+_VER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)-build\.(\d+)(?:-r\d+)?$")
+
+
+def _ver_key(rev):
+    """把 revision 解析为可比较的 (major, minor, patch, build) 四元 int 元组。
+
+    - 无 r 新体系：4.7.0-build.05 → (4, 7, 0, 5)
+    - 容忍旧 -rN 但忽略其值（防御 Gitee raw 上残留的旧清单缓存），
+      4.6.0-build.27-r7 → (4, 6, 0, 27)
+    - 解析不出来返回 None，调用方必须显式处理，不能拿 None 参与比较。
+    """
+    m = _VER_RE.fullmatch(str(rev).strip())
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
 def _rev_num(rev):
-    """4.6.0-build.27-r7 → 7；无 -r 后缀返回 0。"""
+    """兼容旧调用：从 -rN 提取修订号；无 -r 后缀返回 0。
+
+    新代码的版本先后比较一律用 _ver_key()，本函数仅为防漏改的旧引用保留。
+    """
     try:
         tail = str(rev).rsplit("-r", 1)
         return int(tail[1]) if len(tail) == 2 else 0
@@ -231,15 +258,16 @@ def status(force=False):
     local = read_local_manifest()
     state = read_state()
     baseline_ok = bool(local.get("revision"))
-    cur = local.get("revision") or (VERSION + "-r0")
+    cur = local.get("revision") or VERSION
     remote, err = fetch_manifest(force=force)
     latest = remote or {}
     # 基线不可信时一律不报「有新版本」：宁可页面显示"基线缺失"告警，也不能把
     # 自己刚部署的那一版当成待更新版本，误导管理员反复重新部署。
-    # 远端比本地旧（例如分支回滚 / 误发了老清单）时同样不提示。
-    has = bool(baseline_ok and latest and latest.get("revision")
-               and latest["revision"] != cur
-               and _rev_num(latest["revision"]) >= _rev_num(cur))
+    # 远端版本不高于本地（分支回滚 / 误发老清单）时同样不提示。
+    cur_key = _ver_key(cur)
+    latest_key = _ver_key(latest.get("revision")) if latest else None
+    has = bool(baseline_ok and cur_key is not None and latest_key is not None
+               and latest_key > cur_key)
 
     mode = "none"
     dist_files = latest.get("dist_files") or []
@@ -261,7 +289,8 @@ def status(force=False):
             mode = "hotfix"
 
     state_rev = state.get("current_revision", "")
-    need_persist = bool(state_rev and state_rev != cur and _rev_num(state_rev) > _rev_num(cur))
+    state_key = _ver_key(state_rev)
+    need_persist = bool(state_key is not None and cur_key is not None and state_key > cur_key)
     return {
         "err": "ok",
         "version": VERSION,

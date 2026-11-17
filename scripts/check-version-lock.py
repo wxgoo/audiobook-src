@@ -3,9 +3,9 @@
 """版本锁检查（防版本回退 / 防被交付标签覆盖）。
 
 背景：本 fork 的运行期版本统一为「上游 mybooks 已发布 tag + 第 N 次本地构建」，
-形式是 `<上游 tag>-build.<N>`（例：`4.7.0-build.04`）。**基线段跟随上游 tag 走**：
+形式是 `<上游 tag>-build.<N>`（例：`4.7.0-build.05`）。**基线段跟随上游 tag 走**：
 上游正式发 tag 且我们按主题合入后，整体改号，构建号在新基线上**从 1 重新起算**
-（`4.7.0-build.04` → `4.7.0-build.04`）。
+（`4.7.0-build.05` → `4.7.0-build.05`）。
 
 旧的 `4.8.x` 号段已封存，与当前基线是纯号段重置，不对应任何版本先后关系
 （详见 README 对照表）。
@@ -15,13 +15,13 @@
 - **构建号不得回退**（同一基线内 `build.N` 只能递增；换基线时允许重置为 1）；
 - 不得被交付标签顶掉、不得被构建参数写成空串。
 
-注意：`4.7.0-build.04` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.7.0`。
+注意：`4.7.0-build.05` 在 semver 里是 **预发布标记（prerelease）**，整串排序低于 `4.7.0`。
 本程序不发布 npm 包、package.json 无 `engines` 校验，因此该排序差异无实际影响；
 同一上游基线的本地构建之间用 `build.N` 区分，版本检测不能只靠 `>` 比较，须比较 `build.N` 段。
 
 用法：
     python3 scripts/check-version-lock.py [--root <仓库或发布包根目录>]
-    python3 scripts/check-version-lock.py --set 4.7.0-build.04   # 一条命令改全部载体
+    python3 scripts/check-version-lock.py --set 4.7.0-build.05   # 一条命令改全部载体
 
 退出码：0 全部通过；1 有断言失败。
 
@@ -37,8 +37,8 @@ import re
 import sys
 from pathlib import Path
 
-VERSION_LOCK = "4.7.0-build.04"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
-PKG_VERSION_LOCK = "4.7.0-build.04"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
+VERSION_LOCK = "4.7.0-build.05"      # 运行期版本（webserver/version.py / docker-compose / Makefile）
+PKG_VERSION_LOCK = "4.7.0-build.05"  # 前端包版本（app/package.json / package-lock.json），须与运行期一致
 
 # 基线段 = 上游已发布 tag；构建号段 = 该基线上的第几次本地构建。
 # 两者分开，才能在「上游发新 tag → 整体改号 → 构建号重置」时做正确的回退判定。
@@ -145,7 +145,7 @@ def set_version(root: Path, new_ver: str) -> None:
         if not p.is_file():
             continue
         text = p.read_text(encoding="utf-8")
-        found = re.findall(r"[0-9]+\.[0-9]+\.[0-9]+-build\.\d{1,3}", text)
+        found = re.findall(r"[0-9]+\.[0-9]+\.[0-9]+-build\.\d{1,3}(?:-r\d{1,3})?", text)
         if found:
             old = found[0]
             break
@@ -196,8 +196,13 @@ def main() -> int:
     if args.set:
         set_version(root, args.set)
         # WHY/SEMVER_NOTE 已函数化（从 VERSION_LOCK 派生），刷新全局常量即可
-        global VERSION_LOCK, PKG_VERSION_LOCK
+        global VERSION_LOCK, PKG_VERSION_LOCK, UPSTREAM_BASE, BUILD_NO
         VERSION_LOCK = PKG_VERSION_LOCK = args.set
+        # 派生常量必须跟着刷新：否则 --set 同进程复检时 .env.example 仍拿旧
+        # BUILD_NO 比对，明明已改成新 build 号却报「不一致」的误导性 FAIL。
+        # （文件顶部的常量定义已由 set_version 一并改写，下次进程启动自然正确。）
+        UPSTREAM_BASE = VERSION_LOCK.split("-build.")[0]
+        BUILD_NO = VERSION_LOCK.rsplit("-build.", 1)[-1]
 
     failures = []
 
@@ -236,7 +241,7 @@ def main() -> int:
     #       否则 Dockerfile 会把 version.py 写成空串或错值。
     #    b) 纯镜像形态（只有 image:，与上游一致）：版本由**镜像内**的 version.py 决定，
     #       compose 不参与注入。此时要求 image 指向一个带版本号的成品镜像 tag，
-    #       并检查该 tag 里的构建号段与运行期版本一致（修订号 -rN 允许不同）。
+    #       并检查该 tag 里的构建号段与运行期版本一致（首个无 r 版本 build.05 起不再带 -rN）。
     try:
         comp = read(root, "docker-compose.yml")
         has_build = re.search(r'^[ \t]*build\s*:', comp, re.M) is not None
@@ -272,7 +277,7 @@ def main() -> int:
                 mb = re.search(r'build\.(\d+)', tag)
                 if not mb:
                     bad("docker-compose.yml", "镜像 tag %r 里没有构建号，无法校验版本口径" % tag,
-                        "写成 ghcr.io/wxgoo/audiobooks:%s-r<修订号>" % VERSION_LOCK)
+                        "写成 ghcr.io/wxgoo/audiobooks:%s" % VERSION_LOCK)
                 elif mb.group(1) != VERSION_LOCK.rsplit("build.", 1)[-1]:
                     bad("docker-compose.yml", "镜像 tag %r 的构建号与运行期版本 %r 不一致" % (tag, VERSION_LOCK),
                         "换成本版镜像 tag（构建号 %s）" % VERSION_LOCK.rsplit("build.", 1)[-1])
@@ -282,19 +287,19 @@ def main() -> int:
         bad("docker-compose.yml", "文件缺失 %s" % e, "从仓库恢复 docker-compose.yml")
 
     # 2b) .env.example 的 IMAGE_TAG：交付给别人的镜像标签，构建号须与运行期一致
-    #     （它是「第几号交付」，带 -rN 后缀；只校验构建号段，修订号不参与）
+    #     （它是「第几号交付」，即 <tag>-build.<N>；只校验构建号段）
     try:
         env = read(root, ".env.example")
         m2 = re.search(r'^IMAGE_TAG=\s*([^\s]+)', env, re.M)
         if not m2:
             bad(".env.example", "找不到 IMAGE_TAG",
-                "写 IMAGE_TAG=ghcr.io/wxgoo/audiobooks:%s-r<修订号>" % VERSION_LOCK)
+                "写 IMAGE_TAG=ghcr.io/wxgoo/audiobooks:%s" % VERSION_LOCK)
         else:
             tag = m2.group(1).strip()
             mb = re.search(r'build\.(\d+)', tag)
             if not mb:
                 bad(".env.example", "镜像 tag %r 里没有构建号" % tag,
-                    "写成 ghcr.io/wxgoo/audiobooks:%s-r<修订号>" % VERSION_LOCK)
+                    "写成 ghcr.io/wxgoo/audiobooks:%s" % VERSION_LOCK)
             elif mb.group(1) != BUILD_NO:
                 bad(".env.example", "镜像 tag %r 的构建号与运行期版本 %r 不一致" % (tag, VERSION_LOCK),
                     "换成本版镜像 tag（构建号 %s）" % BUILD_NO)

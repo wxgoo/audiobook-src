@@ -1379,11 +1379,11 @@ class ReleaseNotes(BaseHandler):
         local = vc.read_local_manifest()
         cur = local.get("revision", "")
         latest, err = vc.fetch_manifest(force=False)
-        # 基线缺失时不弹「新版本」：r7 曾因包内清单路径算错被兜底成 -r0，
-        # 结果首页把自己那一版当成新版本反复弹窗。
-        has_new = bool(cur and latest and latest.get("revision")
-                       and latest["revision"] != cur
-                       and vc._rev_num(latest["revision"]) >= vc._rev_num(cur))
+        # 基线缺失 / 版本串解析失败时不弹「新版本」，避免把自己那一版当新版本反复弹窗。
+        # 与 version_check.status() 同口径：用 _ver_key 四元组比较（兼容跨基线 build 重置）。
+        cur_key = vc._ver_key(cur)
+        latest_key = vc._ver_key(latest.get("revision")) if latest else None
+        has_new = bool(cur_key is not None and latest_key is not None and latest_key > cur_key)
         last_shown = CONF.get("LAST_UPDATE_REVISION", "")
 
         if not force:

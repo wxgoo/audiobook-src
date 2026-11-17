@@ -39,8 +39,8 @@ expect_rc() {
 
 mkdir -p "$T/src/audiobook/update" "$T/src/audiobook/scripts"
 MF="$T/src/audiobook/update/manifest.json"
-REV_NEW="4.6.0-build.27-r33"
-REV_OLD="4.6.0-build.27-r32"
+REV_NEW="4.7.0-build.05"
+REV_OLD="4.7.0-build.04"
 
 mk() {
     # mk <包路径> [revision|__missing__|__badjson__] [额外 notes 值]
@@ -62,17 +62,17 @@ sha() { sha256sum "$1" | cut -d' ' -f1; }
 echo "== 1. 合法包：基础校验 / 期望版本 / 字节比对都要通过"
 mk "$T/good.tar.gz"
 GOOD_SHA=$(sha "$MF")
-expect_rc 0 "基础校验（revision 带 -rN）"            sh "$VM" "$T/good.tar.gz" --quiet
+expect_rc 0 "基础校验（revision 带 build 号）"            sh "$VM" "$T/good.tar.gz" --quiet
 expect_rc 0 "--expect-rev 与包内一致"                sh "$VM" "$T/good.tar.gz" --expect-rev "$REV_NEW" --quiet
 expect_rc 0 "--expect-sha256 与仓库清单字节一致"      sh "$VM" "$T/good.tar.gz" --expect-rev "$REV_NEW" --expect-sha256 "$GOOD_SHA" --quiet
 
-echo "== 2. 事故重演：新包里塞旧 revision（r32 清单打进 r33 包）"
+echo "== 2. 事故重演：新包里塞旧 revision（build.04 清单打进 build.05 包）"
 mk "$T/oldrev.tar.gz" "$REV_OLD"
 # 不传期望值时脚本只能验「格式合法」，验不出「这是上一版」——
 # 这正是出包必须传 --expect-rev / --expect-sha256 的原因，也是旧断言的盲区。
 expect_rc 0 "不传期望值时旧 revision 也会放行（还原盲区）" \
     sh "$VM" "$T/oldrev.tar.gz" --quiet
-expect_rc 1 "--expect-rev r33 时拦下 r32 清单"       sh "$VM" "$T/oldrev.tar.gz" --expect-rev "$REV_NEW" --quiet
+expect_rc 1 "--expect-rev build.05 时拦下 build.04 清单"       sh "$VM" "$T/oldrev.tar.gz" --expect-rev "$REV_NEW" --quiet
 expect_rc 1 "--expect-sha256 拦下被替换的清单"        sh "$VM" "$T/oldrev.tar.gz" --expect-rev "$REV_NEW" --expect-sha256 "$GOOD_SHA" --quiet
 
 echo "== 3. 字节篡改：revision 没变，但清单内容被改过"
@@ -80,8 +80,8 @@ mk "$T/tampered.tar.gz" "$REV_NEW" "远端缓存混进来的旧字节"
 expect_rc 1 "--expect-sha256 拦下内容被改的清单"      sh "$VM" "$T/tampered.tar.gz" --expect-rev "$REV_NEW" --expect-sha256 "$GOOD_SHA" --quiet
 
 echo "== 4. 结构性坏包"
-mk "$T/norev.tar.gz" "4.6.0-build.27"
-expect_rc 1 "revision 不带 -rN（清单没更新就出包）"   sh "$VM" "$T/norev.tar.gz" --quiet
+mk "$T/nobuild.tar.gz" "4.7.0"
+expect_rc 1 "revision 不带 build 号（清单没更新就出包）" sh "$VM" "$T/nobuild.tar.gz" --quiet
 mk "$T/badjson.tar.gz" "__badjson__"
 expect_rc 1 "清单不是合法 JSON"                       sh "$VM" "$T/badjson.tar.gz" --quiet
 mk "$T/nomf.tar.gz" "__missing__"

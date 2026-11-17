@@ -33,18 +33,19 @@ SYNC="$DATA/update-sync/current"
 }
 
 rev_of() {
+    # 首个无 r 版本起 revision 形如 4.7.0-build.05，抽 build 号做数值比较。
     grep -m1 '"revision"' "$1" 2>/dev/null | \
-        sed -n 's/.*-r\([0-9][0-9]*\)".*/\1/p' | tr -d '\r'
+        sed -n 's/.*-build\.\([0-9][0-9]*\).*/\1/p' | tr -d '\r'
 }
 SYNC_N=$(rev_of "$SYNC/manifest.json")
 PKG_N=$(rev_of "$SRC/update/manifest.json")
 
 if [ -z "$SYNC_N" ] || [ -z "$PKG_N" ]; then
-    echo "    !! 读不出修订号（数据卷 r${SYNC_N:-?}，包内 r${PKG_N:-?}），跳过固化"
+    echo "    !! 读不出 build 号（数据卷 ${SYNC_N:-?}，包内 ${PKG_N:-?}），跳过固化"
     exit 0
 fi
 if [ "$SYNC_N" -le "$PKG_N" ]; then
-    echo "    包内已是 r$PKG_N（数据卷 r$SYNC_N），无需固化"
+    echo "    包内已是 build.$PKG_N（数据卷 build.$SYNC_N），无需固化"
     exit 0
 fi
 

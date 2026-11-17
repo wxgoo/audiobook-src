@@ -14,9 +14,9 @@
 #
 # 用法（仓库根目录或任意目录）：
 #   sh scripts/verify-pkg-manifest.sh <包.tar.gz>
-#   sh scripts/verify-pkg-manifest.sh <包.tar.gz> --expect-rev 4.6.0-build.27-r33
+#   sh scripts/verify-pkg-manifest.sh <包.tar.gz> --expect-rev 4.7.0-build.05
 #   sh scripts/verify-pkg-manifest.sh <包.tar.gz> \
-#        --expect-rev 4.6.0-build.27-r33 \
+#        --expect-rev 4.7.0-build.05 \
 #        --expect-sha256 <sha256(update/manifest.json)>
 #   EXPECT_REV=... EXPECT_SHA256=... sh scripts/verify-pkg-manifest.sh <包.tar.gz>
 #
@@ -116,8 +116,8 @@ MF_SHA=$(sha256_of "$T/manifest.json")
 [ -n "$REV" ]          || bad "包内清单缺 revision 字段"
 [ -n "$MF_SHA" ]       || bad "算不出包内清单 sha256（缺 sha256sum / openssl）"
 if [ -n "$REV" ]; then
-    printf '%s' "$REV" | grep -qE -- '-r[0-9]+$' \
-        || bad "包内 revision='$REV' 不带 -rN 修订号（多半是清单没更新就出了包）"
+    printf '%s' "$REV" | grep -qE -- '-build\.[0-9]+$' \
+        || bad "包内 revision='$REV' 不带 -build.<N> 版本号（多半是清单没更新就出了包）"
 fi
 if [ -n "$EXPECT_REV" ] && [ -n "$REV" ]; then
     [ "$REV" = "$EXPECT_REV" ] \

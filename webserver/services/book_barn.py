@@ -395,7 +395,9 @@ class BookBarnService(AsyncService):
                                                 vc.LOCAL_MANIFEST)
                             # 与 version_check.status() 同口径：远端清单若比本地旧（例如
                             # 发布时漏更新 manifest，或临时回滚），不能倒过来提示升级。
-                            elif rev and rev != cur and vc._rev_num(rev) >= vc._rev_num(cur):
+                            # 用 _ver_key 四元组比较（兼容跨基线 build 重置），解析失败不广播。
+                            elif (vc._ver_key(rev) is not None and vc._ver_key(cur) is not None
+                                  and vc._ver_key(rev) > vc._ver_key(cur)):
                                 logging.info("[BARN] 发现新修订 %s（本地 %s）", rev, cur)
                                 CONF[UPGRABLE_REVISION] = rev
                                 if not self.admin_uids:

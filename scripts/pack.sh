@@ -3,19 +3,19 @@
 # pack.sh —— 从仓库打部署包
 #
 # 用法（仓库根目录）：
-#   bash scripts/pack.sh 4.6.0-build.27-r27  # 推荐：显式传完整修订号（含 -rN）
-#   bash scripts/pack.sh --src 4.6.0-build.27-r27
+#   bash scripts/pack.sh 4.7.0-build.05   # 推荐：显式传完整版本号（<tag>-build.<N>，无 -rN）
+#   bash scripts/pack.sh --src 4.7.0-build.05
 #                                        # 打源码整包 audiobook-src-<版本>-full.tar.gz
 #                                        # （与部署包同一套暂存/门禁，仅顶层结构与裁剪不同）
-#   bash scripts/pack.sh --full 4.6.0-build.27-r27
+#   bash scripts/pack.sh --full 4.7.0-build.05
 #                                        # 完整包：保留 app/node_modules（构建期依赖），
 #                                        # 产物名带 -full 后缀，不会覆盖同名正式包。
 #                                        # 只在「改了前端却没重新出 dist、需要现场
 #                                        # npm ci + generate」的开发场景才用得到。
 #                                        # 默认已排除这一层；--slim 保留为兼容别名
 #                                        # （等价于默认，不再产生 -slim 后缀）。
-#   bash scripts/pack.sh                 # 不传参时版本号取自 CHANGELOG 首条，只有基础版本
-#                                        # （形如 4.6.0-build.27，缺 -rN，会被清单断言拒绝）
+#   bash scripts/pack.sh                 # 不传参时版本号取自 CHANGELOG 首条版本标题
+#                                        # （形如 4.7.0-build.05）
 #   bash scripts/pack.sh --check xxx.tar.gz   # 只验一个已有包，不打包（自动识别部署包/源码包）
 #
 # 产物：$OUTDIR/audiobook-deploy-<版本>.tar.gz（默认 /workspace 可写则用它，否则 ~/audiobook-out；可用 OUTDIR=... 指定）
@@ -98,12 +98,12 @@ if [ "${1:-}" = "--check" ]; then
         if [ -f "$VM" ]; then
             sh "$VM" "$PKG" || fail=1
         else
-            # 兜底：老包没带校验脚本，至少确认清单带 -rN 修订号
+            # 兜底：老包没带校验脚本，至少确认清单带 <tag>-build.<N> 修订号
             MF="$D/update/manifest.json"
             if [ -f "$MF" ]; then
                 R=$(sed -n 's/.*"revision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MF" | head -1)
-                printf '%s' "$R" | grep -qE -- '-r[0-9]+$' \
-                    || { echo "  !! 包内清单 revision='$R' 不带 -rN（旧清单被打进包）"; fail=1; }
+                printf '%s' "$R" | grep -qE -- '-build\.[0-9]+$' \
+                    || { echo "  !! 包内清单 revision='$R' 不带 -build.<N>（旧清单被打进包）"; fail=1; }
                 echo "  包内清单 revision=$R（老包无校验脚本，仅做最小检查）"
             fi
         fi
@@ -390,10 +390,10 @@ echo "  发布清单 OK: $(grep -m1 '"revision"' update/manifest.json | tr -d ' 
 # 清单 revision 必须与本次出包的修订号一致：先推清单、后出包（协作备忘 §4）。
 # 这条断言是硬的——r27 就是栽在这里：清单还停在 r26，照它出包，页面装完仍报有新版本。
 MANIFEST_REV=$(grep -m1 -oE '"revision"[[:space:]]*:[[:space:]]*"[^"]+"' update/manifest.json | sed 's/.*"\([^"]*\)"$/\1/')
-if ! printf '%s' "$VER" | grep -qE -- '-r[0-9]+$'; then
-    echo "  !! 版本号 $VER 不含 -rN 修订号，无法与清单 revision 比对"
-    echo "     CHANGELOG 首条只有基础版本（4.6.0-build.27），出修订包请显式传参："
-    echo "     bash scripts/pack.sh 4.6.0-build.27-r27"
+if ! printf '%s' "$VER" | grep -qE -- '-build\.[0-9]+$'; then
+    echo "  !! 版本号 $VER 不含 -build.<N>，无法与清单 revision 比对"
+    echo "     出包请显式传完整版本号："
+    echo "     bash scripts/pack.sh 4.7.0-build.05"
     exit 1
 fi
 [ "$MANIFEST_REV" = "$VER" ] || {

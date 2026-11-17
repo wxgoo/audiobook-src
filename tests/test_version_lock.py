@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """版本锁（防反弹）回归测试。
 
-背景：本 fork 自本版起把运行期版本统一为 `4.7.0-build.04`（上游已发布 tag 4.6.0
-+ 第 04 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
+背景：本 fork 自本版起把运行期版本统一为 `4.7.0-build.05`（上游已发布 tag 4.6.0
++ 第 05 次本地构建），旧 `4.8.x` 号段封存。这里的用例把这条约定钉死：任何
 回退（写回 4.8.x、写回裸 4.6.0）、被构建参数顶成空串、Dockerfile/Makefile
 守卫被删除，都必须失败。
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKER = ROOT / "scripts" / "check-version-lock.py"
-LOCK = "4.7.0-build.04"
+LOCK = "4.7.0-build.05"
 FILES = [
     "webserver/version.py",
     "docker-compose.yml",
@@ -86,8 +86,8 @@ def test_compose_image_tag_rollback_is_rejected(tmp_path):
     """
     root = make_fixture(tmp_path)
     mutate(root, "docker-compose.yml",
-           "ghcr.io/wxgoo/audiobooks:%s-r47" % LOCK,
-           "ghcr.io/wxgoo/audiobooks:4.6.0-build.27-r41")
+           "ghcr.io/wxgoo/audiobooks:%s" % LOCK,
+           "ghcr.io/wxgoo/audiobooks:4.6.0-build.27")
     r = run(root)
     assert r.returncode == 1, r.stdout
     assert "docker-compose.yml" in r.stdout
@@ -98,7 +98,7 @@ def test_compose_image_tag_without_build_number_is_rejected(tmp_path):
     """镜像 tag 里没有构建号段 = 无法校验版本口径，必须拦下。"""
     root = make_fixture(tmp_path)
     mutate(root, "docker-compose.yml",
-           "ghcr.io/wxgoo/audiobooks:%s-r47" % LOCK,
+           "ghcr.io/wxgoo/audiobooks:%s" % LOCK,
            "ghcr.io/wxgoo/audiobooks:latest")
     r = run(root)
     assert r.returncode == 1, r.stdout
@@ -115,9 +115,9 @@ def test_compose_with_build_section_still_checks_git_version(tmp_path):
     text = p.read_text(encoding="utf-8")
     # 塞一个 build 段进去，且故意把 GIT_VERSION 写成旧构建号
     text = text.replace(
-        "    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:%s-r47}" % LOCK,
+        "    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:%s}" % LOCK,
         "    build:\n      context: .\n      args:\n        GIT_VERSION: \"4.6.0-build.27\"\n"
-        "    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:%s-r47}" % LOCK,
+        "    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:%s}" % LOCK,
         1,
     )
     p.write_text(text, encoding="utf-8")
@@ -153,11 +153,11 @@ def test_set_accepts_new_base_and_rejects_sealed(tmp_path):
     """--set 接受换基线（4.6.0 → 4.7.0），拒绝封存号段（4.8.x）与裸 tag。"""
     root = make_fixture(tmp_path)
     r = subprocess.run(
-        [sys.executable, str(CHECKER), "--root", str(root), "--set", "4.7.0-build.04"],
+        [sys.executable, str(CHECKER), "--root", str(root), "--set", "4.7.0-build.05"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
     src = (root / "webserver" / "version.py").read_text(encoding="utf-8")
-    assert 'VERSION = "4.7.0-build.04"' in src
+    assert 'VERSION = "4.7.0-build.05"' in src
 
     for bad in ("4.8.0-build.01", "4.7.0", "4.7.1-build.01"):
         r = subprocess.run(
