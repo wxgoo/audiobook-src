@@ -17,6 +17,59 @@
 > 更早的变更记录（`4.6.0-build.21` 及以前、旧编号时代）已精简归档，
 > 完整历史见 git 提交记录（`git log`）。---
 
+## 4.7.0-build.03-r46（2026-11-17，**借鉴 anx-calibre-manager 的 4 项能力**，含前端产物，须重建镜像）
+
+主题：把考察 `anx-calibre-manager` 后确认有价值的 4 项能力移植进来——登录失败锁定、
+PWA、浏览器内 EPUB 朗读、WebDAV 用户隔离补齐。均复用项目既有基础设施，最小侵入。
+
+### ① 登录失败锁定（LOGIN_MAX_ATTEMPTS / LOGIN_LOCK_SECONDS）
+
+- 新增 `webserver/services/login_guard.py`：仿 `book_share_service.verify` 的失败计数，
+  状态存 `Reader.extra`（JSON 列）——跨进程共享、重启不丢、免 ALTER TABLE 迁移。
+  按 (IP, 用户名) 计数，达阈值写 `login_locked_until` 临时锁定，成功清零。
+  密码比较改用 `hmac.compare_digest`。剩余秒数用 `math.ceil` 避免 0.x 秒被截成 0 而误放行。
+- 只拦交互登录：`handlers/user.py` 的 `SignIn` 与 `handlers/wap.py` 的 `WapLogin`；
+  设备凭据类入口（Basic/token/MCP/WebDAV/社交）不接入，避免合法设备被误锁。
+  用户不存在与密码错误统一文案，缓解用户枚举。
+- 配置贯穿：`settings.py` 默认值（5 次 / 600 秒）、`setting_saver.py` 白名单、
+  管理设置页两个 number 字段、三语文案。设置页改完动态生效（无需重启）。
+- 测试 `tests/test_login_lockout.py`：锁定/到期/成功清零/按 IP 隔离/配置钳制，8 项全绿。
+
+### ② PWA（轻量手写，零新依赖）
+
+- 新增 `app/public/manifest.json` + `app/public/sw.js` + 192/512 标准图标（从 logo 生成）。
+  sw 只缓存应用静态壳（`/`、`/_nuxt/`、`/static/`、`/logo/`、`/icons/` 等），
+  **绝不缓存 API 与书籍数据**（`/api`、`/read`、`/get`、`/books`、`/s` 等），
+  避免缓存私有数据/读到过期书目/串登录态。network-first 导航 + cache-first 静态资源。
+- `nuxt.config.js` head 加 manifest link / theme-color / apple-touch-icon；
+  新增 client-only 插件 `plugins/pwa-register.js`，仅生产环境注册 sw（配合 chunk-reload 做发版刷新）。
+
+### ③ 浏览器内 EPUB 朗读（内置阅读器，与 MyReader 解耦）
+
+- 默认阅读器**仍是 MyReader**（自带 TTS，不动）；只增强内置 `epubjs.html` 链路：
+  注入 `static/epubreader/js/tts.js`，悬浮朗读控件（播放/暂停/停止、声音、语速）。
+- 复用后端 `/api/tts/edge` 代理（GET 列声音 / POST 合成 audio/mpeg）与 word boundary 头。
+  朗读文本取当前选区或可见 iframe 正文，分段合成播放；三语文案内置于 tts.js。
+- 新版 dist 的 index.html head 变更导致其 sha256 变化，pack.sh 基线同步更新。
+
+### ④ WebDAV 用户隔离补齐
+
+- 现状已按 `reader_id` 分物理目录（`/data/reader/<id>/`，对外统一 `/reader/`），本次补齐口径：
+  `dav_provider.py` 的 `_get_user_reading_range()` 增加 `ALLOW_READ_RANGE_SETTING` 全局开关判断，
+  关闭时全放行，与 web 侧 `is_book_visible` 一致（此前 WebDAV 不看开关，两边对不上）。
+- `settings.py` 补 `WEBDAV_SYNC_FOLDER_NAME="reader"` 默认值（此前靠 None 兜底）。
+  不改设置页白名单（内部目录名，改错会导致数据目录失联）。
+- 测试 `tests/test_webdav_user_isolation.py`（纯函数复刻 + 源码核对，沙箱无 wsgidav），9 项全绿。
+  恢复设计文档 `document/WebDAV_Reader_Sync_Provider.md`。
+
+### 验证
+
+- 新增 4 组测试 31 项全绿；设置白名单契约 14 项全绿；前端 lint 0 error。
+- `npm run generate` 成功，dist 771 文件（基线 766 + 5 个新静态资源），check-dist 通过。
+- 全量 pytest 的 19 个 collection error 均为沙箱缺 `social_tornado`，与 r44/r45 基线一致，非本次回归。
+- 基线更新：check-dist.sh / install-fresh.sh / pack.sh 的 dist 文件数 768→771，
+  pack.sh 的 index.html sha256 更新为 r46 新值。
+
 ## 4.7.0-build.02-r45（2026-11-16，**移除读者组定制层 + 统一权限判定**，含前端产物，须重建镜像）
 
 主题：把权限体系从「6 套机制并行、口径靠人肉同步」收敛到与上游 4.7.0 一致，
