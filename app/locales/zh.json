@@ -1339,7 +1339,17 @@
         "installBtn": "安装依赖（pip）",
         "restartBtn": "重启服务",
         "loadFailed": "书籍列表加载失败",
-        "startFailed": "转写任务启动失败"
+        "startFailed": "转写任务启动失败",
+        "preset": "断行预设",
+        "presetShort": "短句（小屏友好）",
+        "presetStandard": "标准",
+        "presetLoose": "宽松（长句）",
+        "script": "字幕文字",
+        "scriptOriginal": "按识别原样",
+        "scriptSimplified": "转简体",
+        "scriptTraditional": "转繁体",
+        "writeAss": "同时输出 ASS（卡拉 OK 逐词扫光）",
+        "hotwords": "热词（选填，逗号分隔，人名/术语）"
     },
     "user": {
         "avatar": "头像",

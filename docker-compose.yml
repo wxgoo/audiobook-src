@@ -2,7 +2,7 @@
 # 不构建、不 clone、不传大包；docker compose up -d 自动从 GHCR 拉取（公开包匿名可拉）。
 services:
   mybooks:
-    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:4.7.0-build.07}
+    image: ${IMAGE_TAG:-ghcr.io/wxgoo/audiobooks:4.7.0-build.08}
     container_name: ${CONTAINER_NAME:-mybooks}
     restart: always
     # 保留此项：老内核（<3.17）+ 新版 glibc 下 docx→pdf 会因 getrandom 缺失崩溃，

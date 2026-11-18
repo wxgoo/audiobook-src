@@ -1035,7 +1035,17 @@
         "installBtn": "Install dependencies (pip)",
         "restartBtn": "Restart service",
         "loadFailed": "Failed to load the book list",
-        "startFailed": "Failed to start the transcription task"
+        "startFailed": "Failed to start the transcription task",
+        "preset": "Line-break preset",
+        "presetShort": "Short lines (small screens)",
+        "presetStandard": "Standard",
+        "presetLoose": "Loose (long lines)",
+        "script": "Subtitle script",
+        "scriptOriginal": "As recognized",
+        "scriptSimplified": "Simplified Chinese",
+        "scriptTraditional": "Traditional Chinese",
+        "writeAss": "Also output ASS (karaoke word sweep)",
+        "hotwords": "Hotwords (optional, comma-separated)"
     },
     "book": {
         "copyrightTitle": "Copyright Notice",

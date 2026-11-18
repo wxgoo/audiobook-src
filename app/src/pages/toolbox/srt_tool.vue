@@ -75,13 +75,28 @@
               <v-select dense outlined hide-details :label="$t('srtTool.lang')"
                         v-model="lang" :items="langItems" :disabled="running"></v-select>
             </v-col>
-            <v-col cols="12" sm="6" class="d-flex align-center">
+            <v-col cols="6" sm="3">
+              <v-select dense outlined hide-details :label="$t('srtTool.preset')"
+                        v-model="preset" :items="presetItems" :disabled="running"></v-select>
+            </v-col>
+            <v-col cols="6" sm="3">
+              <v-select dense outlined hide-details :label="$t('srtTool.script')"
+                        v-model="script" :items="scriptItems" :disabled="running"></v-select>
+            </v-col>
+            <v-col cols="12" sm="8" class="d-flex align-center flex-wrap">
               <v-checkbox dense hide-details v-model="overwrite"
                           :label="$t('srtTool.overwrite')" :disabled="running"
                           class="mt-0 mr-4"></v-checkbox>
               <v-checkbox dense hide-details v-model="keepTxt"
                           :label="$t('srtTool.keepTxt')" :disabled="running"
+                          class="mt-0 mr-4"></v-checkbox>
+              <v-checkbox dense hide-details v-model="writeAss"
+                          :label="$t('srtTool.writeAss')" :disabled="running"
                           class="mt-0"></v-checkbox>
+            </v-col>
+            <v-col cols="12" sm="4">
+              <v-text-field dense outlined hide-details :label="$t('srtTool.hotwords')"
+                            v-model="hotwords" :disabled="running"></v-text-field>
             </v-col>
           </v-row>
 
@@ -144,6 +159,10 @@ export default {
     picked: [],
     model: 'base',
     lang: 'zh',
+    preset: 'standard',
+    script: 'original',
+    writeAss: false,
+    hotwords: '',
     overwrite: false,
     keepTxt: true,
     starting: false,
@@ -170,6 +189,20 @@ export default {
       const base = ((t.files_done || 0) / t.files_total) * 100;
       const cur = (t.current_pct || 0) / t.files_total;
       return Math.min(100, Math.round(base + cur));
+    },
+    presetItems() {
+      return [
+        { text: this.$t('srtTool.presetShort'), value: 'short' },
+        { text: this.$t('srtTool.presetStandard'), value: 'standard' },
+        { text: this.$t('srtTool.presetLoose'), value: 'loose' },
+      ];
+    },
+    scriptItems() {
+      return [
+        { text: this.$t('srtTool.scriptOriginal'), value: 'original' },
+        { text: this.$t('srtTool.scriptSimplified'), value: 'simplified' },
+        { text: this.$t('srtTool.scriptTraditional'), value: 'traditional' },
+      ];
     },
   },
   created() {
@@ -208,7 +241,12 @@ export default {
       this.starting = true;
       this.$backend('/toolbox/srt_tool/start', {
         method: 'POST',
-        body: { book_ids: this.picked, model: this.model, lang: this.lang, overwrite: this.overwrite, keep_txt: this.keepTxt },
+        body: {
+          book_ids: this.picked, model: this.model, lang: this.lang,
+          overwrite: this.overwrite, keep_txt: this.keepTxt,
+          preset: this.preset, script: this.script,
+          write_ass: this.writeAss, hotwords: this.hotwords,
+        },
       })
         .then((rsp) => {
           if (rsp.err !== 'ok') {

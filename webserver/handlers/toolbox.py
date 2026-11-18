@@ -950,6 +950,15 @@ class AdminSrtToolStart(BaseHandler):
         lang = (data.get("lang") or "zh").strip()
         overwrite = bool(data.get("overwrite", False))
         keep_txt = bool(data.get("keep_txt", True))
+        # v1.3 排版选项：断行预设 / 字幕文字 / ASS 输出 / 热词（不合法值回退默认，不报错）
+        preset = (data.get("preset") or "standard").strip()
+        if preset not in srt_transcribe.PRESET_CHOICES:
+            preset = "standard"
+        script = (data.get("script") or "original").strip()
+        if script not in srt_transcribe.SCRIPT_CHOICES:
+            script = "original"
+        write_ass = bool(data.get("write_ass", False))
+        hotwords = str(data.get("hotwords") or "").strip()[:srt_transcribe.HOTWORDS_MAX_LEN]
 
         def _resolve():
             out = []
@@ -974,7 +983,8 @@ class AdminSrtToolStart(BaseHandler):
         if not books:
             return {"err": "book.no_audio", "msg": _("所选书籍都没有音频目录")}
         ok, msg = await utils.run_in_threadpool(
-            srt_transcribe.start, books, model, lang, overwrite, keep_txt)
+            srt_transcribe.start, books, model, lang, overwrite, keep_txt,
+            preset, script, write_ass, hotwords)
         if not ok:
             return {"err": "task.start_failed", "msg": msg}
         rsp = {"err": "ok", "msg": msg}

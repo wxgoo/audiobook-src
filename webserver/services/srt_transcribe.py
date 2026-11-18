@@ -165,10 +165,27 @@ def restart_tornado():
     return True, "正在重启 tornado，页面约 20 秒后恢复"
 
 
+# v1.3 排版选项的合法值（与 srt_core.SUBTITLE_PRESETS / convert_script 对齐）
+PRESET_CHOICES = ("short", "standard", "loose")
+SCRIPT_CHOICES = ("original", "simplified", "traditional")
+HOTWORDS_MAX_LEN = 300
+
+
 def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = False,
-          keep_txt: bool = True):
-    """books: [{book_id, title, audio_dir}]——audio_dir 由调用方在 calibre 池解析好。"""
+          keep_txt: bool = True, preset: str = "standard", script: str = "original",
+          write_ass: bool = False, hotwords: str = ""):
+    """books: [{book_id, title, audio_dir}]——audio_dir 由调用方在 calibre 池解析好。
+
+    v1.3 选项：preset 断行预设（short/standard/loose）、script 字幕文字转换
+    （original/simplified/traditional，opencc 未装时自动原样）、write_ass 额外输出
+    卡拉 OK 扫光 .ass、hotwords 热词（人名/术语，逗号分隔）。
+    """
     global _thread, _stop, _snapshot
+    if preset not in PRESET_CHOICES:
+        preset = "standard"
+    if script not in SCRIPT_CHOICES:
+        script = "original"
+    hotwords = (hotwords or "").strip()[:HOTWORDS_MAX_LEN]
     with _lock:
         if is_running():
             return False, "已有转写任务在进行中"
@@ -184,6 +201,7 @@ def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = 
         _stop = threading.Event()
         _snapshot = {
             "state": "running", "model": model, "lang": lang, "keep_txt": keep_txt,
+            "preset": preset, "script": script, "write_ass": bool(write_ass),
             "books_total": len(books), "files_total": 0, "files_done": 0,
             "skipped": 0, "failed": 0, "current_index": 0,
             "current_book": "", "current_file": "", "current_pct": 0,
@@ -191,7 +209,8 @@ def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = 
         }
     real_books = [b for b in books if b.get("audio_dir")]
     _thread = threading.Thread(
-        target=_worker, args=(real_books, model, lang, overwrite, keep_txt), daemon=True)
+        target=_worker, args=(real_books, model, lang, overwrite, keep_txt,
+                              preset, script, bool(write_ass), hotwords), daemon=True)
     _thread.start()
     return True, "转写任务已启动"
 
@@ -205,7 +224,8 @@ def _finish(state: str, message: str):
     _set(state="idle", state_last=state, message=message)
 
 
-def _worker(books, model, lang, overwrite, keep_txt):
+def _worker(books, model, lang, overwrite, keep_txt,
+            preset="standard", script="original", write_ass=False, hotwords=""):
     files = []
     for b in books:
         adir = b["audio_dir"]
@@ -238,16 +258,26 @@ def _worker(books, model, lang, overwrite, keep_txt):
         try:
             segs = srt_core.transcribe_audio(
                 apath, model_name=model, lang=lang,
+                hotwords=hotwords or None,
                 on_progress=_prog, should_stop=_stop.is_set)
             # 取消时采用已识别到停止点的部分结果（有比没有强，缓存/跳过逻辑保证不重复劳动）
             if segs:
-                srt_core.write_srt(segs, lp(spath))
+                # ★ v1.3：timeline 排版——识别结果按预设断行、按需做字形转换，
+                #   计时取词级边界（比 v1.2 的段级直出更精细）。
+                tl = srt_core.build_timeline(segs, source=fn, language=lang)
+                cues = srt_core.layout_timeline(
+                    tl, preset=preset, script=script, beautify=True)
+                written = []
+                srt_core.write_srt(cues, lp(spath))
+                written.append(srt_name)
+                if write_ass:
+                    ass_name = Path(fn).with_suffix(".ass").name
+                    srt_core.write_ass(cues, lp(os.path.join(adir, ass_name)))
+                    written.append(ass_name)
                 if keep_txt:
                     txt_name = Path(fn).with_suffix(".txt").name
-                    txt_path = os.path.join(adir, txt_name)
-                    text_content = "\n".join(s["text"] for s in segs)
-                    with open(lp(txt_path), "w", encoding="utf-8") as f:
-                        f.write(text_content)
+                    srt_core.write_txt(cues, lp(os.path.join(adir, txt_name)))
+                    written.append(txt_name)
                 _set(files_done=_snapshot.get("files_done", 0) + 1)
             elif _stop.is_set():
                 stopped = True

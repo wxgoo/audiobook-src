@@ -1333,7 +1333,17 @@
         "installBtn": "安裝依賴（pip）",
         "restartBtn": "重啟服務",
         "loadFailed": "書籍清單載入失敗",
-        "startFailed": "轉寫任務啟動失敗"
+        "startFailed": "轉寫任務啟動失敗",
+        "preset": "斷行預設",
+        "presetShort": "短句（小螢幕友善）",
+        "presetStandard": "標準",
+        "presetLoose": "寬鬆（長句）",
+        "script": "字幕文字",
+        "scriptOriginal": "按識別原樣",
+        "scriptSimplified": "轉簡體",
+        "scriptTraditional": "轉繁體",
+        "writeAss": "同時輸出 ASS（卡拉 OK 逐詞掃光）",
+        "hotwords": "熱詞（選填，逗號分隔，人名/術語）"
     },
     "user": {
         "avatar": "大頭貼",
