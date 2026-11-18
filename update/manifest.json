@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "revision": "4.7.0-build.06",
-  "base_revision": "4.7.0-build.05",
+  "revision": "4.7.0-build.07",
+  "base_revision": "4.7.0-build.06",
   "version": "4.6.0-build.27",
-  "date": "2026-11-17",
-  "summary": "发版改号彻底一键化：compose 纳入 --set 自动改写，消除最后一处手工步骤",
+  "date": "2026-11-18",
+  "summary": "SRT 识别内核升级 v1.3.0：词级时间轴+断行预设，网页转写与 PC 版同源受益",
   "notes": [],
   "requires_dist": true,
   "hotfixable": false,
@@ -14,13 +14,67 @@
   "reason": "本次改动包含镜像级文件（Dockerfile / conf / 依赖 / 工具链 / 删除的前端文件），在线替换无法生效，请把 .env 的 IMAGE_TAG 换成新 tag 后重新 docker compose up -d",
   "files": [
     {
+      "path": "webserver/toolbox/make_srt.py",
+      "sha256": "1f5e031cf914ea746d9ba5ccd70a634b7a62e66df48545639de37abf37c290a2",
+      "bytes": 12192
+    },
+    {
+      "path": "webserver/toolbox/make_srt_gui.py",
+      "sha256": "10b75101da9eda91732a2a7069d710248dc9015bf3a421f67576c4a0276358a3",
+      "bytes": 26961
+    },
+    {
+      "path": "webserver/toolbox/srt-tool/build.py",
+      "sha256": "0289c0d738fece91b0f6d75f62b936331bbb06b32ee90aa6ddee3a3fec81c2d1",
+      "bytes": 7195
+    },
+    {
+      "path": "webserver/toolbox/srt-tool/tests/test_srt_tool.py",
+      "sha256": "94c516f64b48df43cc9be80cf976c6340ad168ce7d3b5be3992257e15a0d824c",
+      "bytes": 18887
+    },
+    {
+      "path": "webserver/toolbox/srt-tool/tests/test_v13.py",
+      "sha256": "4e390d3dba4d11695a3e7045d9f18257b8a9ee66ec07cf669f46b07b3b1130ca",
+      "bytes": 9079
+    },
+    {
+      "path": "webserver/toolbox/srt_align.py",
+      "sha256": "6dae782be39562ce16f3b5c6369ac7621fd537e2f54a4b19a6b2a1c5aa26f6f8",
+      "bytes": 4031
+    },
+    {
+      "path": "webserver/toolbox/srt_core.py",
+      "sha256": "4c65bed6e0b899d20d50a7d018cfb7e58f1d9801293068c0691afa93a11bcf89",
+      "bytes": 28583
+    },
+    {
+      "path": "webserver/toolbox/srt_tool.py",
+      "sha256": "1ba9da51200bec01d7ceaa9176567986ea8e1e166101dcea35636174a07e7d43",
+      "bytes": 1208
+    },
+    {
+      "path": "webserver/toolbox/srt_tools.py",
+      "sha256": "15bf63d062d9f1225db69cbbb1f8e38ffff584d56511723550c88e1f9533c005",
+      "bytes": 11607
+    },
+    {
       "path": "webserver/version.py",
-      "sha256": "6249b52877249fc99e510acc4e0d47771f3c7a099eebe60d9f1c2284d85801b5",
+      "sha256": "6efdec48602630a7a0944ad0da499026a9ab9f1966ddb6f9f5ba7c0960772b22",
       "bytes": 655
     }
   ],
   "changed": {
     "hotfix": [
+      "webserver/toolbox/make_srt.py",
+      "webserver/toolbox/make_srt_gui.py",
+      "webserver/toolbox/srt-tool/build.py",
+      "webserver/toolbox/srt-tool/tests/test_srt_tool.py",
+      "webserver/toolbox/srt-tool/tests/test_v13.py",
+      "webserver/toolbox/srt_align.py",
+      "webserver/toolbox/srt_core.py",
+      "webserver/toolbox/srt_tool.py",
+      "webserver/toolbox/srt_tools.py",
       "webserver/version.py"
     ],
     "dist": [],
@@ -31,22 +85,34 @@
       "Makefile",
       "app/package-lock.json",
       "app/package.json",
-      "docker-compose.yml"
+      "docker-compose.yml",
+      "srt-tool/build.py",
+      "srt-tool/make_srt.py",
+      "srt-tool/make_srt.spec",
+      "srt-tool/make_srt_gui.py",
+      "srt-tool/srt_align.py",
+      "srt-tool/srt_core.py",
+      "srt-tool/srt_tools.py",
+      "srt-tool/tests/test_srt_tool.py",
+      "srt-tool/tests/test_v13.py",
+      "webserver/toolbox/srt-tool/make_srt.spec"
     ],
     "docs": [
       "CHANGELOG.md",
       "README.md",
       "scripts/check-version-lock.py",
-      "tests/test_version_lock.py"
+      "srt-tool/README.md",
+      "tests/test_version_lock.py",
+      "webserver/toolbox/srt-tool/README.md"
     ],
     "ignored": []
   },
   "deploy_commands": [
     "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.7.0-build.06.tar.gz.sha256",
+    "sha256sum -c audiobook-deploy-4.7.0-build.07.tar.gz.sha256",
     "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
     "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.7.0-build.06.tar.gz",
+    "tar -xzf audiobook-deploy-4.7.0-build.07.tar.gz",
     "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }
