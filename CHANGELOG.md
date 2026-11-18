@@ -17,6 +17,32 @@
 > 更早的变更记录（`4.6.0-build.21` 及以前、旧编号时代）已精简归档，
 > 完整历史见 git 提交记录（`git log`）。---
 
+## 4.7.0-build.08（2026-11-18，**网页转写暴露 v1.3 排版选项**，断行预设/简繁/ASS/热词，含前端产物，须重建镜像）
+
+主题：把 v1.3 内核的排版能力完整暴露到网页版「音频转写文稿」UI——build.07 只升级了内核
+（网页走默认行为），本版把选项做成网页控件，一步到位。
+
+### 新增网页控件（/toolbox/srt_tool）
+
+- **断行预设**下拉：短句（小屏友好）/ 标准 / 宽松（长句），对应内核
+  `layout_timeline(preset=)`；识别结果按词级时间轴断行，计时更精细。
+- **字幕文字**下拉：按识别原样 / 转简体 / 转繁体（opencc 未装时自动原样，不报错）。
+- **同时输出 ASS** 勾选：卡拉 OK 逐词扫光字幕（cue 带词级时间时输出 `{\kX}` 标记）。
+- **热词**文本框（选填，逗号分隔，人名/术语）：拼进识别 initial_prompt 提高专名准确率。
+- 「同时生成 .txt 文稿」升级：按字幕断行输出（与 .srt 一致），不再是纯段级拼接。
+
+### 实现与兼容
+
+- `srt_transcribe._worker` 升级为 timeline 排版流程：识别 → `build_timeline` →
+  `layout_timeline(preset, script, beautify=True)` → `write_srt` + 可选 `write_ass`/`write_txt`。
+  取消粒度不变：停止后已识别的部分结果仍按排版流程写出。
+- 参数校验：不合法值服务端回退默认（preset→standard、script→original），热词截断 300 字。
+- 快照新增 preset/script/write_ass 字段；旧 API 调用方不传新参数仍按默认值工作。
+- 前端 `srt_tool.vue` 新增 2 下拉 + 2 勾选 + 热词框，zh / zh-TW / en 三份词条补齐；
+  dist 重编（771 文件校验通过）。
+- 新增行为级测试 `tests/test_srt_transcribe_options.py`（5 项：排版链、ASS/TXT 输出、
+  预设与热词透传、取消保留部分结果）。
+
 ## 4.7.0-build.07（2026-11-17，**SRT 识别内核升级 v1.3.0**，网页转写与 PC 版同源受益，须重建镜像）
 
 主题：附属工具 srt-tool 整包升级到 v1.3.0（借鉴 OneAsr 的「测时间/排版分离」流水线设计）。
