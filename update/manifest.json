@@ -1,118 +1,557 @@
 {
   "schema": 1,
-  "revision": "4.7.0-build.07",
-  "base_revision": "4.7.0-build.06",
+  "revision": "4.7.0-build.08",
+  "base_revision": "4.7.0-build.07",
   "version": "4.6.0-build.27",
   "date": "2026-11-18",
-  "summary": "SRT 识别内核升级 v1.3.0：词级时间轴+断行预设，网页转写与 PC 版同源受益",
+  "summary": "网页转写暴露 v1.3 排版选项：断行预设/简繁转换/ASS 输出/热词",
   "notes": [],
   "requires_dist": true,
   "hotfixable": false,
-  "dist_hotfixable": false,
-  "dist_files": [],
-  "dist_deleted": [],
+  "dist_hotfixable": true,
+  "dist_files": [
+    {
+      "path": "app/dist/200.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/ListBook/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/ListMeta/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/_nuxt/07bb084.js",
+      "sha256": "119d5cbdc9e7d4d77e9f10872142d5c48f73f508922dea58c8e819d1742a9741",
+      "bytes": 9417
+    },
+    {
+      "path": "app/dist/_nuxt/27fabba.js",
+      "sha256": "772b250eb1dd04ac044a4e4cd2d34bdebff8d85df12565535d0f6e9e2a77e39b",
+      "bytes": 11367
+    },
+    {
+      "path": "app/dist/_nuxt/694f3df.js",
+      "sha256": "6e5082d88de67e0f95fb9df9825dbdf7c3e04119be5feb03435035e610ce2186",
+      "bytes": 128713
+    },
+    {
+      "path": "app/dist/_nuxt/95d0d73.js",
+      "sha256": "11beae17621d346600125c015b40f2df4e2efeb945b38535ad8db59b745d1069",
+      "bytes": 130427
+    },
+    {
+      "path": "app/dist/_nuxt/9b0eb0f.js",
+      "sha256": "3c35cef703cf3985ede3df5b1ddbc704d5bbe8364bed2ed134872486c3e49dd5",
+      "bytes": 133416
+    },
+    {
+      "path": "app/dist/active/success/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/all-expected/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/book-reviews/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/books/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/imports/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/resources/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/settings/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/shares/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/syslog/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/takedowns/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/toolbox/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/trash/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/user-memos/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/users/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/admin/version/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/all/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/audiobooks/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/author/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/booklists/liked/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/booklists/mylists/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/booklists/publics/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/categories/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/expected/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/favorites/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/folder/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/history/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/install/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/language/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/login/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/logout/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/memos/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/opds-readme/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/printbooks/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/publisher/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/rating/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/read-done/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/reading/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/search/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/series/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/signup/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/soledbooks/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/starting/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/tag/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/audio_transcode/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/author_clean/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/author_norm/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/author_tools/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/book_dedup/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/bookbarn_acceptor/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/chinese_converter/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/epub_beautify/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/epub_fixer/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/epub_merge/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/epub_split/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/format_tools/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/formats_pruning/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/merge_formats_tool/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/mimo_tts/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/minify_pdf/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/rare_book_downloader/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/review_book_language/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/srt_tool/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/text_processor/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/text_replace/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/toolbox/txt_encoding_fixer/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/user/usersettings/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/visits/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/wants/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/webdav-readme/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    },
+    {
+      "path": "app/dist/welcome/index.html",
+      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "bytes": 5088
+    }
+  ],
+  "dist_deleted": [
+    "app/dist/_nuxt/0d13e89.js",
+    "app/dist/_nuxt/57cac27.js",
+    "app/dist/_nuxt/5ca35b0.js",
+    "app/dist/_nuxt/7ef9256.js",
+    "app/dist/_nuxt/a0d5089.js"
+  ],
   "reason": "本次改动包含镜像级文件（Dockerfile / conf / 依赖 / 工具链 / 删除的前端文件），在线替换无法生效，请把 .env 的 IMAGE_TAG 换成新 tag 后重新 docker compose up -d",
   "files": [
     {
-      "path": "webserver/toolbox/make_srt.py",
-      "sha256": "1f5e031cf914ea746d9ba5ccd70a634b7a62e66df48545639de37abf37c290a2",
-      "bytes": 12192
+      "path": "webserver/handlers/toolbox.py",
+      "sha256": "b491d732918ac00824005ed5494b89e92cc1da9ae4ef0e86a545e490235245d3",
+      "bytes": 88073
     },
     {
-      "path": "webserver/toolbox/make_srt_gui.py",
-      "sha256": "10b75101da9eda91732a2a7069d710248dc9015bf3a421f67576c4a0276358a3",
-      "bytes": 26961
-    },
-    {
-      "path": "webserver/toolbox/srt-tool/build.py",
-      "sha256": "0289c0d738fece91b0f6d75f62b936331bbb06b32ee90aa6ddee3a3fec81c2d1",
-      "bytes": 7195
-    },
-    {
-      "path": "webserver/toolbox/srt-tool/tests/test_srt_tool.py",
-      "sha256": "94c516f64b48df43cc9be80cf976c6340ad168ce7d3b5be3992257e15a0d824c",
-      "bytes": 18887
-    },
-    {
-      "path": "webserver/toolbox/srt-tool/tests/test_v13.py",
-      "sha256": "4e390d3dba4d11695a3e7045d9f18257b8a9ee66ec07cf669f46b07b3b1130ca",
-      "bytes": 9079
-    },
-    {
-      "path": "webserver/toolbox/srt_align.py",
-      "sha256": "6dae782be39562ce16f3b5c6369ac7621fd537e2f54a4b19a6b2a1c5aa26f6f8",
-      "bytes": 4031
-    },
-    {
-      "path": "webserver/toolbox/srt_core.py",
-      "sha256": "4c65bed6e0b899d20d50a7d018cfb7e58f1d9801293068c0691afa93a11bcf89",
-      "bytes": 28583
-    },
-    {
-      "path": "webserver/toolbox/srt_tool.py",
-      "sha256": "1ba9da51200bec01d7ceaa9176567986ea8e1e166101dcea35636174a07e7d43",
-      "bytes": 1208
-    },
-    {
-      "path": "webserver/toolbox/srt_tools.py",
-      "sha256": "15bf63d062d9f1225db69cbbb1f8e38ffff584d56511723550c88e1f9533c005",
-      "bytes": 11607
+      "path": "webserver/services/srt_transcribe.py",
+      "sha256": "fabb75437da75ad9fd7a869c4b08a8028ba7c046f2af8f782aa8c8c4ca3f2d10",
+      "bytes": 12463
     },
     {
       "path": "webserver/version.py",
-      "sha256": "6efdec48602630a7a0944ad0da499026a9ab9f1966ddb6f9f5ba7c0960772b22",
+      "sha256": "6b40de1168a7b7d6d8f296671c44b4f7ab5750d5b8cec17cbf66b5af5cd081cc",
       "bytes": 655
     }
   ],
   "changed": {
     "hotfix": [
-      "webserver/toolbox/make_srt.py",
-      "webserver/toolbox/make_srt_gui.py",
-      "webserver/toolbox/srt-tool/build.py",
-      "webserver/toolbox/srt-tool/tests/test_srt_tool.py",
-      "webserver/toolbox/srt-tool/tests/test_v13.py",
-      "webserver/toolbox/srt_align.py",
-      "webserver/toolbox/srt_core.py",
-      "webserver/toolbox/srt_tool.py",
-      "webserver/toolbox/srt_tools.py",
+      "webserver/handlers/toolbox.py",
+      "webserver/services/srt_transcribe.py",
       "webserver/version.py"
     ],
-    "dist": [],
-    "appsrc": [],
+    "dist": [
+      "app/dist/200.html",
+      "app/dist/ListBook/index.html",
+      "app/dist/ListMeta/index.html",
+      "app/dist/_nuxt/07bb084.js",
+      "app/dist/_nuxt/0d13e89.js",
+      "app/dist/_nuxt/27fabba.js",
+      "app/dist/_nuxt/57cac27.js",
+      "app/dist/_nuxt/5ca35b0.js",
+      "app/dist/_nuxt/694f3df.js",
+      "app/dist/_nuxt/7ef9256.js",
+      "app/dist/_nuxt/95d0d73.js",
+      "app/dist/_nuxt/9b0eb0f.js",
+      "app/dist/_nuxt/a0d5089.js",
+      "app/dist/active/success/index.html",
+      "app/dist/admin/all-expected/index.html",
+      "app/dist/admin/book-reviews/index.html",
+      "app/dist/admin/books/index.html",
+      "app/dist/admin/imports/index.html",
+      "app/dist/admin/resources/index.html",
+      "app/dist/admin/settings/index.html",
+      "app/dist/admin/shares/index.html",
+      "app/dist/admin/syslog/index.html",
+      "app/dist/admin/takedowns/index.html",
+      "app/dist/admin/toolbox/index.html",
+      "app/dist/admin/trash/index.html",
+      "app/dist/admin/user-memos/index.html",
+      "app/dist/admin/users/index.html",
+      "app/dist/admin/version/index.html",
+      "app/dist/all/index.html",
+      "app/dist/audiobooks/index.html",
+      "app/dist/author/index.html",
+      "app/dist/booklists/liked/index.html",
+      "app/dist/booklists/mylists/index.html",
+      "app/dist/booklists/publics/index.html",
+      "app/dist/categories/index.html",
+      "app/dist/expected/index.html",
+      "app/dist/favorites/index.html",
+      "app/dist/folder/index.html",
+      "app/dist/history/index.html",
+      "app/dist/index.html",
+      "app/dist/install/index.html",
+      "app/dist/language/index.html",
+      "app/dist/login/index.html",
+      "app/dist/logout/index.html",
+      "app/dist/memos/index.html",
+      "app/dist/opds-readme/index.html",
+      "app/dist/printbooks/index.html",
+      "app/dist/publisher/index.html",
+      "app/dist/rating/index.html",
+      "app/dist/read-done/index.html",
+      "app/dist/reading/index.html",
+      "app/dist/search/index.html",
+      "app/dist/series/index.html",
+      "app/dist/signup/index.html",
+      "app/dist/soledbooks/index.html",
+      "app/dist/starting/index.html",
+      "app/dist/tag/index.html",
+      "app/dist/toolbox/audio_transcode/index.html",
+      "app/dist/toolbox/author_clean/index.html",
+      "app/dist/toolbox/author_norm/index.html",
+      "app/dist/toolbox/author_tools/index.html",
+      "app/dist/toolbox/book_dedup/index.html",
+      "app/dist/toolbox/bookbarn_acceptor/index.html",
+      "app/dist/toolbox/chinese_converter/index.html",
+      "app/dist/toolbox/epub_beautify/index.html",
+      "app/dist/toolbox/epub_fixer/index.html",
+      "app/dist/toolbox/epub_merge/index.html",
+      "app/dist/toolbox/epub_split/index.html",
+      "app/dist/toolbox/format_tools/index.html",
+      "app/dist/toolbox/formats_pruning/index.html",
+      "app/dist/toolbox/merge_formats_tool/index.html",
+      "app/dist/toolbox/mimo_tts/index.html",
+      "app/dist/toolbox/minify_pdf/index.html",
+      "app/dist/toolbox/rare_book_downloader/index.html",
+      "app/dist/toolbox/review_book_language/index.html",
+      "app/dist/toolbox/srt_tool/index.html",
+      "app/dist/toolbox/text_processor/index.html",
+      "app/dist/toolbox/text_replace/index.html",
+      "app/dist/toolbox/txt_encoding_fixer/index.html",
+      "app/dist/user/usersettings/index.html",
+      "app/dist/visits/index.html",
+      "app/dist/wants/index.html",
+      "app/dist/webdav-readme/index.html",
+      "app/dist/welcome/index.html"
+    ],
+    "appsrc": [
+      "app/locales/en.json",
+      "app/locales/zh-TW.json",
+      "app/locales/zh.json",
+      "app/src/pages/toolbox/srt_tool.vue"
+    ],
     "blocking": [
       ".env.example",
       "Dockerfile",
       "Makefile",
       "app/package-lock.json",
       "app/package.json",
-      "docker-compose.yml",
-      "srt-tool/build.py",
-      "srt-tool/make_srt.py",
-      "srt-tool/make_srt.spec",
-      "srt-tool/make_srt_gui.py",
-      "srt-tool/srt_align.py",
-      "srt-tool/srt_core.py",
-      "srt-tool/srt_tools.py",
-      "srt-tool/tests/test_srt_tool.py",
-      "srt-tool/tests/test_v13.py",
-      "webserver/toolbox/srt-tool/make_srt.spec"
+      "docker-compose.yml"
     ],
     "docs": [
       "CHANGELOG.md",
       "README.md",
       "scripts/check-version-lock.py",
-      "srt-tool/README.md",
-      "tests/test_version_lock.py",
-      "webserver/toolbox/srt-tool/README.md"
+      "tests/test_srt_transcribe_options.py",
+      "tests/test_version_lock.py"
     ],
     "ignored": []
   },
   "deploy_commands": [
     "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.7.0-build.07.tar.gz.sha256",
+    "sha256sum -c audiobook-deploy-4.7.0-build.08.tar.gz.sha256",
     "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
     "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.7.0-build.07.tar.gz",
+    "tar -xzf audiobook-deploy-4.7.0-build.08.tar.gz",
     "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }
