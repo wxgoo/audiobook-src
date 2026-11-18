@@ -17,6 +17,35 @@
 > 更早的变更记录（`4.6.0-build.21` 及以前、旧编号时代）已精简归档，
 > 完整历史见 git 提交记录（`git log`）。---
 
+## 4.7.0-build.07（2026-11-17，**SRT 识别内核升级 v1.3.0**，网页转写与 PC 版同源受益，须重建镜像）
+
+主题：附属工具 srt-tool 整包升级到 v1.3.0（借鉴 OneAsr 的「测时间/排版分离」流水线设计）。
+网页版「音频转写文稿」与 PC 版 make_srt_gui.exe 共用同一识别内核（srt_core.py），
+本版同步后两者同源受益。网页 API 未变，词级时间轴是内核默认行为，升级后自动生效。
+
+### 识别内核（srt_core.py，301 → 667 行）
+
+- **词/字级时间轴**（`word_timestamps=True` 默认开启）：识别结果以 timeline 缓存，
+  断行贴合朗读节奏；无词级时间时按字符均分，不崩。
+- **断行预设** short / standard / loose：按字数、句末标点、静音间隔、最大时长断行。
+- 幻觉剔除、字幕排版沿用 v1.1/v1.2 机制并随内核整体增强。
+
+### 新增配套（PC 版）
+
+- `srt_tools.py`：后期工具 CLI——`render` 不加载模型按 timeline 重出字幕
+  （改预设/美化不用重新识别）、`transcript inspect/split/beautify`、`status --json`。
+- `srt_align.py`：音视频 + 自己的文稿 → 字幕（whisper 词级时间 + SequenceMatcher 对齐）。
+- `--script original|simplified|traditional`（opencc 可选，未装原样返回）、
+  `--txt` / `--ass`（卡拉 OK 逐词扫光）、`--hotwords` 热词、`--events-json` 机器可读进度。
+- `make_srt_gui.py`、`make_srt.py`、`build.py`、README、测试同步升级。
+
+### 服务端兼容性
+
+- `srt_transcribe.py` 仅调用 `transcribe_audio` / `write_srt`，v1.3 两接口均为
+  旧参数严格超集、返回格式向后兼容，服务端代码零改动。
+- `srt_core` 仅依赖标准库（faster-whisper / opencc 均惰性导入），容器导入冒烟通过。
+- v1.3 自带 pytest 套件 58 passed + 1 skipped。
+
 ## 4.7.0-build.06（2026-11-17，**发版改号彻底一键化**，消除最后一处手工步骤，须重建镜像）
 
 主题：build.05 取消了 `-rN`，但 `--set` 仍有一处手工遗留——`CARRIERS` 把
