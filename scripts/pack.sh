@@ -609,8 +609,8 @@ DIST_FILES=$(grep -c "^${PFX}app/dist/" "$LIST.f" || true)
 [ "$DIST_FILES" = "771" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 771）"
 
 DIST_IDX=$(tar -xzOf "$OUT" "${PFX}app/dist/index.html" 2>/dev/null | sha256sum | cut -d' ' -f1)
-[ "$DIST_IDX" = "61d38406130bd5f25a70b2dbfe77a09415d778daa1ac28a81bfb180c3a1e3cca" ] \
-    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 61d38406…，r46 PWA 图标路径修正后的哈希）"
+[ "$DIST_IDX" = "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f" ] \
+    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 6ff1a64d…，build.08 网页转写排版选项重编后的哈希）"
 
 grep -qx "${PFX}app/dist/static/pdfjs/web/viewer.html" "$LIST" \
     || gate_bad "包内缺 app/dist/static/pdfjs/web/viewer.html"
