@@ -1,456 +1,1584 @@
 {
   "schema": 1,
-  "revision": "4.7.0-build.08",
-  "base_revision": "4.7.0-build.07",
+  "revision": "4.7.0-build.09",
+  "base_revision": "4.7.0-build.08",
   "version": "4.6.0-build.27",
-  "date": "2026-11-18",
-  "summary": "网页转写暴露 v1.3 排版选项：断行预设/简繁转换/ASS 输出/热词",
-  "notes": [],
+  "date": "2026-11-19",
+  "summary": "清理读者组文案+跟随上游4.7.0后续修复+移动端卡片列表",
+  "notes": [
+    "设置页删除读者组遗留文案，回归上游原生字段区结构",
+    "跟随上游修复：webp封面Pillow、作者名清理、扫描路径穿越安全修复、mynexus文案中文化",
+    "分类下拉升级为 BOOK_NAV 优先+数据库补充去重；移动端改用 AdminBookCard 卡片组件"
+  ],
   "requires_dist": true,
   "hotfixable": false,
   "dist_hotfixable": true,
   "dist_files": [
     {
       "path": "app/dist/200.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/ListBook/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/ListMeta/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
-      "path": "app/dist/_nuxt/07bb084.js",
-      "sha256": "119d5cbdc9e7d4d77e9f10872142d5c48f73f508922dea58c8e819d1742a9741",
-      "bytes": 9417
+      "path": "app/dist/_nuxt/01cd700.js",
+      "sha256": "cc1d85b8a1c7a9ccbb473f6768b2bcc9e829ee8d22b9e1fb13670587d64bc150",
+      "bytes": 8070
     },
     {
-      "path": "app/dist/_nuxt/27fabba.js",
-      "sha256": "772b250eb1dd04ac044a4e4cd2d34bdebff8d85df12565535d0f6e9e2a77e39b",
+      "path": "app/dist/_nuxt/03b079b.js",
+      "sha256": "13a072e65f90599e897ea1be9a55297d8fdd3e939f2a3c6947d7d03630ee9f83",
+      "bytes": 17780
+    },
+    {
+      "path": "app/dist/_nuxt/044e755.js",
+      "sha256": "80a0a7cffa2b5eed28d7797a9b1fb77ecc0f7aae547e5c36a006862390791007",
+      "bytes": 273317
+    },
+    {
+      "path": "app/dist/_nuxt/055a7c5.js",
+      "sha256": "d731f01aabbf8f869e613e65d0fceaa4cc04d49aac8ea747e1a5763d4b061fe7",
+      "bytes": 3248
+    },
+    {
+      "path": "app/dist/_nuxt/06b1f45.js",
+      "sha256": "f55c04e0dd62b474e32d6c05d63d01683b2f1834bca8c8cce6e75e0c2654ce5d",
+      "bytes": 987
+    },
+    {
+      "path": "app/dist/_nuxt/08cc86f.js",
+      "sha256": "5c82cbd0f735cf0e4a94d43adeabc236c015ea84a0e7a804230ef5a6743fe8a3",
+      "bytes": 21040
+    },
+    {
+      "path": "app/dist/_nuxt/0958379.js",
+      "sha256": "3d7a27e7c149a388e0c361658c01fbd73edc30dc8e309b16bc17bf0fe1b4df23",
+      "bytes": 11514
+    },
+    {
+      "path": "app/dist/_nuxt/0aa33e0.js",
+      "sha256": "d79197d317122e0ace410e629e895a736bbdfc14fc91d7bdea0929782ba3d09e",
+      "bytes": 5266
+    },
+    {
+      "path": "app/dist/_nuxt/0ce887a.js",
+      "sha256": "7bf554f3b278a8b69738eb204575b2ad1a8633854deb11a726b89bfeb67c2077",
+      "bytes": 7332
+    },
+    {
+      "path": "app/dist/_nuxt/0fdcdcf.js",
+      "sha256": "1c6cb3cc8e7a56ca0559e116148df44c945fec53e8f0634946ba984fd58ed140",
+      "bytes": 10607
+    },
+    {
+      "path": "app/dist/_nuxt/125e9f3.js",
+      "sha256": "764832aa3706d36646e320c0cf4b379f2645c8098c6be9764332c7259f5c2c86",
+      "bytes": 25617
+    },
+    {
+      "path": "app/dist/_nuxt/16c46bd.js",
+      "sha256": "9f39d9750fbe92c8b0478d132d25167e8ec6ce1ca215f7b02ae5d64a12428fe6",
+      "bytes": 607912
+    },
+    {
+      "path": "app/dist/_nuxt/16e3e78.js",
+      "sha256": "f1d2e030f0667dd32d138657bdcc16ea75f4c0b0a69b626ba584a22962fae6cf",
+      "bytes": 222
+    },
+    {
+      "path": "app/dist/_nuxt/1ef205d.js",
+      "sha256": "4c775691ded09147a4167f4727604f66e0de98ae486ca43f403f79f96dde12d4",
+      "bytes": 6590
+    },
+    {
+      "path": "app/dist/_nuxt/1fcbb9c.js",
+      "sha256": "2186c74972a86eff1c441fb3736643c45943239ec7ee96ff41b8fb7477a33c14",
+      "bytes": 23781
+    },
+    {
+      "path": "app/dist/_nuxt/2011770.js",
+      "sha256": "e7ad1c9958fa302aeb0ef66a954a0ecf6e94eeec3f6d32c805115d04f859513c",
+      "bytes": 222
+    },
+    {
+      "path": "app/dist/_nuxt/20fe2e0.js",
+      "sha256": "f80ab4e8e2ce09eb83ea07dedb3fc50e1a54fe90a9f62767086182ff884ffffc",
+      "bytes": 1494
+    },
+    {
+      "path": "app/dist/_nuxt/228c4f6.js",
+      "sha256": "ddd788499abc3c4123b864ff12484559acf0b290bfafbd1b73c263ef94470d5e",
+      "bytes": 18073
+    },
+    {
+      "path": "app/dist/_nuxt/23f2e22.js",
+      "sha256": "afb5fbec50fd5a801edddf03027192e9cc20034e639b9441aded8ce07b3b88ba",
+      "bytes": 2857
+    },
+    {
+      "path": "app/dist/_nuxt/254e8d2.js",
+      "sha256": "f13b8dda93fed5002147895aef03ab4801c0e0bffaefa2f85e64b79108c7ad05",
+      "bytes": 127603
+    },
+    {
+      "path": "app/dist/_nuxt/2788f89.js",
+      "sha256": "28c623700f3626ae11ff45efa4e37eb7b92237fbe5713cb569e6165817061304",
+      "bytes": 1164
+    },
+    {
+      "path": "app/dist/_nuxt/2928087.js",
+      "sha256": "d71d48f187b0ae55ee9d431bee3ff23bdde0c90af0b4127c7106467b123545bb",
+      "bytes": 858
+    },
+    {
+      "path": "app/dist/_nuxt/2bad5be.js",
+      "sha256": "a307dc1e66eec724c068511f116b5929be1b3554408f2365e47112a32dedfbbe",
+      "bytes": 25044
+    },
+    {
+      "path": "app/dist/_nuxt/2bc417a.js",
+      "sha256": "420ffe9b80eea3701798a3f011703201b03ba2c133b206d864c86c132ba558c7",
+      "bytes": 6374
+    },
+    {
+      "path": "app/dist/_nuxt/2c4518c.js",
+      "sha256": "70056995b1e7ec2947515faf44cc5c691d2dbc9dbf999c64fbe370180c525171",
+      "bytes": 224
+    },
+    {
+      "path": "app/dist/_nuxt/2c928a8.js",
+      "sha256": "6aacd0cbdffd394160ac61111c7f9679d5682f297f3b77fed3d4cde811c9836c",
+      "bytes": 7742
+    },
+    {
+      "path": "app/dist/_nuxt/2cd6402.js",
+      "sha256": "abbc015ef1c64cda1adf21aed3d7a4dac08946fc956acede3b348b8a9ad55945",
+      "bytes": 1962
+    },
+    {
+      "path": "app/dist/_nuxt/2ec312b.js",
+      "sha256": "1ad76388ef2ec58ea5ce6e6acf64da972c5eac1d64a4043d1337de55e49ce46b",
+      "bytes": 3362
+    },
+    {
+      "path": "app/dist/_nuxt/30818e3.js",
+      "sha256": "a2b39225c3a3b4487970098e97873c8c0ea569c954ada689d9484974f3b88601",
+      "bytes": 26906
+    },
+    {
+      "path": "app/dist/_nuxt/34dd4f7.js",
+      "sha256": "945dcab3c3e0af27b910de8225d15e8337df38f593c4322436ff820f32e67773",
+      "bytes": 40804
+    },
+    {
+      "path": "app/dist/_nuxt/34f7b5c.js",
+      "sha256": "7ed7f134b455585598c0dc092733ca333c1ebac6cdc57247b696c64487ad4695",
+      "bytes": 593
+    },
+    {
+      "path": "app/dist/_nuxt/3719595.js",
+      "sha256": "ffc02fe32015779107c537b87ed496d4103d95a4ebaf0f5326369f109745bb4f",
+      "bytes": 13676
+    },
+    {
+      "path": "app/dist/_nuxt/3a022ce.js",
+      "sha256": "9a05ce046ea52ead45bedb94ab82162e0e068f60ab3c7b41f27d4338c9d2d874",
+      "bytes": 2394
+    },
+    {
+      "path": "app/dist/_nuxt/3d7d8ba.js",
+      "sha256": "0a75ff69b476a049b3d5a6428640aa4122810f02f1f5643e81864dc71d52588d",
+      "bytes": 3200
+    },
+    {
+      "path": "app/dist/_nuxt/3ecd828.js",
+      "sha256": "9478ad9bc50a1c2da06579935069a6f3d2d45b19724cf902295bad68719c47ec",
+      "bytes": 16455
+    },
+    {
+      "path": "app/dist/_nuxt/4681903.js",
+      "sha256": "ef58084ffa3ead342c7daa3a819b586483698f4668e58aaed2168855f1498756",
+      "bytes": 3300
+    },
+    {
+      "path": "app/dist/_nuxt/4989895.js",
+      "sha256": "7f0465ab30cba890f6ea7ec46bf06e688fded8316137dae5f650e5b1b87309ba",
+      "bytes": 9450
+    },
+    {
+      "path": "app/dist/_nuxt/49caca2.js",
+      "sha256": "37730a052e363b96f95fc2997a105d233e11039d730669b29f08d820839e3f09",
+      "bytes": 223
+    },
+    {
+      "path": "app/dist/_nuxt/49fb0d1.js",
+      "sha256": "29aea6f6bee20de45f9ff65d89e6c484cf031f1ea60f2491d5bfcbd1476f84ee",
+      "bytes": 24657
+    },
+    {
+      "path": "app/dist/_nuxt/4b3ef49.js",
+      "sha256": "451ada8ed49ab0d55d8f29e3b1d1b586bc4e1c61550a968ed3e601f349aaa7d9",
+      "bytes": 2813
+    },
+    {
+      "path": "app/dist/_nuxt/4e88d66.js",
+      "sha256": "07c88d59663ada5f3bfe88bac804cf9418e4dcb22c408ec716b71128ee107f2a",
+      "bytes": 17780
+    },
+    {
+      "path": "app/dist/_nuxt/508a69c.js",
+      "sha256": "461b640bd707615823c67003991322de10fd3de32107c5a79f8e46c488664c14",
+      "bytes": 39464
+    },
+    {
+      "path": "app/dist/_nuxt/51503e6.js",
+      "sha256": "325aa518cb0a2164952add9c0df79b8dce998e484aa9b676a519e178c6826ae5",
+      "bytes": 16042
+    },
+    {
+      "path": "app/dist/_nuxt/53b8f9e.js",
+      "sha256": "12f6e3d45c9a111be27978b19e0b8e28bb73b52b596966603898efbb1679980a",
+      "bytes": 592
+    },
+    {
+      "path": "app/dist/_nuxt/55d6775.js",
+      "sha256": "f5d79ea6daaac27a2a73bab2312da7093032a18e7ee5e5731d23a89b5660a94f",
+      "bytes": 32439
+    },
+    {
+      "path": "app/dist/_nuxt/5747e31.js",
+      "sha256": "291a1267199d9d6ebfbdff37689c5dd8d6c7636a78eecb87fa1226c7c04e65ef",
+      "bytes": 28481
+    },
+    {
+      "path": "app/dist/_nuxt/57cf90c.js",
+      "sha256": "a80b1c131b5127414aba3b261b24a3abde44a2fbfbb50e69e6a2b97614cccda7",
+      "bytes": 2907
+    },
+    {
+      "path": "app/dist/_nuxt/5b75df3.js",
+      "sha256": "07ba22f843d56f46e530e4e3f67cb0b942f19da8a53e1c52f436dcdd2ce84bc4",
+      "bytes": 4604
+    },
+    {
+      "path": "app/dist/_nuxt/6208db5.js",
+      "sha256": "f62b27db7ad0e26faf49ae7c0ee1e24c44ef517681fc899a8a2c769f734112a2",
+      "bytes": 224
+    },
+    {
+      "path": "app/dist/_nuxt/636be78.js",
+      "sha256": "3de4f2e5b5b469a88eab24337a3887f453a159fb0f54d7242e29e381adebef3f",
+      "bytes": 3824
+    },
+    {
+      "path": "app/dist/_nuxt/66dc1f1.js",
+      "sha256": "e071d9a10c7e36f42b78eb395d61e3b12e3916bfacf327dbe35773041517d6f6",
+      "bytes": 222
+    },
+    {
+      "path": "app/dist/_nuxt/6851c00.js",
+      "sha256": "639bd46045293aaf515474c38d3b21867e2c7d096e917c395b4da62e044e49d9",
+      "bytes": 554
+    },
+    {
+      "path": "app/dist/_nuxt/69379ca.js",
+      "sha256": "907045e08b75068f6559517b1a6e36b0b5b79f56f5c4567c8b0c9bcb8cf2f9a5",
+      "bytes": 2649
+    },
+    {
+      "path": "app/dist/_nuxt/6e8cb4f.js",
+      "sha256": "1266b19a1437c614e284d73b2dde5855e187eb8226d54305a5be7e8dde4346a0",
+      "bytes": 23376
+    },
+    {
+      "path": "app/dist/_nuxt/700b1b0.js",
+      "sha256": "74e82302aa5d17cea1a4aa0b593afb700ec9426f023a3d986fd3e00914e740b7",
+      "bytes": 16260
+    },
+    {
+      "path": "app/dist/_nuxt/7ca0ebd.js",
+      "sha256": "4063d902b2083898bf3753927ffa48c23c413e1fece8f8a72f0c065b4a70d401",
+      "bytes": 2034
+    },
+    {
+      "path": "app/dist/_nuxt/7cf8ebe.js",
+      "sha256": "5cb865ab743ccf2b4b0e9f1925a59791d4a40f11f240480c1d3621ae1c3b66fa",
+      "bytes": 19804
+    },
+    {
+      "path": "app/dist/_nuxt/7d3a5a0.js",
+      "sha256": "c2cce897278fb62b240baa4d7ea33b2e97a72080e33a796b3c467ab13895dadc",
+      "bytes": 14427
+    },
+    {
+      "path": "app/dist/_nuxt/7e59698.js",
+      "sha256": "add2261871216f68a0661d1fe8da98478e6df8f1b62cbf2d319b0501e7af2595",
+      "bytes": 14058
+    },
+    {
+      "path": "app/dist/_nuxt/7fca348.js",
+      "sha256": "2f612d0559e927a664ea6de4e9ada27095779aa14fc1422a1a40227fd90f906f",
+      "bytes": 6505
+    },
+    {
+      "path": "app/dist/_nuxt/8073efd.js",
+      "sha256": "b56be9b57b775a55278e282db11a34065e68d7988513eba5a6c320ab9e3764b5",
+      "bytes": 32949
+    },
+    {
+      "path": "app/dist/_nuxt/8182a70.js",
+      "sha256": "120408a78a0138a60471bffe904157588912559404999623469e7e2703d9d105",
+      "bytes": 9465
+    },
+    {
+      "path": "app/dist/_nuxt/84ceb72.js",
+      "sha256": "43e672283a608687b13b895e72312125004ea697c761afa011175c783c01c933",
+      "bytes": 15886
+    },
+    {
+      "path": "app/dist/_nuxt/85f1b20.js",
+      "sha256": "0fd652d47e3fce741dc5632d4717dff19d65f4d75ebfec9f13fe6fcb50476591",
+      "bytes": 7781
+    },
+    {
+      "path": "app/dist/_nuxt/867c3d5.js",
+      "sha256": "30693b9dfae45642447a20b89d88cb3e97efaa0b6c95764da9ff187543814475",
+      "bytes": 20714
+    },
+    {
+      "path": "app/dist/_nuxt/8909e0a.js",
+      "sha256": "b19e74f2fbb6798b8572a7326a58bde94e1f983a4619d0c8d701a04820d224f8",
+      "bytes": 3979
+    },
+    {
+      "path": "app/dist/_nuxt/8aaa1dc.js",
+      "sha256": "dd096c9890c1952c264c7fa69fa12945818167208915d8788cc1721f0299e53d",
+      "bytes": 44795
+    },
+    {
+      "path": "app/dist/_nuxt/8b7c943.js",
+      "sha256": "45967aa2e20bc25970b3d50c687a7e25b65adeb65534869482b56e95bf72619e",
+      "bytes": 2918
+    },
+    {
+      "path": "app/dist/_nuxt/8bc2317.js",
+      "sha256": "271fdc2117637b76ffc9d75d8d5eeb04b8311820a2fc9b0979d0628d8be1fe8c",
+      "bytes": 38467
+    },
+    {
+      "path": "app/dist/_nuxt/8dc74a8.js",
+      "sha256": "0c2c953c8ba2d9455e097d757e5eac5aa95e4329285b835c3a2372501612df9c",
+      "bytes": 96
+    },
+    {
+      "path": "app/dist/_nuxt/8ffabb9.js",
+      "sha256": "d75bdb9c6053a51e9191e8866151b0463626094e3a903e64a44f7de280230524",
+      "bytes": 9655
+    },
+    {
+      "path": "app/dist/_nuxt/91b1da9.js",
+      "sha256": "bc6f051e06932edcac4ceb350a9c3e82e3daba2c262eca02ce081bd155659c14",
+      "bytes": 12529
+    },
+    {
+      "path": "app/dist/_nuxt/9298b70.js",
+      "sha256": "3a3c4b3bc646de092676ff3f200752ea0805a4b05deab3b66a24733f4ab3d777",
+      "bytes": 4786
+    },
+    {
+      "path": "app/dist/_nuxt/951ae4e.js",
+      "sha256": "91e610ea0634591f620010a6bed1ac6c5fa39bb5bf1ab3cac53c80d2a9a23ffb",
+      "bytes": 590
+    },
+    {
+      "path": "app/dist/_nuxt/95acdca.js",
+      "sha256": "0a231f045f2f53f4acedbb8d0016db9c8872ea41338da2145c68d25f8c8b84e2",
+      "bytes": 186321
+    },
+    {
+      "path": "app/dist/_nuxt/9614e6d.js",
+      "sha256": "dda98c1dc61df3338c280e8641b958d021964c2bd74d6022248ac9bb873fe486",
+      "bytes": 9767
+    },
+    {
+      "path": "app/dist/_nuxt/9652c55.js",
+      "sha256": "63c0feb57848431cc321e8f8fd21ad334e6fa998673584717af8ae2c90b41e0a",
+      "bytes": 27658
+    },
+    {
+      "path": "app/dist/_nuxt/968053e.js",
+      "sha256": "7f2aa89a5d764ab8f61c2abeb48bc7dcbe66ad20cc49829e73489faff9cb5f54",
+      "bytes": 6385
+    },
+    {
+      "path": "app/dist/_nuxt/9a99c57.js",
+      "sha256": "24b21d3bf1768ad587b489c85d8f0160120ba90f5a01df872d0392933190ffa3",
+      "bytes": 69684
+    },
+    {
+      "path": "app/dist/_nuxt/9aa796c.js",
+      "sha256": "1dc057a93f8de43cb6cc203a443813cf1042741f7981c26f4170b7def20612e9",
+      "bytes": 34882
+    },
+    {
+      "path": "app/dist/_nuxt/9c81c16.js",
+      "sha256": "a38ccc5941e88689af11eac081f457c4fbcfd9e4c96ba5dbdea90d4326a7f21b",
+      "bytes": 4731
+    },
+    {
+      "path": "app/dist/_nuxt/9cef4d6.js",
+      "sha256": "fd39ff73d69ad93f78b076f8cc7f22b2cf975856de15c97e2e4d3608e60731e1",
+      "bytes": 73347
+    },
+    {
+      "path": "app/dist/_nuxt/9de8e39.js",
+      "sha256": "62f2dfc46f035e554acb2907ba980e86fb0e6340f44f757bec0e1df1096d8277",
+      "bytes": 7881
+    },
+    {
+      "path": "app/dist/_nuxt/9e5eec0.js",
+      "sha256": "786c2bcf98e10ab40df056bc8937bdb64412f0ba1bb96379e6095755e3c19a58",
+      "bytes": 4745
+    },
+    {
+      "path": "app/dist/_nuxt/a042919.js",
+      "sha256": "33c1efce6a3dbfce241e457a0fc903a996dc30cbe68988d579d3545a6210f5c8",
+      "bytes": 590
+    },
+    {
+      "path": "app/dist/_nuxt/a0e6d0f.js",
+      "sha256": "d86fd698c8819468423ba6015dbcb946fec25a1a8d04d34a08d0f9a2f561bddb",
+      "bytes": 2683
+    },
+    {
+      "path": "app/dist/_nuxt/a2979dc.js",
+      "sha256": "0a21bd6a90ab08745a220156c3d44497b2cac7cfee34090add3c73d146e29621",
+      "bytes": 3714
+    },
+    {
+      "path": "app/dist/_nuxt/a6e70ac.js",
+      "sha256": "dcb075b860ca87ab8ec01ef1b909c713569d112f788b4c7a032eba7417024d0b",
+      "bytes": 1840
+    },
+    {
+      "path": "app/dist/_nuxt/abfcb2c.js",
+      "sha256": "efd658e99bb4ebb851a19a79102c7f4b9242716857984b3e8d0d9374dddc4585",
+      "bytes": 15416
+    },
+    {
+      "path": "app/dist/_nuxt/acf4c70.js",
+      "sha256": "e98f21f24bc54161ce20fd70d134213f359336fbda7f7cd86fb031112897f1aa",
+      "bytes": 4525
+    },
+    {
+      "path": "app/dist/_nuxt/aebd8b7.js",
+      "sha256": "488b7ed8f48732845c36f0ac3e3a98a1370c359075b7e71bbd7ca0e6a05f763b",
+      "bytes": 590
+    },
+    {
+      "path": "app/dist/_nuxt/afa1e4d.js",
+      "sha256": "9f7eb8e26ff0622d8e5dfffa623d052d2688d856c2dfd4368aa31fb1c04ef001",
+      "bytes": 30856
+    },
+    {
+      "path": "app/dist/_nuxt/b02a9d0.js",
+      "sha256": "ece2cf87644e1be1d07f15f90e843d03d9a94cd30b33a1e40e0dca9a6d00651f",
+      "bytes": 13126
+    },
+    {
+      "path": "app/dist/_nuxt/b48f719.js",
+      "sha256": "2304dca8f044c1ed9b3e0394d4467b3073c93eb06f17f1e53e7791827be96a7e",
+      "bytes": 66360
+    },
+    {
+      "path": "app/dist/_nuxt/b60d011.js",
+      "sha256": "e90f4898c424df8c193e24f8a9b568b3008af31a6bdd32469ab56ab612c8d27e",
+      "bytes": 298473
+    },
+    {
+      "path": "app/dist/_nuxt/b729da9.js",
+      "sha256": "39cfa0b6ec0fc9292c440774849efb89d81b512222fa3ed4551999d5e79dee1f",
+      "bytes": 27374
+    },
+    {
+      "path": "app/dist/_nuxt/bdb7845.js",
+      "sha256": "d02a75450bbe1bb9251dd690453a05756d0a004eb9a306a0c7ebc2ad847ff0a9",
+      "bytes": 55706
+    },
+    {
+      "path": "app/dist/_nuxt/be3dfaf.js",
+      "sha256": "e958fa94b08bbb6a8f8f99f10b5d4ab0fe5e83459c67422c0952ff35e41b5511",
       "bytes": 11367
     },
     {
-      "path": "app/dist/_nuxt/694f3df.js",
-      "sha256": "6e5082d88de67e0f95fb9df9825dbdf7c3e04119be5feb03435035e610ce2186",
-      "bytes": 128713
+      "path": "app/dist/_nuxt/bfc3336.js",
+      "sha256": "01f0e256311e1c92a6429ae8abcb8d250b3cbd09e10a624c2ab24d7a4832d33d",
+      "bytes": 28215
     },
     {
-      "path": "app/dist/_nuxt/95d0d73.js",
-      "sha256": "11beae17621d346600125c015b40f2df4e2efeb945b38535ad8db59b745d1069",
-      "bytes": 130427
+      "path": "app/dist/_nuxt/bfe57f4.js",
+      "sha256": "84a6d6f5f65bdad9cbabaaca294839fe53d0e1812a414e0f139863c33b39aadf",
+      "bytes": 13200
     },
     {
-      "path": "app/dist/_nuxt/9b0eb0f.js",
-      "sha256": "3c35cef703cf3985ede3df5b1ddbc704d5bbe8364bed2ed134872486c3e49dd5",
-      "bytes": 133416
+      "path": "app/dist/_nuxt/c43b9bc.js",
+      "sha256": "80ff1cb0754fa280ed31f4de4b9bc38556c5ab42575bca421bf6be3644329bc2",
+      "bytes": 8212
+    },
+    {
+      "path": "app/dist/_nuxt/c643288.js",
+      "sha256": "4500b013f861258829361bcea92ad168707a7897ecd5eb773a887bf161e29837",
+      "bytes": 1063
+    },
+    {
+      "path": "app/dist/_nuxt/c81917d.js",
+      "sha256": "a39ea8645e080c214248fb13a942a42c9be453957c2f0fbc507f303183201ad8",
+      "bytes": 12777
+    },
+    {
+      "path": "app/dist/_nuxt/c9395ba.js",
+      "sha256": "f1a16da1fc9db80e6369b1d69aa61d956fe9d90d39379cd7d9d36a1ad7fdde05",
+      "bytes": 13830
+    },
+    {
+      "path": "app/dist/_nuxt/c93d3e1.js",
+      "sha256": "996f15debf53a9c914ee3a94f35de09b8bbdbca5c46684005d0eb5b41e07ff0d",
+      "bytes": 4462
+    },
+    {
+      "path": "app/dist/_nuxt/c9547af.js",
+      "sha256": "32367ae0ddc92eb1b0a5bd6d7af247258e16bedbb5a593a6cee1f6f07c533679",
+      "bytes": 5196
+    },
+    {
+      "path": "app/dist/_nuxt/c9a7e34.js",
+      "sha256": "e2da38507cd29b9be74645cd414ba94937a8192c6c2aca3ce1006f8f46c78c6f",
+      "bytes": 20298
+    },
+    {
+      "path": "app/dist/_nuxt/ca0e3f6.js",
+      "sha256": "367604d33d12a345ff2a2bd45a881e0d11f82b9c8dfb574eceae1385a4c3e257",
+      "bytes": 2813
+    },
+    {
+      "path": "app/dist/_nuxt/ca191a2.js",
+      "sha256": "f5fc0fe9b93213eb8a8036b66a15cf97165d5f89daf36e205e48aa6ec835c036",
+      "bytes": 20206
+    },
+    {
+      "path": "app/dist/_nuxt/ca1ea61.js",
+      "sha256": "4fe03fe114f0525edbd2c86ab38d8e323781c94a325720926053396c572166bd",
+      "bytes": 33467
+    },
+    {
+      "path": "app/dist/_nuxt/ca9738d.js",
+      "sha256": "d210d42bde88be92035f9f9a5c92ef5ba64e080f29d905281efae6bf9896bd80",
+      "bytes": 16712
+    },
+    {
+      "path": "app/dist/_nuxt/cbb9cec.js",
+      "sha256": "4c78cdc0a540d0de33c8d9bc25f326ce6aed50ace8e36b775a956191d6b9093d",
+      "bytes": 203020
+    },
+    {
+      "path": "app/dist/_nuxt/cbe3eab.js",
+      "sha256": "78a05f0311a8354444ca4eab61a83e1150c5fee26e2604d90f46fcd6e45f2315",
+      "bytes": 5721
+    },
+    {
+      "path": "app/dist/_nuxt/cc2c006.js",
+      "sha256": "5b2d23e35fa4073f48e825c1ac7af2f1777bde9d431d11977aa74d7955ccc6ca",
+      "bytes": 7043
+    },
+    {
+      "path": "app/dist/_nuxt/ccc15f5.js",
+      "sha256": "6cf2b2646b4a974fa0eab2ad1fd913b20771dbce535b593e2b5c3a48cd2135f3",
+      "bytes": 132095
+    },
+    {
+      "path": "app/dist/_nuxt/ccdb8b6.js",
+      "sha256": "6f5b7a43f37fc960d258601fb16ea5e90313802a0e4f8fcf8a39bccdc29ce30b",
+      "bytes": 9842
+    },
+    {
+      "path": "app/dist/_nuxt/ce9b8ef.js",
+      "sha256": "40faac73d04af44c0a3d660eb801894bbdc1d1c7fab838b4579da6f0d136c825",
+      "bytes": 45967
+    },
+    {
+      "path": "app/dist/_nuxt/cfb54b9.js",
+      "sha256": "67a0a8dbdaa7ff396bff36fbb5fcb2b48d9d45441abf0e586c6c31deb6084600",
+      "bytes": 4729
+    },
+    {
+      "path": "app/dist/_nuxt/css/e5521da.css",
+      "sha256": "9240e57148f94a68aa4a838c0b9c998faced8b8c89d17deebb3d9b517ff3cd9e",
+      "bytes": 1104
+    },
+    {
+      "path": "app/dist/_nuxt/css/e6f36cb.css",
+      "sha256": "a53299a7572268f48f6163cf45b8d9976bc3e801259812a87751fed095c955d2",
+      "bytes": 3988
+    },
+    {
+      "path": "app/dist/_nuxt/css/f6c5795.css",
+      "sha256": "b2291ece23dcd882d42fe2720a09db887ee45f0a591106e6ac24ff453213b726",
+      "bytes": 37819
+    },
+    {
+      "path": "app/dist/_nuxt/d16b9cf.js",
+      "sha256": "f3124de16d40de2776713c0262700abeff8abef8c0dda96afeaaf51545748d99",
+      "bytes": 20548
+    },
+    {
+      "path": "app/dist/_nuxt/d2c5c88.js",
+      "sha256": "29d7696012b4acff0979208cf40bfa5c700dc58ec0ee300f5d27bce01d118838",
+      "bytes": 28645
+    },
+    {
+      "path": "app/dist/_nuxt/d6567e8.js",
+      "sha256": "8f75ed1e166a9474072eb8abf18cf509c8fd581de1509a319d54cec45cbc5122",
+      "bytes": 6724
+    },
+    {
+      "path": "app/dist/_nuxt/d76ef58.js",
+      "sha256": "c791e19399d44a9fb8bf4fb94e32281e09d2304024183ded7f154d657f261754",
+      "bytes": 10645
+    },
+    {
+      "path": "app/dist/_nuxt/d95a43b.js",
+      "sha256": "c9af0bb110efe0900d0c540814ad712757b0e537909be60a5d6ea25f0845003c",
+      "bytes": 13938
+    },
+    {
+      "path": "app/dist/_nuxt/d97eca6.js",
+      "sha256": "4d6d79393ead3ac2804eecadfa719a510d2023703043935b136f54ffaee66dd9",
+      "bytes": 129311
+    },
+    {
+      "path": "app/dist/_nuxt/dbd3477.js",
+      "sha256": "f5851538fcc68cd553ecb1d2d6bde3144c1970d6761e793276c9474ab8da7ed1",
+      "bytes": 197302
+    },
+    {
+      "path": "app/dist/_nuxt/e50e516.js",
+      "sha256": "315e76898dbbe970b1983d81d8e8b601c5423813764ab7d354117576eb98e67d",
+      "bytes": 224
+    },
+    {
+      "path": "app/dist/_nuxt/e847ff6.js",
+      "sha256": "e04dcfc6f09c397eb76bc3441d83fb91331f18f2a18c24299dee804a2c7b1087",
+      "bytes": 6511
+    },
+    {
+      "path": "app/dist/_nuxt/e9d02af.js",
+      "sha256": "73911d553b7f480add2ee17c328f4b22c2deb6cf411d71ed901cf7cb09593a78",
+      "bytes": 71416
+    },
+    {
+      "path": "app/dist/_nuxt/eb27bd1.js",
+      "sha256": "173a14ac197ccd748a6f7192953aa5466de29599f2a161e87490c1f4a5af4b69",
+      "bytes": 7827
+    },
+    {
+      "path": "app/dist/_nuxt/ec1c612.js",
+      "sha256": "47c985c4f1d46ffd5add87a81002c0fc582b20904c751aa9056bcea51aa46152",
+      "bytes": 5352
+    },
+    {
+      "path": "app/dist/_nuxt/f1b1080.js",
+      "sha256": "fb60442caaeffd4e31aaf852695c90f03abb2edd40ab9b51fee5f4eb07cc26ea",
+      "bytes": 6239
+    },
+    {
+      "path": "app/dist/_nuxt/f3fc651.js",
+      "sha256": "d6d0d0ad799eb63ef85d0068d4e0504bb390c528e3ef0bfe4338ddd947d000df",
+      "bytes": 3963
+    },
+    {
+      "path": "app/dist/_nuxt/f61ab66.js",
+      "sha256": "fc529efdc3ed6ccbd93cbe63d6b56ec30a39690d5d38581a177e37f1655bb17c",
+      "bytes": 222
+    },
+    {
+      "path": "app/dist/_nuxt/f7a4f06.js",
+      "sha256": "580f7b12c3af6de1287184cc0f41adcc5d97a9d4338f7dae48accd8432259f12",
+      "bytes": 21891
+    },
+    {
+      "path": "app/dist/_nuxt/f88c5a3.js",
+      "sha256": "dfd93b00953fafbf9f25b9d711dcafc3b3240de6ed6ae0c21e2f42affa2be0f2",
+      "bytes": 2813
+    },
+    {
+      "path": "app/dist/_nuxt/f8c5e18.js",
+      "sha256": "ea1857fbd6432e237655267fecc1c3c20fda2c4ad7a3005e99ee2675f7c75b83",
+      "bytes": 11541
+    },
+    {
+      "path": "app/dist/_nuxt/f901f81.js",
+      "sha256": "2ad7a5863d7c5c3f02572429a8eccd77ede2f0b6426abb2158c6bffba4cec1bc",
+      "bytes": 7759
+    },
+    {
+      "path": "app/dist/_nuxt/fc0d1bc.js",
+      "sha256": "5cd0ddc1cb4a92f96e3b95883a94aaa25b8d1b533d3a8436d86ad8b2a5b0ba77",
+      "bytes": 7543
+    },
+    {
+      "path": "app/dist/_nuxt/fd5af8c.js",
+      "sha256": "31f89774bb75264a405a37481dc300853d59f1bfe50980b6931e44014786b305",
+      "bytes": 33228
+    },
+    {
+      "path": "app/dist/_nuxt/fdd9724.js",
+      "sha256": "ab0ad864a62ad15609005b7b7517f7661a857cedd464508b7c5a71c93186ea4f",
+      "bytes": 223
+    },
+    {
+      "path": "app/dist/_nuxt/fe802fa.js",
+      "sha256": "ce12ec3f7ede23dd77fa72c7ff49ae75dee664c0767af4caba17199efb43f640",
+      "bytes": 11490
+    },
+    {
+      "path": "app/dist/_nuxt/fff4fbb.js",
+      "sha256": "0c09b19856a4c4b8f24829c4b25086fb4decff7c825229c0426cc11f44a8fe37",
+      "bytes": 20420
+    },
+    {
+      "path": "app/dist/_nuxt/fonts/materialdesignicons-subset.491aec0.woff2",
+      "sha256": "0273963e0993c8b012f4ce80fc7a44e9daa1592ab53c9c9e060fd0aa2a5536a1",
+      "bytes": 19332
     },
     {
       "path": "app/dist/active/success/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/all-expected/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/book-reviews/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/books/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/imports/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/resources/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/settings/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/shares/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/syslog/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/takedowns/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/toolbox/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/trash/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/user-memos/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/users/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/admin/version/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/all/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/audiobooks/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/author/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/booklists/liked/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/booklists/mylists/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/booklists/publics/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/categories/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/expected/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/favorites/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/folder/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/history/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/install/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/language/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/login/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/logout/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/memos/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/opds-readme/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/printbooks/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/publisher/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/rating/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/read-done/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/reading/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/search/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/series/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/signup/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/soledbooks/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/starting/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/tag/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/audio_transcode/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/author_clean/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/author_norm/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/author_tools/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/book_dedup/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/bookbarn_acceptor/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/chinese_converter/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/epub_beautify/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/epub_fixer/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/epub_merge/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/epub_split/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/format_tools/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/formats_pruning/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/merge_formats_tool/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/mimo_tts/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/minify_pdf/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/rare_book_downloader/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/review_book_language/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/srt_tool/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/text_processor/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/text_replace/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/toolbox/txt_encoding_fixer/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/user/usersettings/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/visits/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/wants/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/webdav-readme/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     },
     {
       "path": "app/dist/welcome/index.html",
-      "sha256": "6ff1a64def15fbb9565cd676f4f6c2c5c2f7f945b4bb6a7bdd81c94c9ce90f9f",
+      "sha256": "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528",
       "bytes": 5088
     }
   ],
   "dist_deleted": [
-    "app/dist/_nuxt/0d13e89.js",
-    "app/dist/_nuxt/57cac27.js",
-    "app/dist/_nuxt/5ca35b0.js",
-    "app/dist/_nuxt/7ef9256.js",
-    "app/dist/_nuxt/a0d5089.js"
+    "app/dist/_nuxt/019da54.js",
+    "app/dist/_nuxt/02ddce4.js",
+    "app/dist/_nuxt/042c6ab.js",
+    "app/dist/_nuxt/04efa06.js",
+    "app/dist/_nuxt/05cdc66.js",
+    "app/dist/_nuxt/07bb084.js",
+    "app/dist/_nuxt/0972963.js",
+    "app/dist/_nuxt/0983896.js",
+    "app/dist/_nuxt/0eac67a.js",
+    "app/dist/_nuxt/0ec1184.js",
+    "app/dist/_nuxt/129073c.js",
+    "app/dist/_nuxt/12949a9.js",
+    "app/dist/_nuxt/158d41e.js",
+    "app/dist/_nuxt/161f5f3.js",
+    "app/dist/_nuxt/179049c.js",
+    "app/dist/_nuxt/199b993.js",
+    "app/dist/_nuxt/1c89d2b.js",
+    "app/dist/_nuxt/1e25a7e.js",
+    "app/dist/_nuxt/1e29605.js",
+    "app/dist/_nuxt/1fad242.js",
+    "app/dist/_nuxt/2179b12.js",
+    "app/dist/_nuxt/21c8ec5.js",
+    "app/dist/_nuxt/233f561.js",
+    "app/dist/_nuxt/2349828.js",
+    "app/dist/_nuxt/2399391.js",
+    "app/dist/_nuxt/24a6ec5.js",
+    "app/dist/_nuxt/255644d.js",
+    "app/dist/_nuxt/25dd428.js",
+    "app/dist/_nuxt/26aab52.js",
+    "app/dist/_nuxt/2797c80.js",
+    "app/dist/_nuxt/27fabba.js",
+    "app/dist/_nuxt/29565b2.js",
+    "app/dist/_nuxt/2ab11b9.js",
+    "app/dist/_nuxt/2bac2ad.js",
+    "app/dist/_nuxt/2c36488.js",
+    "app/dist/_nuxt/2dfd446.js",
+    "app/dist/_nuxt/2e24d3f.js",
+    "app/dist/_nuxt/2e932d2.js",
+    "app/dist/_nuxt/2ece7a2.js",
+    "app/dist/_nuxt/32f4aee.js",
+    "app/dist/_nuxt/36bee55.js",
+    "app/dist/_nuxt/38f0d93.js",
+    "app/dist/_nuxt/3c5afa6.js",
+    "app/dist/_nuxt/40aa847.js",
+    "app/dist/_nuxt/44c96b8.js",
+    "app/dist/_nuxt/4768bcb.js",
+    "app/dist/_nuxt/4921591.js",
+    "app/dist/_nuxt/49b9739.js",
+    "app/dist/_nuxt/4b170ac.js",
+    "app/dist/_nuxt/4df558f.js",
+    "app/dist/_nuxt/4e49449.js",
+    "app/dist/_nuxt/4fb88cb.js",
+    "app/dist/_nuxt/51bba1b.js",
+    "app/dist/_nuxt/51df90c.js",
+    "app/dist/_nuxt/55654e2.js",
+    "app/dist/_nuxt/5681608.js",
+    "app/dist/_nuxt/5702d8b.js",
+    "app/dist/_nuxt/5943a62.js",
+    "app/dist/_nuxt/5caf4d8.js",
+    "app/dist/_nuxt/5cc8220.js",
+    "app/dist/_nuxt/5da3b38.js",
+    "app/dist/_nuxt/5dcdf3f.js",
+    "app/dist/_nuxt/62994df.js",
+    "app/dist/_nuxt/64987e6.js",
+    "app/dist/_nuxt/6565770.js",
+    "app/dist/_nuxt/6649c11.js",
+    "app/dist/_nuxt/6705482.js",
+    "app/dist/_nuxt/6847538.js",
+    "app/dist/_nuxt/68a6cf3.js",
+    "app/dist/_nuxt/694f3df.js",
+    "app/dist/_nuxt/69d90ae.js",
+    "app/dist/_nuxt/6b336bd.js",
+    "app/dist/_nuxt/6dcef0a.js",
+    "app/dist/_nuxt/70e95a1.js",
+    "app/dist/_nuxt/727b430.js",
+    "app/dist/_nuxt/729aff9.js",
+    "app/dist/_nuxt/74f7c95.js",
+    "app/dist/_nuxt/78df168.js",
+    "app/dist/_nuxt/7e5f95a.js",
+    "app/dist/_nuxt/7ee766c.js",
+    "app/dist/_nuxt/8002706.js",
+    "app/dist/_nuxt/80367ec.js",
+    "app/dist/_nuxt/82af2c3.js",
+    "app/dist/_nuxt/84a787a.js",
+    "app/dist/_nuxt/877f1f8.js",
+    "app/dist/_nuxt/888727d.js",
+    "app/dist/_nuxt/89c7c6d.js",
+    "app/dist/_nuxt/8a92f01.js",
+    "app/dist/_nuxt/8de3b45.js",
+    "app/dist/_nuxt/908b281.js",
+    "app/dist/_nuxt/91f68e0.js",
+    "app/dist/_nuxt/935e873.js",
+    "app/dist/_nuxt/95bc3e9.js",
+    "app/dist/_nuxt/95d0d73.js",
+    "app/dist/_nuxt/95f4e52.js",
+    "app/dist/_nuxt/99a72bb.js",
+    "app/dist/_nuxt/9a88023.js",
+    "app/dist/_nuxt/9a8b8c0.js",
+    "app/dist/_nuxt/9b0eb0f.js",
+    "app/dist/_nuxt/9bab76e.js",
+    "app/dist/_nuxt/9edd992.js",
+    "app/dist/_nuxt/a19729c.js",
+    "app/dist/_nuxt/a448475.js",
+    "app/dist/_nuxt/a81ad3f.js",
+    "app/dist/_nuxt/aa81e53.js",
+    "app/dist/_nuxt/ad2ec4a.js",
+    "app/dist/_nuxt/b0ff65e.js",
+    "app/dist/_nuxt/b1a5fa7.js",
+    "app/dist/_nuxt/b454095.js",
+    "app/dist/_nuxt/b5f69e0.js",
+    "app/dist/_nuxt/b752fb9.js",
+    "app/dist/_nuxt/b8eed25.js",
+    "app/dist/_nuxt/b8f279d.js",
+    "app/dist/_nuxt/bbdd481.js",
+    "app/dist/_nuxt/bc40b77.js",
+    "app/dist/_nuxt/bd6378d.js",
+    "app/dist/_nuxt/c045b82.js",
+    "app/dist/_nuxt/c0b6130.js",
+    "app/dist/_nuxt/c0b8daa.js",
+    "app/dist/_nuxt/c2d4469.js",
+    "app/dist/_nuxt/c330e8d.js",
+    "app/dist/_nuxt/c35527c.js",
+    "app/dist/_nuxt/c460ceb.js",
+    "app/dist/_nuxt/c6c84c0.js",
+    "app/dist/_nuxt/css/71b27f7.css",
+    "app/dist/_nuxt/css/fb26f8b.css",
+    "app/dist/_nuxt/d08aa99.js",
+    "app/dist/_nuxt/d36cb90.js",
+    "app/dist/_nuxt/d7db2b7.js",
+    "app/dist/_nuxt/d7f982b.js",
+    "app/dist/_nuxt/ddbc178.js",
+    "app/dist/_nuxt/e1ed056.js",
+    "app/dist/_nuxt/e28e131.js",
+    "app/dist/_nuxt/e2c1a3a.js",
+    "app/dist/_nuxt/eb3dd7e.js",
+    "app/dist/_nuxt/eeaaa48.js",
+    "app/dist/_nuxt/ef893fe.js",
+    "app/dist/_nuxt/f136f80.js",
+    "app/dist/_nuxt/f36e1bf.js",
+    "app/dist/_nuxt/f4ae92d.js",
+    "app/dist/_nuxt/f962c6d.js",
+    "app/dist/_nuxt/fa3e8a3.js",
+    "app/dist/_nuxt/fc6d924.js",
+    "app/dist/_nuxt/fonts/materialdesignicons-subset.8f70705.woff2"
   ],
   "reason": "本次改动包含镜像级文件（Dockerfile / conf / 依赖 / 工具链 / 删除的前端文件），在线替换无法生效，请把 .env 的 IMAGE_TAG 换成新 tag 后重新 docker compose up -d",
   "files": [
     {
-      "path": "webserver/handlers/toolbox.py",
-      "sha256": "b491d732918ac00824005ed5494b89e92cc1da9ae4ef0e86a545e490235245d3",
-      "bytes": 88073
+      "path": "webserver/handlers/book.py",
+      "sha256": "f368f5783ac10935a28bc891ddef06e01b75ba0c500a02318c78a6e2a589768d",
+      "bytes": 248288
     },
     {
-      "path": "webserver/services/srt_transcribe.py",
-      "sha256": "fabb75437da75ad9fd7a869c4b08a8028ba7c046f2af8f782aa8c8c4ca3f2d10",
-      "bytes": 12463
+      "path": "webserver/handlers/mynexus.py",
+      "sha256": "1aa95887a73885fbc04dc8633c27fc1ca0a51c17749f6dac6df1359f04175e19",
+      "bytes": 26376
     },
     {
       "path": "webserver/version.py",
-      "sha256": "6b40de1168a7b7d6d8f296671c44b4f7ab5750d5b8cec17cbf66b5af5cd081cc",
+      "sha256": "57daaae32a03e848f6b1aa178045e9a02e1f812d8204b6e2c98d7d1e487e7627",
       "bytes": 655
     }
   ],
   "changed": {
     "hotfix": [
-      "webserver/handlers/toolbox.py",
-      "webserver/services/srt_transcribe.py",
+      "webserver/handlers/book.py",
+      "webserver/handlers/mynexus.py",
       "webserver/version.py"
     ],
     "dist": [
       "app/dist/200.html",
       "app/dist/ListBook/index.html",
       "app/dist/ListMeta/index.html",
+      "app/dist/_nuxt/019da54.js",
+      "app/dist/_nuxt/01cd700.js",
+      "app/dist/_nuxt/02ddce4.js",
+      "app/dist/_nuxt/03b079b.js",
+      "app/dist/_nuxt/042c6ab.js",
+      "app/dist/_nuxt/044e755.js",
+      "app/dist/_nuxt/04efa06.js",
+      "app/dist/_nuxt/055a7c5.js",
+      "app/dist/_nuxt/05cdc66.js",
+      "app/dist/_nuxt/06b1f45.js",
       "app/dist/_nuxt/07bb084.js",
-      "app/dist/_nuxt/0d13e89.js",
+      "app/dist/_nuxt/08cc86f.js",
+      "app/dist/_nuxt/0958379.js",
+      "app/dist/_nuxt/0972963.js",
+      "app/dist/_nuxt/0983896.js",
+      "app/dist/_nuxt/0aa33e0.js",
+      "app/dist/_nuxt/0ce887a.js",
+      "app/dist/_nuxt/0eac67a.js",
+      "app/dist/_nuxt/0ec1184.js",
+      "app/dist/_nuxt/0fdcdcf.js",
+      "app/dist/_nuxt/125e9f3.js",
+      "app/dist/_nuxt/129073c.js",
+      "app/dist/_nuxt/12949a9.js",
+      "app/dist/_nuxt/158d41e.js",
+      "app/dist/_nuxt/161f5f3.js",
+      "app/dist/_nuxt/16c46bd.js",
+      "app/dist/_nuxt/16e3e78.js",
+      "app/dist/_nuxt/179049c.js",
+      "app/dist/_nuxt/199b993.js",
+      "app/dist/_nuxt/1c89d2b.js",
+      "app/dist/_nuxt/1e25a7e.js",
+      "app/dist/_nuxt/1e29605.js",
+      "app/dist/_nuxt/1ef205d.js",
+      "app/dist/_nuxt/1fad242.js",
+      "app/dist/_nuxt/1fcbb9c.js",
+      "app/dist/_nuxt/2011770.js",
+      "app/dist/_nuxt/20fe2e0.js",
+      "app/dist/_nuxt/2179b12.js",
+      "app/dist/_nuxt/21c8ec5.js",
+      "app/dist/_nuxt/228c4f6.js",
+      "app/dist/_nuxt/233f561.js",
+      "app/dist/_nuxt/2349828.js",
+      "app/dist/_nuxt/2399391.js",
+      "app/dist/_nuxt/23f2e22.js",
+      "app/dist/_nuxt/24a6ec5.js",
+      "app/dist/_nuxt/254e8d2.js",
+      "app/dist/_nuxt/255644d.js",
+      "app/dist/_nuxt/25dd428.js",
+      "app/dist/_nuxt/26aab52.js",
+      "app/dist/_nuxt/2788f89.js",
+      "app/dist/_nuxt/2797c80.js",
       "app/dist/_nuxt/27fabba.js",
-      "app/dist/_nuxt/57cac27.js",
-      "app/dist/_nuxt/5ca35b0.js",
+      "app/dist/_nuxt/2928087.js",
+      "app/dist/_nuxt/29565b2.js",
+      "app/dist/_nuxt/2ab11b9.js",
+      "app/dist/_nuxt/2bac2ad.js",
+      "app/dist/_nuxt/2bad5be.js",
+      "app/dist/_nuxt/2bc417a.js",
+      "app/dist/_nuxt/2c36488.js",
+      "app/dist/_nuxt/2c4518c.js",
+      "app/dist/_nuxt/2c928a8.js",
+      "app/dist/_nuxt/2cd6402.js",
+      "app/dist/_nuxt/2dfd446.js",
+      "app/dist/_nuxt/2e24d3f.js",
+      "app/dist/_nuxt/2e932d2.js",
+      "app/dist/_nuxt/2ec312b.js",
+      "app/dist/_nuxt/2ece7a2.js",
+      "app/dist/_nuxt/30818e3.js",
+      "app/dist/_nuxt/32f4aee.js",
+      "app/dist/_nuxt/34dd4f7.js",
+      "app/dist/_nuxt/34f7b5c.js",
+      "app/dist/_nuxt/36bee55.js",
+      "app/dist/_nuxt/3719595.js",
+      "app/dist/_nuxt/38f0d93.js",
+      "app/dist/_nuxt/3a022ce.js",
+      "app/dist/_nuxt/3c5afa6.js",
+      "app/dist/_nuxt/3d7d8ba.js",
+      "app/dist/_nuxt/3ecd828.js",
+      "app/dist/_nuxt/40aa847.js",
+      "app/dist/_nuxt/44c96b8.js",
+      "app/dist/_nuxt/4681903.js",
+      "app/dist/_nuxt/4768bcb.js",
+      "app/dist/_nuxt/4921591.js",
+      "app/dist/_nuxt/4989895.js",
+      "app/dist/_nuxt/49b9739.js",
+      "app/dist/_nuxt/49caca2.js",
+      "app/dist/_nuxt/49fb0d1.js",
+      "app/dist/_nuxt/4b170ac.js",
+      "app/dist/_nuxt/4b3ef49.js",
+      "app/dist/_nuxt/4df558f.js",
+      "app/dist/_nuxt/4e49449.js",
+      "app/dist/_nuxt/4e88d66.js",
+      "app/dist/_nuxt/4fb88cb.js",
+      "app/dist/_nuxt/508a69c.js",
+      "app/dist/_nuxt/51503e6.js",
+      "app/dist/_nuxt/51bba1b.js",
+      "app/dist/_nuxt/51df90c.js",
+      "app/dist/_nuxt/53b8f9e.js",
+      "app/dist/_nuxt/55654e2.js",
+      "app/dist/_nuxt/55d6775.js",
+      "app/dist/_nuxt/5681608.js",
+      "app/dist/_nuxt/5702d8b.js",
+      "app/dist/_nuxt/5747e31.js",
+      "app/dist/_nuxt/57cf90c.js",
+      "app/dist/_nuxt/5943a62.js",
+      "app/dist/_nuxt/5b75df3.js",
+      "app/dist/_nuxt/5caf4d8.js",
+      "app/dist/_nuxt/5cc8220.js",
+      "app/dist/_nuxt/5da3b38.js",
+      "app/dist/_nuxt/5dcdf3f.js",
+      "app/dist/_nuxt/6208db5.js",
+      "app/dist/_nuxt/62994df.js",
+      "app/dist/_nuxt/636be78.js",
+      "app/dist/_nuxt/64987e6.js",
+      "app/dist/_nuxt/6565770.js",
+      "app/dist/_nuxt/6649c11.js",
+      "app/dist/_nuxt/66dc1f1.js",
+      "app/dist/_nuxt/6705482.js",
+      "app/dist/_nuxt/6847538.js",
+      "app/dist/_nuxt/6851c00.js",
+      "app/dist/_nuxt/68a6cf3.js",
+      "app/dist/_nuxt/69379ca.js",
       "app/dist/_nuxt/694f3df.js",
-      "app/dist/_nuxt/7ef9256.js",
+      "app/dist/_nuxt/69d90ae.js",
+      "app/dist/_nuxt/6b336bd.js",
+      "app/dist/_nuxt/6dcef0a.js",
+      "app/dist/_nuxt/6e8cb4f.js",
+      "app/dist/_nuxt/700b1b0.js",
+      "app/dist/_nuxt/70e95a1.js",
+      "app/dist/_nuxt/727b430.js",
+      "app/dist/_nuxt/729aff9.js",
+      "app/dist/_nuxt/74f7c95.js",
+      "app/dist/_nuxt/78df168.js",
+      "app/dist/_nuxt/7ca0ebd.js",
+      "app/dist/_nuxt/7cf8ebe.js",
+      "app/dist/_nuxt/7d3a5a0.js",
+      "app/dist/_nuxt/7e59698.js",
+      "app/dist/_nuxt/7e5f95a.js",
+      "app/dist/_nuxt/7ee766c.js",
+      "app/dist/_nuxt/7fca348.js",
+      "app/dist/_nuxt/8002706.js",
+      "app/dist/_nuxt/80367ec.js",
+      "app/dist/_nuxt/8073efd.js",
+      "app/dist/_nuxt/8182a70.js",
+      "app/dist/_nuxt/82af2c3.js",
+      "app/dist/_nuxt/84a787a.js",
+      "app/dist/_nuxt/84ceb72.js",
+      "app/dist/_nuxt/85f1b20.js",
+      "app/dist/_nuxt/867c3d5.js",
+      "app/dist/_nuxt/877f1f8.js",
+      "app/dist/_nuxt/888727d.js",
+      "app/dist/_nuxt/8909e0a.js",
+      "app/dist/_nuxt/89c7c6d.js",
+      "app/dist/_nuxt/8a92f01.js",
+      "app/dist/_nuxt/8aaa1dc.js",
+      "app/dist/_nuxt/8b7c943.js",
+      "app/dist/_nuxt/8bc2317.js",
+      "app/dist/_nuxt/8dc74a8.js",
+      "app/dist/_nuxt/8de3b45.js",
+      "app/dist/_nuxt/8ffabb9.js",
+      "app/dist/_nuxt/908b281.js",
+      "app/dist/_nuxt/91b1da9.js",
+      "app/dist/_nuxt/91f68e0.js",
+      "app/dist/_nuxt/9298b70.js",
+      "app/dist/_nuxt/935e873.js",
+      "app/dist/_nuxt/951ae4e.js",
+      "app/dist/_nuxt/95acdca.js",
+      "app/dist/_nuxt/95bc3e9.js",
       "app/dist/_nuxt/95d0d73.js",
+      "app/dist/_nuxt/95f4e52.js",
+      "app/dist/_nuxt/9614e6d.js",
+      "app/dist/_nuxt/9652c55.js",
+      "app/dist/_nuxt/968053e.js",
+      "app/dist/_nuxt/99a72bb.js",
+      "app/dist/_nuxt/9a88023.js",
+      "app/dist/_nuxt/9a8b8c0.js",
+      "app/dist/_nuxt/9a99c57.js",
+      "app/dist/_nuxt/9aa796c.js",
       "app/dist/_nuxt/9b0eb0f.js",
-      "app/dist/_nuxt/a0d5089.js",
+      "app/dist/_nuxt/9bab76e.js",
+      "app/dist/_nuxt/9c81c16.js",
+      "app/dist/_nuxt/9cef4d6.js",
+      "app/dist/_nuxt/9de8e39.js",
+      "app/dist/_nuxt/9e5eec0.js",
+      "app/dist/_nuxt/9edd992.js",
+      "app/dist/_nuxt/a042919.js",
+      "app/dist/_nuxt/a0e6d0f.js",
+      "app/dist/_nuxt/a19729c.js",
+      "app/dist/_nuxt/a2979dc.js",
+      "app/dist/_nuxt/a448475.js",
+      "app/dist/_nuxt/a6e70ac.js",
+      "app/dist/_nuxt/a81ad3f.js",
+      "app/dist/_nuxt/aa81e53.js",
+      "app/dist/_nuxt/abfcb2c.js",
+      "app/dist/_nuxt/acf4c70.js",
+      "app/dist/_nuxt/ad2ec4a.js",
+      "app/dist/_nuxt/aebd8b7.js",
+      "app/dist/_nuxt/afa1e4d.js",
+      "app/dist/_nuxt/b02a9d0.js",
+      "app/dist/_nuxt/b0ff65e.js",
+      "app/dist/_nuxt/b1a5fa7.js",
+      "app/dist/_nuxt/b454095.js",
+      "app/dist/_nuxt/b48f719.js",
+      "app/dist/_nuxt/b5f69e0.js",
+      "app/dist/_nuxt/b60d011.js",
+      "app/dist/_nuxt/b729da9.js",
+      "app/dist/_nuxt/b752fb9.js",
+      "app/dist/_nuxt/b8eed25.js",
+      "app/dist/_nuxt/b8f279d.js",
+      "app/dist/_nuxt/bbdd481.js",
+      "app/dist/_nuxt/bc40b77.js",
+      "app/dist/_nuxt/bd6378d.js",
+      "app/dist/_nuxt/bdb7845.js",
+      "app/dist/_nuxt/be3dfaf.js",
+      "app/dist/_nuxt/bfc3336.js",
+      "app/dist/_nuxt/bfe57f4.js",
+      "app/dist/_nuxt/c045b82.js",
+      "app/dist/_nuxt/c0b6130.js",
+      "app/dist/_nuxt/c0b8daa.js",
+      "app/dist/_nuxt/c2d4469.js",
+      "app/dist/_nuxt/c330e8d.js",
+      "app/dist/_nuxt/c35527c.js",
+      "app/dist/_nuxt/c43b9bc.js",
+      "app/dist/_nuxt/c460ceb.js",
+      "app/dist/_nuxt/c643288.js",
+      "app/dist/_nuxt/c6c84c0.js",
+      "app/dist/_nuxt/c81917d.js",
+      "app/dist/_nuxt/c9395ba.js",
+      "app/dist/_nuxt/c93d3e1.js",
+      "app/dist/_nuxt/c9547af.js",
+      "app/dist/_nuxt/c9a7e34.js",
+      "app/dist/_nuxt/ca0e3f6.js",
+      "app/dist/_nuxt/ca191a2.js",
+      "app/dist/_nuxt/ca1ea61.js",
+      "app/dist/_nuxt/ca9738d.js",
+      "app/dist/_nuxt/cbb9cec.js",
+      "app/dist/_nuxt/cbe3eab.js",
+      "app/dist/_nuxt/cc2c006.js",
+      "app/dist/_nuxt/ccc15f5.js",
+      "app/dist/_nuxt/ccdb8b6.js",
+      "app/dist/_nuxt/ce9b8ef.js",
+      "app/dist/_nuxt/cfb54b9.js",
+      "app/dist/_nuxt/css/71b27f7.css",
+      "app/dist/_nuxt/css/e5521da.css",
+      "app/dist/_nuxt/css/e6f36cb.css",
+      "app/dist/_nuxt/css/f6c5795.css",
+      "app/dist/_nuxt/css/fb26f8b.css",
+      "app/dist/_nuxt/d08aa99.js",
+      "app/dist/_nuxt/d16b9cf.js",
+      "app/dist/_nuxt/d2c5c88.js",
+      "app/dist/_nuxt/d36cb90.js",
+      "app/dist/_nuxt/d6567e8.js",
+      "app/dist/_nuxt/d76ef58.js",
+      "app/dist/_nuxt/d7db2b7.js",
+      "app/dist/_nuxt/d7f982b.js",
+      "app/dist/_nuxt/d95a43b.js",
+      "app/dist/_nuxt/d97eca6.js",
+      "app/dist/_nuxt/dbd3477.js",
+      "app/dist/_nuxt/ddbc178.js",
+      "app/dist/_nuxt/e1ed056.js",
+      "app/dist/_nuxt/e28e131.js",
+      "app/dist/_nuxt/e2c1a3a.js",
+      "app/dist/_nuxt/e50e516.js",
+      "app/dist/_nuxt/e847ff6.js",
+      "app/dist/_nuxt/e9d02af.js",
+      "app/dist/_nuxt/eb27bd1.js",
+      "app/dist/_nuxt/eb3dd7e.js",
+      "app/dist/_nuxt/ec1c612.js",
+      "app/dist/_nuxt/eeaaa48.js",
+      "app/dist/_nuxt/ef893fe.js",
+      "app/dist/_nuxt/f136f80.js",
+      "app/dist/_nuxt/f1b1080.js",
+      "app/dist/_nuxt/f36e1bf.js",
+      "app/dist/_nuxt/f3fc651.js",
+      "app/dist/_nuxt/f4ae92d.js",
+      "app/dist/_nuxt/f61ab66.js",
+      "app/dist/_nuxt/f7a4f06.js",
+      "app/dist/_nuxt/f88c5a3.js",
+      "app/dist/_nuxt/f8c5e18.js",
+      "app/dist/_nuxt/f901f81.js",
+      "app/dist/_nuxt/f962c6d.js",
+      "app/dist/_nuxt/fa3e8a3.js",
+      "app/dist/_nuxt/fc0d1bc.js",
+      "app/dist/_nuxt/fc6d924.js",
+      "app/dist/_nuxt/fd5af8c.js",
+      "app/dist/_nuxt/fdd9724.js",
+      "app/dist/_nuxt/fe802fa.js",
+      "app/dist/_nuxt/fff4fbb.js",
+      "app/dist/_nuxt/fonts/materialdesignicons-subset.491aec0.woff2",
+      "app/dist/_nuxt/fonts/materialdesignicons-subset.8f70705.woff2",
       "app/dist/active/success/index.html",
       "app/dist/admin/all-expected/index.html",
       "app/dist/admin/book-reviews/index.html",
@@ -527,7 +1655,12 @@
       "app/locales/en.json",
       "app/locales/zh-TW.json",
       "app/locales/zh.json",
-      "app/src/pages/toolbox/srt_tool.vue"
+      "app/src/assets/css/mdi-subset.css",
+      "app/src/assets/fonts/materialdesignicons-subset.woff2",
+      "app/src/components/AdminBookCard.vue",
+      "app/src/pages/admin/books.vue",
+      "app/src/pages/admin/settings.vue",
+      "app/src/pages/categories.vue"
     ],
     "blocking": [
       ".env.example",
@@ -540,18 +1673,22 @@
     "docs": [
       "CHANGELOG.md",
       "README.md",
+      "scripts/check-dist.sh",
       "scripts/check-version-lock.py",
-      "tests/test_srt_transcribe_options.py",
+      "scripts/install-fresh.sh",
+      "scripts/pack.sh",
       "tests/test_version_lock.py"
     ],
-    "ignored": []
+    "ignored": [
+      "app/dist/_nuxt/LICENSES"
+    ]
   },
   "deploy_commands": [
     "cd /volume1/docker",
-    "sha256sum -c audiobook-deploy-4.7.0-build.08.tar.gz.sha256",
+    "sha256sum -c audiobook-deploy-4.7.0-build.09.tar.gz.sha256",
     "docker compose -f audiobook/docker-compose.yml down 2>/dev/null",
     "mv audiobook audiobook.old-$(date +%m%d-%H%M)",
-    "tar -xzf audiobook-deploy-4.7.0-build.08.tar.gz",
+    "tar -xzf audiobook-deploy-4.7.0-build.09.tar.gz",
     "cd /volume1/docker/audiobook && sh scripts/deploy.sh"
   ]
 }
