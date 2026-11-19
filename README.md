@@ -32,7 +32,7 @@
 ### 路线 A：从 GitHub 拉（推荐）
 
 ```sh
-cp .env.example .env
+cp .env.example .env 2>/dev/null || cp env.example .env  # 兼容前导点被吞的情况
 vi .env                     # 只改 DATA_DIR / PUID / PGID
 docker compose up -d
 ```
@@ -53,7 +53,7 @@ gunzip -c mybooks-image-4.7.0-build.09.tar.gz | docker load
 第 2 步**照常**改 `.env`（这一步不能省），第 3 步照常 `docker compose up -d`：
 
 ```sh
-cp .env.example .env
+cp .env.example .env 2>/dev/null || cp env.example .env  # 兼容前导点被吞的情况
 vi .env
 docker compose up -d
 ```

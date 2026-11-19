@@ -250,7 +250,7 @@ cat > "$WORK/README-部署.md" <<READMEEOF
 gunzip -c mybooks-image-$SAFE_VER.tar.gz | docker load
 
 # 2. 配置
-cp .env.example .env
+cp .env.example .env 2>/dev/null || cp env.example .env  # 兼容前导点被吞的情况
 vi .env          # 至少改 DATA_DIR、PUID、PGID
 
 # 3. 启动
