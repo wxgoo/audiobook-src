@@ -1,0 +1,64 @@
+# MyBooks + MyNexus 二合一编排（同一 docker 网络，容器名互通）
+# 部署后：MyBooks 设置页的 MyNexus 开关/URL/Token 已自动填好，
+#         你只需在下面 .env 里填自己的 LLM Key。
+services:
+  mybooks:
+    image: ${MYBOOKS_IMAGE:-mybooks:4.7.0-build.09}
+    container_name: mybooks
+    restart: always
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "${HTTP_PORT:-9800}:80"
+      # HTTPS（镜像自带自签证书，与旧部署的 8443 保持一致；不需要可删这行）
+      - "${HTTPS_PORT:-8443}:443"
+    volumes:
+      # MyBooks 全部数据（书库/数据库/设置/日志）都在这一个目录，备份就备份它
+      - ${DATA_DIR:-./data}:/data
+      # ★ 预置 MyNexus 设置：manual.py 是设置加载链的最后一级（优先级最高），
+      #   prebuilt 里没有同名文件、不会被首次启动的拷贝覆盖；token 从环境变量读，
+      #   做到单一配置源（只需在 .env 里填一次）。打开设置页即自动填好。
+      - ./settings/manual.py:/data/books/settings/manual.py:ro
+    environment:
+      PUID: ${PUID:-1026}
+      PGID: ${PGID:-100}
+      TZ: ${TZ:-Asia/Shanghai}
+      # HuggingFace 镜像（沿用你现有环境，避免模型下载卡住）
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      HF_HUB_DISABLE_XET: ${HF_HUB_DISABLE_XET:-1}
+      # 供挂载的 manual.py 读取：URL 用容器名（同网络内可解析），token 单一来源
+      MYNEXUS_AUTO_URL: ${MYNEXUS_AUTO_URL:-http://mynexus}
+      MYNEXUS_API_TOKEN: ${MYNEXUS_API_TOKEN}
+      # 全局 AI 助手配置（manual.py 读取，预填到设置页）
+      AI_API_KEY: ${AI_API_KEY}
+      AI_BASE_URL: ${AI_BASE_URL:-https://openrouter.ai/api/v1}
+      AI_MODEL: ${AI_MODEL:-openrouter/free}
+      AI_MCP_TOKEN: ${AI_MCP_TOKEN:-}
+    depends_on:
+      - mynexus
+
+  mynexus:
+    image: ${MYNEXUS_IMAGE:-poxenstudio/mynexus:latest}
+    container_name: mynexus
+    restart: unless-stopped
+    ports:
+      # MyNexus 管理后台宿主端口，默认 3000（官方默认，8083 在部分 NAS 上被占用）
+      - "${MYNEXUS_PORT:-3000}:80"
+    volumes:
+      - ./mynexus-data:/data
+      - ./mynexus-config:/config
+    environment:
+      PUID: ${PUID:-1026}
+      PGID: ${PGID:-100}
+      TZ: ${TZ:-Asia/Shanghai}
+      # HuggingFace 镜像：MyNexus 首次启动下载 embedding 模型，国内必须走镜像
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      HF_HUB_DISABLE_XET: ${HF_HUB_DISABLE_XET:-1}
+      # MyBooks 用它来连 MyNexus，必须和上面 MYNEXUS_API_TOKEN 一致
+      MYNEXUS_API_TOKEN: ${MYNEXUS_API_TOKEN}
+      # —— LLM：默认 DeepSeek（OpenAI 兼容），改成你自己的即可 ——
+      MYNEXUS_LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      MYNEXUS_LLM_OPENAI_API_KEY: ${LLM_API_KEY}
+      MYNEXUS_LLM_OPENAI_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      MYNEXUS_LLM_OPENAI_MODEL: ${LLM_MODEL:-deepseek-chat}
+      # —— Embedding：用镜像内置本地模型，无需配置 ——
