@@ -18,6 +18,7 @@ from webserver.toolbox.toolset import ToolSet
 from webserver.toolbox import toolbox_manager
 from webserver.services.toolbox_store import ToolboxStoreClient, ToolboxStoreError, get_cached_index, find_in_index
 from webserver.handlers.base import BaseHandler, js, is_admin
+from webserver.handlers import epub_auto_split as epub_auto_split_handler
 from webserver.toolbox.rare_book_downloader import RareBookDownloader
 from webserver.toolbox.merge_formats_tool import MergeFormatsTool
 from webserver.toolbox.review_book_language_tool import ReviewBookLanguageTool
@@ -1970,6 +1971,7 @@ def routes():
                 (r"/api/toolbox/epub_fixer/progress", AdminEpubFixerProgress),
                 (r"/api/toolbox/epub_split/chapters", AdminEpubSplitChapters),
                 (r"/api/toolbox/epub_split/generate", AdminEpubSplitGenerate),
+                *epub_auto_split_handler.routes(),
                 (r"/api/toolbox/author_clean", AdminAuthorClean),
         (r"/api/toolbox/audio_transcode/scan", AdminAudioTranscodeScan),
         (r"/api/toolbox/audio_transcode/scan_all", AdminAudioTranscodeScanAll),

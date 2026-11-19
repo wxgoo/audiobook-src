@@ -111,6 +111,7 @@ class ToolSet:
         # FormatsPruningTool 类与 /api/toolbox/formats_pruning/* 接口保持不变。
         from .epub_fixer import EpubFixerTool
         from .epub_split import EpubSplitTool
+        from .epub_auto_split import EpubAutoSplitTool
         from .author_clean_tool import AuthorCleanTool
         from .mimo_tts import MimoTTSTool
         from .bookbarn_acceptor_tool import BookBarnAcceptorTool
@@ -139,6 +140,7 @@ class ToolSet:
         ToolSet.register(TextProcessor.info())
         # ToolSet.register(FormatsPruningTool.info())  # 已并入 format_tools 页，见上方注释
         ToolSet.register(EpubSplitTool.info())
+        ToolSet.register(EpubAutoSplitTool.info())
         ToolSet.register(AuthorCleanTool.info())
         ToolSet.register(RareBookDownloader.info())
         ToolSet.register(ReviewBookLanguageTool.info())
