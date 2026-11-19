@@ -9,14 +9,14 @@
 # 用法：
 #   sh scripts/check-dist.sh              # 校验仓库里的 app/dist
 #   sh scripts/check-dist.sh /path/pkg/audiobook
-#   BASELINE=771 sh scripts/check-dist.sh
+#   BASELINE=773 sh scripts/check-dist.sh
 #
 # 退出码：0 通过；1 缺文件/数量不符；2 用法或目录缺失。
 
 set -u
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 DIST="$ROOT/app/dist"
-BASELINE="${BASELINE:-771}"
+BASELINE="${BASELINE:-773}"
 
 [ -d "$DIST" ] || { echo "!! 找不到 $DIST（先 npm run generate）"; exit 2; }
 

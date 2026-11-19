@@ -42,10 +42,6 @@
   content: "\F1370";
 }
 
-.mdi-account-convert-outline::before {
-  content: "\F1301";
-}
-
 .mdi-account-eye-outline::before {
   content: "\F127B";
 }
@@ -816,10 +812,6 @@
 
 .mdi-information::before {
   content: "\F02FC";
-}
-
-.mdi-information-outline::before {
-  content: "\F02FD";
 }
 
 .mdi-key::before {

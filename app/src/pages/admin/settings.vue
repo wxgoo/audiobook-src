@@ -2303,27 +2303,6 @@ export default {
               { icon: "mdi-send", key: "ALLOW_GUEST_PUSH", label: "settings.allow_guest_push", type: "checkbox", lockOn: "REQUIRE_LOGIN", tips: "settings.guest_locked_by_login" },
               // 分享链接独立于「必须登录」：持有效分享授权可绕过整站门禁，因此不锁定
               { icon: "mdi-link-variant", key: "ENABLE_SHARE_LINK", label: "settings.allow_share_link", type: "checkbox", tips: "settings.share_link_tips" },
-              // 关联关系总说明：把三层权限的边界一次讲清，常驻显示
-              {
-                key: "guest_login_relation_note",
-                type: "subtitle",
-                icon: "mdi-information-outline",
-                color: "info",
-                label: "settings.guest_login_relation_note",
-                tips: "settings.guest_login_relation_note_tips",
-              },
-              {
-                // 作者整理指路（build.27）：归一化与清理已合并为工具箱里的一个工具，
-                // 这里保留一条说明并直达合并后的页面；左侧树不再单列归一化入口。
-                key: "author_norm_entry",
-                type: "subtitle",
-                icon: "mdi-account-convert-outline",
-                color: "info",
-                label: "settings.author_norm_entry",
-                to: "/toolbox/author_tools",
-                link_text: "settings.author_norm_open",
-                tips: "settings.author_norm_entry_tips",
-              },
               {
                 icon: "mdi-book-lock-outline",
                 key: "ALLOW_READ_RANGE_SETTING",

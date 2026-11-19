@@ -855,6 +855,7 @@ class AuthorSearch(BaseHandler):
         sql = """SELECT authors.name, count(distinct book) as count
         FROM authors left join books_authors_link on authors.id = books_authors_link.author
         WHERE authors.name LIKE ? ESCAPE '\\'
+        AND LOWER(authors.name) NOT IN ('佚名', 'unknown', '未知')
         GROUP BY authors.id ORDER BY count DESC LIMIT ?"""
         try:
             rows = await self.run_calibre_sql(sql, (q + "%", limit))
@@ -1387,11 +1388,11 @@ class BookCover(BaseHandler):
         if not ext and 'content_type' in fileinfo:
             ext = fileinfo['content_type'].split('/')[-1]
         if ext == 'webp' or img_data[:4] == b'RIFF' and img_data[8:12] == b'WEBP':
-            # Calibre/Qt 不一定带 webp 插件，统一转成 jpeg 再保存
-            from calibre.utils.img import image_from_data, image_to_data
+            # Calibre/Qt 不带 webp 插件，改用 Pillow 解码后统一转成 jpeg 再保存
             try:
-                img_data = image_to_data(image_from_data(img_data), fmt='jpeg')
+                img_data = ImageHelper.convert_to_jpeg(img_data)
             except Exception:
+                logging.error(f"Failed to convert webp cover for book {book_id}: {traceback.format_exc()}")
                 return {"err": "params.cover.invalid", "msg": _("封面图片格式无效")}
             ext = 'jpeg'
         mi.cover_data = (ext or None, img_data)
@@ -4041,16 +4042,23 @@ class BookUploadBatch(BaseHandler):
             first_seg = self._sanitize_relative_path(next(p for p in norm_rel_paths if "/" in p)).split("/", 1)[0]
             top_folder = first_seg or None
 
+        scan_upload_root = scan_upload_path.rstrip(os.sep) + os.sep
+
         if top_folder:
             candidate, suffix = top_folder, 1
-            while os.path.exists(os.path.join(scan_upload_path, candidate)):
+            while True:
+                batch_dir = os.path.realpath(os.path.join(scan_upload_path, candidate))
+                # realpath 归一后做前缀校验：用户提供的目录名不得把暂存目录带出扫描导入目录
+                if not batch_dir.startswith(scan_upload_root):
+                    return {"err": "server.error", "msg": _("非法的暂存路径")}
+                if not os.path.exists(batch_dir):
+                    break
                 candidate = f"{top_folder}_{import_id}_{suffix}"
                 suffix += 1
-            batch_dir = os.path.realpath(os.path.join(scan_upload_path, candidate))
         else:
             batch_dir = os.path.realpath(os.path.join(scan_upload_path, f"_upload_{self.user_id() or 0}_{import_id}"))
 
-        if os.path.commonpath([scan_upload_path, batch_dir]) != scan_upload_path:
+        if not batch_dir.startswith(scan_upload_root):
             return {"err": "server.error", "msg": _("非法的暂存路径")}
 
         saved = 0
@@ -4073,7 +4081,7 @@ class BookUploadBatch(BaseHandler):
                 if fmt not in SCAN_EXT:
                     continue
                 target_path = os.path.realpath(os.path.join(batch_dir, rel_path))
-                if os.path.commonpath([batch_dir, target_path]) != batch_dir:
+                if not target_path.startswith(batch_dir + os.sep):
                     continue
                 os.makedirs(os.path.dirname(target_path), exist_ok=True)
                 with open(target_path, "wb") as f:
