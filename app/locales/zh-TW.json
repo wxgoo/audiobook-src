@@ -1190,6 +1190,8 @@
         "ai_capabilities_description": "設定 AI 助手相關功能",
         "ai_capability": "AI 助手",
         "ai_model": "AI 模型",
+        "voice_model": "語音辨識模型",
+        "voice_model_hint": "聊天語音輸入與音訊轉寫文稿共用此模型。CPU 建議 base（快），強機可選 large-v3（準）。首次使用會下載對應權重。",
         "ai_mcp_token": "MCP 存取權杖",
         "ai_mcp_token_generated": "MCP 存取權杖已生成",
         "ai_mcp_token_generate_failed": "生成 MCP 存取權杖失敗",

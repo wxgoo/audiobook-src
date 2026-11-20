@@ -3,9 +3,16 @@
 
 import json
 import logging
+import os
+import tempfile
 import tornado.websocket
 
 import urllib.parse
+
+from webserver.handlers.base import BaseHandler, js
+from webserver import loader
+
+CONF = loader.get_settings()
 
 
 def is_same_host_origin(origin, host):
@@ -111,7 +118,75 @@ class AssistantWebSocketHandler(tornado.websocket.WebSocketHandler):
             await self.agent.close()
 
 
+class AssistantTranscribeHandler(BaseHandler):
+    """AI 助手/伴读的语音输入：接收一段麦克风录音，用本地 faster-whisper 转成文字。
+
+    - 登录鉴权：继承 BaseHandler + get_current_user（未登录会被拦）。
+    - 音频只存临时文件，转写完立即删除，不落库、不进书库。
+    - 首次调用会下载 whisper small 模型（走 hf-mirror），之后复用进程内缓存。
+    """
+    MAX_AUDIO_BYTES = 12 * 1024 * 1024  # 12MB，够几分钟录音
+
+    @js
+    async def post(self):
+        if not self.current_user:
+            self.set_status(401)
+            return {"err": "auth.required", "msg": "请先登录"}
+
+        if not self.request.files or "audio" not in self.request.files:
+            return {"err": "params.missing", "msg": "未收到录音文件"}
+
+        file_meta = self.request.files["audio"][0]
+        body = file_meta.get("body") or b""
+        if not body:
+            return {"err": "params.missing", "msg": "录音文件为空"}
+        if len(body) > self.MAX_AUDIO_BYTES:
+            return {"err": "too.large", "msg": "录音过大，请缩短后重试"}
+
+        # 浏览器 MediaRecorder Usually produces webm/opus；faster-whisper 经 ffmpeg 可读。
+        suffix = os.path.splitext(file_meta.get("filename") or "")[1].lower()
+        if suffix not in (".webm", ".wav", ".mp3", ".m4a", ".ogg", ".mp4", ".aac"):
+            suffix = ".webm"
+
+        from webserver import utils
+        from webserver.services import transcribe
+
+        if not transcribe.whisper_available():
+            return {"err": "asr.unavailable",
+                    "msg": "服务器未安装语音识别引擎（faster-whisper）"}
+
+        tmp_path = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(prefix="mybooks_voice_", suffix=suffix)
+            with os.fdopen(fd, "wb") as f:
+                f.write(body)
+
+            # 模型由系统设置 TRANSCRIBE_MODEL 决定（设置页「刮削与AI」可选），
+            # 前端写死的 model=small 参数被忽略；换硬件后改设置即可，无需重编译。
+            _allowed = ("tiny", "base", "small", "medium", "large-v3", "large")
+            model_size = str(CONF.get("TRANSCRIBE_MODEL", "base") or "base")
+            if model_size not in _allowed:
+                model_size = "base"
+            if model_size == "large":
+                model_size = "large-v3"
+            lang = str(self.get_argument("lang", "auto") or "auto")
+
+            text = await utils.run_in_threadpool(
+                lambda: transcribe.transcribe_short(tmp_path, model_size=model_size, lang=lang))
+            return {"err": "ok", "text": text}
+        except Exception as e:
+            logging.error("[assistant] voice transcribe failed: %s", e)
+            return {"err": "asr.failed", "msg": "语音识别失败：%s" % str(e)[:200]}
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+
 def routes():
     return [
         (r"/api/assistant/ws", AssistantWebSocketHandler),
+        (r"/api/assistant/transcribe", AssistantTranscribeHandler),
     ]

@@ -1196,6 +1196,8 @@
         "ai_capabilities_description": "配置AI助手相关功能",
         "ai_capability": "AI助手",
         "ai_model": "AI模型",
+        "voice_model": "语音识别模型",
+        "voice_model_hint": "聊天语音输入与音频转写文稿共用此模型。CPU 建议 base（快），强机可选 large-v3（准）。首次使用会下载对应权重。",
         "ai_mcp_token": "MCP访问令牌",
         "ai_mcp_token_generated": "MCP访问令牌已生成",
         "ai_mcp_token_generate_failed": "生成MCP访问令牌失败",

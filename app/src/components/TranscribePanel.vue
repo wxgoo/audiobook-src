@@ -170,7 +170,7 @@ export default {
   }),
   computed: {
     modelItems() {
-      return ["tiny", "base", "small", "medium", "large"];
+      return ["tiny", "base", "small", "medium", "large-v3"];
     },
   },
   beforeDestroy() {

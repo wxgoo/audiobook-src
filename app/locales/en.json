@@ -881,6 +881,8 @@
         "ai_allow_set_category": "Use AI-generated book category",
         "ai_capabilities_description": "Configure AI assistant features",
         "ai_model": "AI Model",
+        "voice_model": "Speech Recognition Model",
+        "voice_model_hint": "Shared by chat voice input and the transcription tool. Choose base for CPU (fast) or large-v3 for accuracy on powerful machines. Weights download on first use.",
         "ai_mcp_token": "MCP Access Token",
         "ai_mcp_token_generated": "MCP token has been generated",
         "ai_mcp_token_generate_failed": "Failed to generate MCP token",

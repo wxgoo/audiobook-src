@@ -228,7 +228,7 @@ settings = {
     # 音频转写（faster-whisper）。模型缓存在 /data/models/whisper（可用环境变量
     # WHISPER_MODEL_DIR 覆盖），容器重建后无需重新下载。
     # KEEP_TXT：除了 .srt 字幕，是否同时输出 .txt 纯文本全稿（全文搜索/复制/离线阅读用）。
-    "TRANSCRIBE_MODEL": "small",           # tiny/base/small/medium/large-v3
+    "TRANSCRIBE_MODEL": "base",            # tiny/base/small/medium/large-v3（聊天语音输入与音频转写共用）
     "TRANSCRIBE_LANG": "auto",             # auto 或 zh/en/ja...
     "TRANSCRIBE_KEEP_TXT": True,
     # 有声书导入：遇到同名电子书已存在时，把音频挂到那本书上复用同一个 book_id
