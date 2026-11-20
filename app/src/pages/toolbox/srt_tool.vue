@@ -241,12 +241,12 @@ export default {
       this.starting = true;
       this.$backend('/toolbox/srt_tool/start', {
         method: 'POST',
-        body: {
+        body: JSON.stringify({
           book_ids: this.picked, model: this.model, lang: this.lang,
           overwrite: this.overwrite, keep_txt: this.keepTxt,
           preset: this.preset, script: this.script,
           write_ass: this.writeAss, hotwords: this.hotwords,
-        },
+        }),
       })
         .then((rsp) => {
           if (rsp.err !== 'ok') {
