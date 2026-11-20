@@ -47,9 +47,22 @@
             class="mt-3"
             @keydown.enter.prevent="sendMyNexusMessage"
         ></v-textarea>
+        <div v-if="voiceError" class="caption red--text mt-1">{{ voiceError }}</div>
         <template v-slot:actions>
-            <div class="d-flex justify-center flex-grow-1">
-                <v-btn color="primary" :loading="mynexusChatLoading" :disabled="!mynexusQuestion.trim()" @click="sendMyNexusMessage">
+            <div class="d-flex justify-center flex-grow-1 align-center">
+                <v-btn
+                    v-if="voiceSupported"
+                    class="mr-3"
+                    icon
+                    :color="voiceRecording ? 'error' : 'grey'"
+                    :disabled="mynexusChatLoading || voiceBusy"
+                    :loading="voiceBusy"
+                    :title="voiceRecording ? '停止录音' : '语音输入'"
+                    @click="toggleVoice"
+                >
+                    <v-icon>{{ voiceRecording ? 'mdi-stop' : 'mdi-microphone' }}</v-icon>
+                </v-btn>
+                <v-btn color="primary" :loading="mynexusChatLoading" :disabled="!mynexusQuestion.trim() || mynexusChatLoading || voiceBusy" @click="sendMyNexusMessage">
                     {{ $t('common.send') }}
                 </v-btn>
             </div>
@@ -59,10 +72,12 @@
 
 <script>
 import MyNexusMarkdown from "~/components/MyNexusMarkdown.vue";
+import voiceMixin from "~/mixins/voice.js";
 
 export default {
     name: "MyNexusChatDialog",
     components: { MyNexusMarkdown },
+    mixins: [voiceMixin],
     props: {
         open: { type: Boolean, default: false },
         book: { type: Object, required: true },
@@ -77,6 +92,7 @@ export default {
             mynexusChatLoading: false,
             mynexusChatError: "",
             mynexusQuestion: "",
+            voiceTargetField: "mynexusQuestion",
             mynexusMessages: [],
         };
     },

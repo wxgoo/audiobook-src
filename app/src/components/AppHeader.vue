@@ -530,11 +530,24 @@
                         ref="aiInput"
                     >
                     </v-text-field>
+                    <div v-if="voiceError" class="caption red--text px-4 pb-1">{{ voiceError }}</div>
+                    <v-btn
+                        v-if="voiceSupported"
+                        icon
+                        :color="voiceRecording ? 'error' : 'grey'"
+                        :disabled="ai_thinking || voiceBusy"
+                        :loading="voiceBusy"
+                        large
+                        :title="voiceRecording ? '停止录音' : '语音输入'"
+                        @click="toggleVoice"
+                    >
+                        <v-icon>{{ voiceRecording ? 'mdi-stop' : 'mdi-microphone' }}</v-icon>
+                    </v-btn>
                     <v-btn
                         icon
                         color="primary"
                         :loading="ai_thinking"
-                        :disabled="!ai_input.trim() || ai_thinking"
+                        :disabled="!ai_input.trim() || ai_thinking || voiceBusy"
                         @click="sendAiMessage"
                         large
                     >
@@ -548,11 +561,13 @@
 
 <script>
 import AppearanceMenu from "~/components/AppearanceMenu.vue";
+import voiceMixin from "~/mixins/voice.js";
 import { isLightBackground, resolveBrandColor, unifiedIconColor } from "~/utils/appearance";
 import { getFriendMeta } from "~/utils/friendMeta";
 
 export default {
     components: { AppearanceMenu },
+    mixins: [voiceMixin],
     data() {
         let sidebar = false;
         let miniVariant = false;
@@ -599,6 +614,7 @@ export default {
         ai_messages: [],
         ai_ws: null,
         ai_input: '',
+        voiceTargetField: "ai_input",
         user: { is_login: false },
         sys: {
             books: 0,

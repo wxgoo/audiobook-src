@@ -906,6 +906,10 @@
   content: "\F036A";
 }
 
+.mdi-microphone::before {
+  content: "\F036C";
+}
+
 .mdi-minus::before {
   content: "\F0374";
 }
