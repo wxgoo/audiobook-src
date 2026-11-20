@@ -126,6 +126,10 @@
   content: "\F0045";
 }
 
+.mdi-arrow-left-bold::before {
+  content: "\F0731";
+}
+
 .mdi-arrow-left-circle::before {
   content: "\F0CDD";
 }
