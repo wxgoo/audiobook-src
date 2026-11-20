@@ -935,7 +935,7 @@ class AdminSrtToolStart(BaseHandler):
     @js
     @is_admin
     async def post(self):
-        data = self.get_json_body() or {}
+        data = tornado.escape.json_decode(self.request.body) or {}
         raw_ids = data.get("book_ids") or []
         if not isinstance(raw_ids, (list, tuple)) or not raw_ids:
             return {"err": "params.book_ids.missing", "msg": _("请选择至少一本书")}
