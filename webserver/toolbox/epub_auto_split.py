@@ -29,6 +29,7 @@ from webserver.toolbox.epub_auto_split_lib import (
 )
 from webserver.constants import AUTO_FILL_META
 from webserver.models import Item
+from webserver.services import AsyncService
 from webserver.services.autofill import AutoFillService
 
 COVER_MIN_WIDTH = 400
@@ -65,6 +66,7 @@ class EpubAutoSplitTool(BaseTool):
             data = f.read()
         return book, SplitEpub(io.BytesIO(data))
 
+    @AsyncService.register_function
     def detect(self, book_id: int) -> dict:
         """解析目录并自动检测分册，返回章节列表 + 候选分册分组。"""
         book, epub = self._load_epub(book_id)
@@ -81,6 +83,7 @@ class EpubAutoSplitTool(BaseTool):
             "diagnostics": {k: v for k, v in diag.items() if k != "scores"},
         }
 
+    @AsyncService.register_function
     def batch_split(self, book_id: int, volumes: list, user_id: int,
                     use_chapter_cover: bool = True, progress_callback=None) -> dict:
         """按给定的分册分组，一次拆成多本新书。
