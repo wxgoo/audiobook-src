@@ -50,10 +50,20 @@ class AIFillInfoService(AsyncService):
         return BookAIClient()
 
     def _missing_api_key_msg(self) -> str:
-        if not CONF.get("AI_ENABLED"):
+        conf = loader.get_settings()
+        if not conf.get("AI_ENABLED"):
             return _("AI 助手未启用，需要到系统设置中启用")
-        if not CONF.get("AI_DEEPSEEK_API_KEY"):
-            return _("请先在系统管理中设置 DeepSeek API 密钥")
+        raw_key = str(conf.get("AI_DEEPSEEK_API_KEY", "") or "").strip()
+        if not raw_key:
+            return _("请先在系统管理中设置 AI（OpenRouter）API 密钥")
+        # 中文占位符 key 会导致 httpx 构造请求头时报 ascii/latin-1 编码错误。
+        # 提前拦下，给出可操作的提示，而不是让调用崩溃后笼统报「未能返回有效信息」。
+        try:
+            raw_key.encode("ascii")
+        except UnicodeEncodeError:
+            return _("AI 密钥还是占位符（含中文），请在「系统设置 → 刮削与AI」填入真实的 OpenRouter key")
+        if "在这里填" in raw_key or "your" in raw_key.lower() or "placeholder" in raw_key.lower():
+            return _("AI 密钥还是占位符，请在「系统设置 → 刮削与AI」填入真实的 OpenRouter key")
         return ""
 
     def _apply_ai_info(self, book_id: int, mi, info: AIBookInfo) -> bool:

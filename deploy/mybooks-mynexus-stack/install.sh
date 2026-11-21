@@ -13,14 +13,19 @@
 #   - 镜像本地没有就自动从旁边的离线包 docker load，不让你去 pull（绕开群晖 TLS 证书坑）
 #   - DATA_DIR 自动探测 + 体检，填错会明确警告
 #   - 起完容器做健康检查，没起来直接给排查命令
+#   - 升级重装免重输 key：解压新包前把旧 deploy-stack 改名为 deploy-stack.old，
+#     本脚本会自动从 deploy-stack.old/.env 继承已填好的 key/token（只继承到仍是
+#     占位符的字段，绝不覆盖你新填的真值）。全新安装没有旧目录时照常提示输入。
 #
 # 用法：
 #   ./install.sh                # 逐步确认（推荐）
 #   ./install.sh --yes          # 跳过确认，全自动
 #   ./install.sh --dry-run      # 只打印计划，不实际执行
-#   OLD_DIR=/path/audiobook ./install.sh   # 手动指定旧目录
+#   OLD_DIR=/path/audiobook ./install.sh   # 手动指定旧目录（书库目录探测用）
+#   OLD_STACK_DIR=/path/deploy-stack.old ./install.sh  # 手动指定旧配置目录（key 继承用）
 #
-# 前置：.env 里填好 LLM_API_KEY / AI_API_KEY（你的 OpenRouter key，私人凭证无法代填）。
+# 前置：全新安装时 .env 里填好 LLM_API_KEY / AI_API_KEY（你的 OpenRouter key，私人凭证无法代填）；
+#       升级安装时把旧目录留成 deploy-stack.old，key 会自动继承，无需重填。
 #       两个离线镜像包（mybooks full + mynexus）会按需自动 load。
 # ============================================================================
 set -euo pipefail
@@ -67,6 +72,21 @@ env_get() {
   grep -E "^[[:space:]]*$1=" "$ENV_FILE" | head -1 \
     | sed "s/^[^=]*=//; s/^[\"']//; s/[\"']$//" | tr -d '\r'
 }
+
+# 从【指定】env 文件读 key（用于旧目录 deploy-stack.old/.env）
+# 用法: env_get_file <文件> <key>
+env_get_file() {
+  local f="$1" k="$2"
+  [ -f "$f" ] || return 0
+  grep -E "^[[:space:]]*$k=" "$f" | head -1 \
+    | sed "s/^[^=]*=//; s/^[\"']//; s/[\"']$//" | tr -d '\r'
+}
+
+# 升级时复用旧配置：解压新包前若把旧 deploy-stack 改名为 deploy-stack.old，
+# 这里从旧 .env 继承已填好的 key / token，避免每次重装都要重新输入。
+# 只继承到「新 .env 当前仍是占位符」的字段，绝不覆盖已填好的真值。
+OLD_STACK_DIR="${OLD_STACK_DIR:-$SCRIPT_DIR/../deploy-stack.old}"
+OLD_STACK_ENV="$OLD_STACK_DIR/.env"
 
 # ---------- 0. 前置检查 ----------
 step "前置检查"
@@ -183,15 +203,94 @@ ok "最终 DATA_DIR = $DATA_DIR"
 
 # ============ 3. 配置检查 / 生成 ============
 step "3/7 检查 LLM Key 与 API Token"
+
+# 占位符判定：空 / 含中文等非 ASCII / 常见占位字样。
+# 关键：随包 .env 的默认是「sk-or-v1-你的OpenRouter密钥」，含中文。HTTP 请求头
+# 只允许 ASCII，这种占位符一旦被写进设置页，AI 助手/AI 刮削调用时 openai SDK
+# 会直接抛 'ascii' codec can't encode characters 而崩溃。必须在这里拦住。
+is_placeholder_key() {
+  local v="$1"
+  [ -z "$v" ] && return 0
+  # 非 ASCII（中文全角等）——真实 API key 一定是纯 ASCII
+  if printf '%s' "$v" | LC_ALL=C grep -q '[^ -~]'; then return 0; fi
+  # 常见占位字样
+  if printf '%s' "$v" | grep -qiE '在这里填|你的|your[_-]*(api[_-]*)?key|your[_-]*token|placeholder|please[_-]?change|replace[_-]?me|xxxx+|示例|example|<[^>]+>'; then return 0; fi
+  return 1
+}
+
+# 交互式询问并写回 .env 的某个 key
+ask_key() {
+  local key="$1" label="$2" current="$3" newval=""
+  if [ "$YES" = 1 ] || [ "$DRY" = 1 ]; then
+    warn "$label 仍是占位符，但当前是 --yes/--dry-run 模式无法交互。"
+    return 1
+  fi
+  printf '\n>>> %s 还是占位符，会损坏 AI 功能。请输入真实 key（留空跳过）: ' "$label"
+  read -r newval
+  if [ -z "$newval" ]; then
+    warn "$label 未修改；AI 功能不可用，稍后可编辑 .env 重试。"
+    return 1
+  fi
+  if is_placeholder_key "$newval"; then
+    err "$label 仍是占位符/含中文，已忽略。"
+    return 1
+  fi
+  if [ "$DRY" = 0 ]; then
+    sed -i.bak "s|^[[:space:]]*${key}=.*|${key}=${newval}|" "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+  fi
+  ok "$label 已写入 .env"
+  return 0
+}
+
+# 从旧配置继承单个字段：仅当新值是占位符、旧值有效时才继承，
+# 绝不覆盖新 .env 里已经填好的真值。返回 1 表示"无需继承/无值可继承"。
+inherit_from_old() {
+  local key="$1" label="$2" oldval newval
+  oldval="$(env_get_file "$OLD_STACK_ENV" "$key")"
+  newval="$(env_get "$key")"
+  if ! is_placeholder_key "$newval"; then
+    ok "$label 已是有效值，跳过继承"
+    return 0
+  fi
+  if is_placeholder_key "$oldval"; then
+    return 1
+  fi
+  if [ "$DRY" = 1 ]; then
+    printf '  [DRY-RUN] 从旧 .env 继承 %s=%s\n' "$key" "$oldval"
+    return 0
+  fi
+  sed -i.bak "s|^[[:space:]]*${key}=.*|${key}=${oldval}|" "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+  ok "$label 已从 deploy-stack.old/.env 继承"
+  return 0
+}
+
+if [ -f "$OLD_STACK_ENV" ]; then
+  log ""
+  ok "检测到旧配置: $OLD_STACK_ENV，尝试继承已填的 key/token（免得重新输入）"
+  inherit_from_old LLM_API_KEY     "LLM_API_KEY"     || true
+  inherit_from_old AI_API_KEY      "AI_API_KEY"      || true
+  inherit_from_old MYNEXUS_API_TOKEN "MYNEXUS_API_TOKEN" || true
+else
+  log "  未检测到 deploy-stack.old/.env（全新安装，或没留旧配置）"
+fi
+
 LLM_KEY="$(env_get LLM_API_KEY)"
 AI_KEY="$(env_get AI_API_KEY)"
-if printf '%s' "$LLM_KEY" | grep -q '在这里填\|^[[:space:]]*$'; then
-  warn "LLM_API_KEY 还是占位符：MyBooks 正常用，但 AI 伴读/解析不工作。"
+if is_placeholder_key "$LLM_KEY"; then
+  warn "LLM_API_KEY 还是占位符：MyBooks 正常用，但 MyNexus AI 不工作。"
+  ask_key LLM_API_KEY "LLM_API_KEY" "$LLM_KEY" && LLM_KEY="$(env_get LLM_API_KEY)"
 else
   ok "LLM_API_KEY 已填写"
 fi
-if [ -n "$AI_KEY" ] && ! printf '%s' "$AI_KEY" | grep -q '在这里填\|^[[:space:]]*$'; then
+if is_placeholder_key "$AI_KEY"; then
+  warn "AI_API_KEY 还是占位符：全局 AI 助手/AI 刮削会报 ascii 编码错误。"
+  ask_key AI_API_KEY "AI_API_KEY" "$AI_KEY" && AI_KEY="$(env_get AI_API_KEY)"
+else
   ok "AI_API_KEY 已填写（全局 AI 助手）"
+fi
+# 最终校验：只要仍是占位符就再强调一次（--yes 场景下不阻断，但给出醒目指引）
+if is_placeholder_key "$AI_KEY"; then
+  warn "提醒：请编辑 $ENV_FILE 把 AI_API_KEY / LLM_API_KEY 换成真实的 OpenRouter key（纯英文数字），再重新运行 install.sh。"
 fi
 
 TOKEN="$(env_get MYNEXUS_API_TOKEN)"

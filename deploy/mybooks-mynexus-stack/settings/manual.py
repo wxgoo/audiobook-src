@@ -12,6 +12,29 @@
 # 所有密钥从环境变量读取，与 .env 保持单一来源。
 
 import os
+import re
+
+
+def _clean_key(value):
+    """拒绝占位符/含中文的 key，避免写进设置页后在 openai SDK 构造
+    Authorization 头时触发 'ascii' codec can't encode characters 崩溃。
+    真实 API key 一定是纯 ASCII；占位符（如「sk-or-v1-你的OpenRouter密钥」）
+    宁可当成空，让用户看到空输入框去填真实值，也不要预填一个会崩的坏值。"""
+    if not value:
+        return ""
+    try:
+        value.encode("ascii")
+    except UnicodeEncodeError:
+        return ""
+    if re.search(
+        r"在这里填|your[_-]*(api[_-]*)?key|your[_-]*token|placeholder|"
+        r"please[_-]?change|replace[_-]?me|xxxx+|示例|example|<[^>]+>",
+        value,
+        re.IGNORECASE,
+    ):
+        return ""
+    return value
+
 
 settings = {
     # ---- MyNexus AI 伴读 ----
@@ -22,7 +45,7 @@ settings = {
     # URL 统一为 OpenRouter base（不带 /chat/completions，客户端会自动拼）；
     # 模型 openrouter/free 自动路由可用免费模型，避开单模型限流。
     "AI_ENABLED": True,
-    "AI_DEEPSEEK_API_KEY": os.environ.get("AI_API_KEY", ""),
+    "AI_DEEPSEEK_API_KEY": _clean_key(os.environ.get("AI_API_KEY", "")),
     "AI_API_URL": os.environ.get("AI_BASE_URL", "https://openrouter.ai/api/v1"),
     "AI_MODEL": os.environ.get("AI_MODEL", "openrouter/free"),
     "AI_MCP_TOKEN": os.environ.get("AI_MCP_TOKEN", ""),

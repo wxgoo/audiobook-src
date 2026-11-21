@@ -53,11 +53,42 @@ class BookAIClient:
         "}"
     )
 
+    @staticmethod
+    def _clean_key(value) -> str:
+        """拒绝中文占位符/非 ASCII 的 key。
+
+        OpenAI SDK 用 httpx 构造 Authorization 头时按 latin-1/ascii 编码，
+        形如「sk-or-v1-在这里填你的OpenRouter密钥」的占位符一旦传进去，
+        就会抛 'ascii'/'latin-1' codec can't encode characters 而崩溃
+        （历史 bug：AI 助手已修，此处书籍解析曾漏修）。真实 key 一定是纯 ASCII。
+        """
+        value = str(value or "").strip()
+        if not value:
+            return ""
+        try:
+            value.encode("ascii")
+        except UnicodeEncodeError:
+            return ""
+        # 常见占位字样一律视为未配置
+        import re
+        if re.search(
+            r"在这里填|你的|your[_-]*(api[_-]*)?key|placeholder|please[_-]?change|"
+            r"replace[_-]?me|xxxx+|示例|example|<[^>]+>",
+            value, re.IGNORECASE,
+        ):
+            return ""
+        return value
+
     def __init__(self, url: str = None, key: str = None, model: str = None):
-        api_key = key if key else CONF.get("AI_DEEPSEEK_API_KEY", "")
-        api_url = url if url else CONF.get("AI_API_URL", DEEPSEEK_API_BASE)
+        # 每次都从当前配置读取，避免设置页改了 key/模型后后台服务仍用旧值。
+        conf = loader.get_settings()
+        api_key = self._clean_key(key if key else conf.get("AI_DEEPSEEK_API_KEY", ""))
+        api_url = (url if url else conf.get("AI_API_URL", "")) or DEEPSEEK_API_BASE
         if not api_key or not api_url:
-            raise ValueError("API_KEY or API_URL is not configured")
+            raise ValueError(
+                "AI 密钥未配置或仍是占位符。请在「系统设置 → 刮削与AI」里填入真实的 "
+                "OpenRouter key（sk-or-v1- 开头、纯英文数字），保存后重试。"
+            )
 
         from openai import OpenAI
         self.client = OpenAI(
@@ -65,7 +96,7 @@ class BookAIClient:
             base_url=api_url,
             timeout=60.0,
         )
-        self.model = model if model else CONF.get("AI_MODEL", "deepseek-chat")
+        self.model = model if model else conf.get("AI_MODEL", "deepseek-chat")
 
     @staticmethod
     def _is_valid_isbn(isbn: str) -> bool:
