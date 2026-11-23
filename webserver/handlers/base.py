@@ -1686,6 +1686,13 @@ class BaseHandler(web.RequestHandler):
         try:
             with self.db_lock:
                 rows = self.calibre_db_cache.backend.conn.get(sql)
+            if orig_field == "author":
+                # Calibre 把作者名中的逗号在存储层转成竖线；对外展示、搜索
+                # 与书籍详情页作者入口用的都是逗号形态（talebook #1098）。
+                # 分类列表原样吐竖线名，前端拿竖线名去筛选必然为空。
+                # 受限用户口径的计数键来自 get_data_as_dict（已是逗号形态），
+                # 统一还原后还能顺带修掉受限作者分类计数对不上的隐患。
+                rows = [(a, b.replace("|", ","), c) for a, b, c in rows]
             if scoped:
                 # 保留数据库 id，只把 count 换成「该用户可见的书数」，并丢掉
                 # 计数为 0 的条目（黑名单下整类都读不到时不该还列在那儿）。
