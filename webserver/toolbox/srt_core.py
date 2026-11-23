@@ -39,7 +39,7 @@ from pathlib import Path
 
 log = logging.getLogger("srt")
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 # ==================== 引导语 ====================
 _ZH_PROMPT = "以下是普通话的句子，请输出简体中文并加上标点。"

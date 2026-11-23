@@ -38,7 +38,9 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger("srt")
 
 AUDIO_EXTS = {".mp3", ".m4a", ".m4b", ".wav", ".flac", ".ogg", ".opus",
-              ".aac", ".wma", ".mp4", ".mkv", ".mov", ".webm", ".aiff", ".aif"}
+              ".aac", ".wma", ".mp4", ".mkv", ".mov", ".webm", ".aiff", ".aif",
+              # OneAsr v1.4.0 的 20 种媒体格式补齐（ffmpeg 都能解，扫描不到就不处理）
+              ".flv", ".ts", ".mpeg", ".mpg", ".wmv", ".3gp"}
 CACHE_DIR = Path.home() / ".cache" / "srt-tool"
 
 _EVENTS = False

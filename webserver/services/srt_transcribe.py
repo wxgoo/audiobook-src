@@ -19,7 +19,9 @@ from pathlib import Path
 
 _log = logging.getLogger("srt_transcribe")
 
-AUDIO_EXTS = (".mp3", ".m4a", ".flac", ".ogg", ".wav", ".wma", ".aac")
+AUDIO_EXTS = (".mp3", ".m4a", ".m4b", ".flac", ".ogg", ".wav", ".wma",
+              ".aac", ".opus", ".aiff", ".aif",
+              ".mp4", ".mkv", ".mov", ".webm", ".flv", ".ts", ".mpg", ".wmv")
 
 # 识别内核 srt_core.py / make_srt*.py 平铺在 webserver/toolbox/ 下（与其它工具模块
 # 同层，随 webserver/ 一起 COPY 进镜像）；srt_core 对 faster_whisper 惰性导入。

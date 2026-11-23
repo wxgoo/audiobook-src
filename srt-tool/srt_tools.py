@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
 import re
 import sys
@@ -33,10 +34,43 @@ _SRT_TIME = re.compile(r"^\s*\d{2}:\d{2}:\d{2}[,.]\d+\s*-->\s*")
 
 
 # ---------------- 文稿读写 ----------------
+def _read_text_smart(p: Path) -> str:
+    """按文件自身编码读文稿（OneAsr v1.4.2 同款思路）。
+
+    顺序：BOM 精确识别（utf-8-sig / utf-16）→ 严格 utf-8 → 中文常见
+    gb18030（Windows 记事本 ANSI 默认）。都失败才报错并说明原因，
+    不再 silent mojibake——以前 GBK 文稿走 errors="replace" 全变乱码。
+    """
+    data = p.read_bytes()
+    if not data:
+        return ""
+    # BOM 头精确识别（BOM 存在时编码不容歧义）
+    for bom, enc in ((codecs.BOM_UTF8, "utf-8-sig"),
+                     (codecs.BOM_UTF32_LE, "utf-32"),
+                     (codecs.BOM_UTF32_BE, "utf-32"),
+                     (codecs.BOM_LE, "utf-16"),
+                     (codecs.BOM_BE, "utf-16")):
+        if data.startswith(bom):
+            try:
+                return data.decode(enc)
+            except UnicodeDecodeError as e:
+                raise ValueError(f"{p.name}：带 BOM 的 {enc} 文稿解码失败（{e}），请检查文件是否损坏") from e
+    # 无 BOM：严格 utf-8 → gb18030 逐级尝试
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    try:
+        return data.decode("gb18030")   # gb18030 是 GBK/GB2312 的超集
+    except UnicodeDecodeError as e:
+        raise ValueError(f"{p.name}：文稿不是 UTF-8/GBK/GB18030 编码（{e}），"
+                         "请在编辑器里另存为 UTF-8 后重试") from e
+
+
 def read_transcript(path: Path | str) -> list[str]:
     """读 .txt / .srt 文稿；.srt 丢掉序号与时间行，只留文本行。"""
     p = Path(path)
-    raw = p.read_text(encoding="utf-8", errors="replace")
+    raw = _read_text_smart(p)
     if p.suffix.lower() == ".srt":
         lines = []
         for ln in raw.splitlines():

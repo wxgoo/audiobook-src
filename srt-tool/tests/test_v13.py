@@ -151,7 +151,7 @@ def test_status_json(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["srt_tools.py", "status", "--json"])
     assert srt_tools.main() == 0
     info = json.loads(capsys.readouterr().out)
-    assert info["version"] == "1.3.0"
+    assert info["version"] == "1.3.1"
     assert "short" in info["presets"]
 
 

@@ -18,7 +18,7 @@ class SrtTool:
             "tool_id": "srt_tool",
             "name": "音频转写文稿",
             "description": "选择书籍，把 .audio/ 里的音频用 faster-whisper 批量转写成同名 .srt 字幕，网页播放器自动加载；支持后台运行与取消。v1.3 识别内核升级：词/字级时间轴（断行更贴合朗读节奏）、更强的幻觉剔除与字幕排版（借鉴 OneAsr 流水线设计）",
-            "revision": "1.3.0",
+            "revision": "1.3.1",
             "author": "MyBooks",
             "publish_date": "2026-11-07",
         }
