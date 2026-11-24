@@ -235,7 +235,7 @@ settings = {
     # （目录合并到 audios/<book_id>/），而不是新建一条 calibre 记录。
     # 关掉则恢复旧行为：同名但没音频目录就新建书（会导致同一本书出现两条）。
     "AUDIO_LINK_TO_EXISTING_BOOK": True,
-    # 同名重复书清理（迁移工具）的备份目录。合并前会把用户库备份到这里，
+    # 电子书音频合并（迁移工具，原名同名重复书清理）的备份目录。合并前会把用户库备份到这里，
     # 空值 = <data_path>/backup。见 services/book_dedup.py
     "BOOK_DEDUP_BACKUP_DIR": "",
     "PDF_VIEWER": "/static/pdfjs/web/viewer.html?file=%(pdf_url)s",

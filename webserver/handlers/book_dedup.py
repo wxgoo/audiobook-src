@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
-"""同名重复书清理 API（管理员专用）。
+"""电子书音频合并 API（管理员专用，原名「同名重复书清理」）。
 
 配合 services/book_dedup.py：先 scan 出方案给页面预览，确认后 apply 执行。
 设计上强制「先看后做」——scan 只读，apply 才写，且 apply 前自动备份用户库。

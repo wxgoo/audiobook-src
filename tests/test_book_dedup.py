@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
-"""同名重复书清理（services/book_dedup.py）的单元测试。
+"""电子书音频合并（services/book_dedup.py，原名同名重复书清理）的单元测试。
 
 重点覆盖三条安全线：
   ① 方向不明确的组**绝不**自动合并（两本都有电子书、都没电子书、组过大）；
