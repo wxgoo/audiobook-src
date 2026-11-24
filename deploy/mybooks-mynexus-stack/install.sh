@@ -10,7 +10,7 @@
 #
 # 已内置兜住的问题（不用你操心）：
 #   - bind mount 目录（mynexus-data/config、DATA_DIR/books 骨架）自动预建 + 授权
-#   - 镜像本地没有就自动从旁边的离线包 docker load，不让你去 pull（绕开群晖 TLS 证书坑）
+#   - 本机 Docker 没有该镜像就自动从旁边的离线包 docker load，不让你去 pull（绕开群晖 TLS 证书坑）
 #   - DATA_DIR 自动探测 + 体检，填错会明确警告
 #   - 起完容器做健康检查，没起来直接给排查命令
 #   - 升级重装免重输 key：解压新包前把旧 deploy-stack 改名为 deploy-stack.old，
@@ -326,15 +326,15 @@ if [ "$DRY" != 1 ]; then
   done
 fi
 
-# ============ 5. 镜像准备（本地优先，缺失自动从离线包 load）============
-step "5/7 检查镜像（本地优先，缺失自动导入离线包）"
+# ============ 5. 镜像准备（本机 Docker 优先，缺失自动从离线包 load）============
+step "5/7 检查镜像（本机 Docker 优先，缺失自动导入离线包）"
 ensure_image() {
   local tag="$1"; shift
   local tars=("$@")
   if docker image inspect "$tag" >/dev/null 2>&1; then
-    ok "本地已有镜像: $tag"; return 0
+    ok "本机 Docker 已有镜像: $tag"; return 0
   fi
-  log "本地无 $tag，查找离线包..."
+  log "本机 Docker 无 $tag，查找离线包..."
   local found=""
   for t in "${tars[@]}"; do
     for cand in "$SCRIPT_DIR/$t" "$SCRIPT_DIR/../$t"; do
