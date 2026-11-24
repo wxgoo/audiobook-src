@@ -60,6 +60,10 @@ class TestCoreAPINamespaces(unittest.TestCase):
     def test_version_constant(self):
         self.assertEqual(CoreAPI.VERSION, CORE_API_VERSION)
         self.assertRegex(CORE_API_VERSION, r"^\d+\.\d+\.\d+$")
+        # 「标签清理」等外部工具的 manifest.json 声明 core_api_version=1.5.0，
+        # 依赖本版本新增的 get_category_with_count；宿主不应低于它
+        semver = tuple(int(p) for p in CORE_API_VERSION.split("."))
+        self.assertGreaterEqual(semver, (1, 5, 0))
 
     def test_namespaces_exist(self):
         for ns in ("calibre", "db", "tasks", "messages", "storage", "settings", "utils"):
@@ -92,6 +96,61 @@ class TestCoreAPINamespaces(unittest.TestCase):
         result = self.api.calibre.get_field_map("tags", [1, 2])
         self.owner.db.new_api.all_field_for.assert_called_once_with("tags", [1, 2])
         self.assertEqual(result, {1: ("a",), 2: ()})
+
+    # --- CoreAPI.calibre.get_category_with_count（1.5.0 新增）---
+
+    def _setup_category_db(self, field_metadata, usage, id_map):
+        """给 FakeOwner.db 塞上真实 dict：field_metadata 用字典参与 `in` 判断。"""
+        self.owner.db.field_metadata = field_metadata
+        self.owner.db.new_api.get_usage_count_by_id.return_value = usage
+        self.owner.db.new_api.get_id_map.return_value = id_map
+
+    def test_calibre_get_category_with_count_counts_and_sorts(self):
+        self._setup_category_db(
+            {"tags": {}},
+            usage={10: 3, 20: 1},
+            id_map={10: "小说", 20: "历史"},
+        )
+        rows = self.api.calibre.get_category_with_count("tags")
+        # 按 name 升序：历(U+5386) < 小(U+5C0F)
+        self.assertEqual(rows, [
+            {"id": 20, "name": "历史", "count": 1},
+            {"id": 10, "name": "小说", "count": 3},
+        ])
+        self.owner.db.new_api.get_usage_count_by_id.assert_called_once_with("tags")
+        self.owner.db.new_api.get_id_map.assert_called_once_with("tags")
+
+    def test_calibre_get_category_with_count_singular_normalized(self):
+        # 工具传单数 "tag"，应自动按复数字段名 "tags" 解析
+        self._setup_category_db(
+            {"tags": {}},
+            usage={7: 2},
+            id_map={7: "科幻"},
+        )
+        rows = self.api.calibre.get_category_with_count("tag")
+        self.assertEqual(rows, [{"id": 7, "name": "科幻", "count": 2}])
+        self.owner.db.new_api.get_usage_count_by_id.assert_called_once_with("tags")
+
+    def test_calibre_get_category_with_count_keeps_dict_rows_and_none_names(self):
+        # usage 里出现了 id_map 没有的取值（防御场景）：name 给 None，不抛异常
+        self._setup_category_db(
+            {"tags": {}},
+            usage={1: 2, 9: 1},
+            id_map={1: "abc"},
+        )
+        rows = self.api.calibre.get_category_with_count("tags")
+        self.assertEqual(rows, [
+            {"id": 9, "name": None, "count": 1},   # name 为 None 排在空串键位最前
+            {"id": 1, "name": "abc", "count": 2},
+        ])
+
+    def test_calibre_get_category_with_count_unknown_field_raises(self):
+        self._setup_category_db({"tags": {}}, usage={}, id_map={})
+        self.owner.db.new_api.get_usage_count_by_id.side_effect = ValueError(
+            "nosuch is not a many-one or many-many field"
+        )
+        with self.assertRaises(ValueError):
+            self.api.calibre.get_category_with_count("nosuch")
 
     def test_calibre_set_language_forwards(self):
         self.api.calibre.set_language(5, "zh")

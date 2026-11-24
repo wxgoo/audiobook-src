@@ -37,7 +37,9 @@ from webserver.i18n import _
 # 版本与 MyBooks 发行版的对应（表示从该 MyBooks 版本起支持）：
 #   1.3.0 -> v4.3.1
 #   1.4.0 -> v4.4.2
-CORE_API_VERSION = "1.4.0"
+#   1.5.0 -> v4.7.0（新增 CoreAPI.calibre.get_category_with_count，外部工具
+#            「标签清理」等按取值统计类工具依赖它）
+CORE_API_VERSION = "1.5.0"
 
 
 class _NamespaceBase:
@@ -258,6 +260,41 @@ class CalibreAPI(_NamespaceBase):
             字段不存在时抛出 `KeyError`。
         """
         return self._owner.db.new_api.all_field_for(field, book_ids)
+
+    def get_category_with_count(self, field: str) -> List[dict]:
+        """按分类字段统计"每个取值"当前关联的书籍数，一次调用拿到全量计数。
+
+        与 `get_field_map` 的区别：后者按书籍维度返回 `{book_id: 值}`；本方法按取值
+        维度聚合，直接走 Calibre 的内存缓存（`col_book_map` / `id_map`），不逐本书
+        构造元数据，3000+ 个标签也只有一次内存遍历的开销，适合"标签云/分类统计/
+        按取值圈定书籍范围"这类全库统计场景。
+
+        Args:
+            field: Calibre 多值字段名。内置字段既可写复数形式（如 `"tags"`/`"authors"`/
+                `"series"`/`"publisher"`/`"languages"`），也可写单数形式（如 `"tag"`/
+                `"author"`，会自动按复数解析）；自定义列须带 `#` 前缀（如 `"#category"`）。
+
+        Returns:
+            `[{"id": 取值id, "name": 取值名, "count": 关联书籍数}, ...]`，按 name 升序
+            （大小写不敏感）。只含有书在用的取值——Calibre 的字典表会残留已从所有书
+            移除的孤儿取值，这里不返回它们（因此 count 恒 > 0）。
+
+        Raises:
+            ValueError: 字段不存在，或该字段不是 many-one/many-many 类型（如计算列）。
+        """
+        db = self._owner.db
+        # "tag"/"author" 这类单数写法按复数字段名解析，降低工具作者的拼写负担
+        if field not in db.field_metadata and field + "s" in db.field_metadata:
+            field = field + "s"
+        # 两个调用都由 @read_api 加读锁访问内存缓存，不需要外部持锁
+        usage = db.new_api.get_usage_count_by_id(field)
+        id_map = db.new_api.get_id_map(field)
+        rows = [
+            {"id": item_id, "name": id_map.get(item_id), "count": count}
+            for item_id, count in usage.items()
+        ]
+        rows.sort(key=lambda row: str(row["name"] or "").lower())
+        return rows
 
     def set_custom(self, label: str, values: dict) -> None:
         """批量写入自定义列的值。
