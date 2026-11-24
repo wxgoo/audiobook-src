@@ -935,7 +935,7 @@ class AdminSrtToolStart(BaseHandler):
     @js
     @is_admin
     async def post(self):
-        data = tornado.escape.json_decode(self.request.body) or {}
+        data = self.get_json_body() or {}
         raw_ids = data.get("book_ids") or []
         if not isinstance(raw_ids, (list, tuple)) or not raw_ids:
             return {"err": "params.book_ids.missing", "msg": _("请选择至少一本书")}
@@ -1036,6 +1036,59 @@ class AdminSrtToolRestart(BaseHandler):
         ok, msg = srt_transcribe.restart_tornado()
         if not ok:
             return {"err": "restart.failed", "msg": msg}
+        return {"err": "ok", "msg": msg}
+
+
+class AdminSrtToolModels(BaseHandler):
+    """模型管理面板数据：五档模型的缓存状态 + 当前 HF 镜像配置。
+
+    借鉴外部「有声书字幕」工具：国内 NAS 直连 huggingface.co 常年超时，
+    模型列表支持按需下载（走镜像）/删除释放，镜像内置 small 兜底离线使用。
+    """
+    @js
+    @is_admin
+    def get(self):
+        return {"err": "ok", "data": {
+            "models": srt_transcribe.model_status(),
+            "mirror": srt_transcribe.hf_mirror(),
+            "model_dl": srt_transcribe.task_snapshot().get("model_dl"),
+            "available": srt_transcribe.available(),
+        }}
+
+
+class AdminSrtToolModelDownload(BaseHandler):
+    """后台预下载指定档位的 whisper 模型（走 HF 镜像）。"""
+    @js
+    @is_admin
+    def post(self):
+        data = self.get_json_body() or {}
+        ok, msg = srt_transcribe.model_download(data.get("model") or "")
+        if not ok:
+            return {"err": "model.download.failed", "msg": msg}
+        return {"err": "ok", "msg": msg}
+
+
+class AdminSrtToolModelDelete(BaseHandler):
+    """删除指定档位模型的本地缓存，释放磁盘。"""
+    @js
+    @is_admin
+    def post(self):
+        data = self.get_json_body() or {}
+        ok, msg = srt_transcribe.model_delete(data.get("model") or "")
+        if not ok:
+            return {"err": "model.delete.failed", "msg": msg}
+        return {"err": "ok", "msg": msg}
+
+
+class AdminSrtToolHfMirror(BaseHandler):
+    """保存 HF 镜像地址（CONF 内存生效 + dumpfile 落盘 auto.py）。"""
+    @js
+    @is_admin
+    def post(self):
+        data = self.get_json_body() or {}
+        ok, msg = srt_transcribe.save_hf_mirror(data.get("mirror") or "")
+        if not ok:
+            return {"err": "mirror.save.failed", "msg": msg}
         return {"err": "ok", "msg": msg}
 
 
@@ -1984,6 +2037,10 @@ def routes():
         (r"/api/toolbox/srt_tool/status", AdminSrtToolStatus),
         (r"/api/toolbox/srt_tool/install", AdminSrtToolInstall),
         (r"/api/toolbox/srt_tool/restart", AdminSrtToolRestart),
+        (r"/api/toolbox/srt_tool/models", AdminSrtToolModels),
+        (r"/api/toolbox/srt_tool/model_download", AdminSrtToolModelDownload),
+        (r"/api/toolbox/srt_tool/model_delete", AdminSrtToolModelDelete),
+        (r"/api/toolbox/srt_tool/hf_mirror", AdminSrtToolHfMirror),
                 (r"/api/toolbox/bookbarn_acceptor/status", AdminBookBarnAcceptorStatus),
                 (r"/api/toolbox/bookbarn_acceptor/toggle", AdminBookBarnAcceptorToggle),
                 (r"/api/toolbox/bookbarn_acceptor/apply_token", AdminBookBarnAcceptorApplyToken),

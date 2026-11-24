@@ -173,6 +173,150 @@ SCRIPT_CHOICES = ("original", "simplified", "traditional")
 HOTWORDS_MAX_LEN = 300
 
 
+# ==================== 模型管理（借鉴外部「有声书字幕」工具） ====================
+# faster-whisper 的模型在首次使用时按需下载到 HF 缓存（~/.cache/huggingface/hub）。
+# 国内 NAS 直连 huggingface.co 常年超时，这里统一走 SRT_HF_MIRROR 镜像；
+# 模型管理面板提供「按需下载 / 查看占用 / 删除释放」三个动作，镜像内置 small 兜底。
+
+MODEL_ORDER = ("tiny", "base", "small", "medium", "large-v3")
+MODEL_SIZES = {"tiny": "72 MB", "base": "138 MB", "small": "463 MB",
+               "medium": "1.4 GB", "large-v3": "2.9 GB"}
+_MODEL_REPO = "Systran/faster-whisper-{name}"
+_model_dl_thread = None
+
+
+def hf_mirror() -> str:
+    """当前配置的 HF 镜像地址（空串 = 官方源）。"""
+    from webserver import loader
+    return str(loader.get_settings().get("SRT_HF_MIRROR") or "").strip()
+
+
+def apply_hf_env():
+    """把镜像配置写进进程环境：huggingface_hub 下载前会读 HF_ENDPOINT。
+
+    必须在 WhisperModel/snapshot_download 之前调用；重复调用幂等。
+    """
+    mirror = hf_mirror()
+    if mirror:
+        os.environ["HF_ENDPOINT"] = mirror
+    else:
+        os.environ.pop("HF_ENDPOINT", None)
+
+
+def _hf_model_dir(model: str) -> Path:
+    """某档模型在 HF 缓存里的目录（可能不存在）。"""
+    return Path.home() / ".cache" / "huggingface" / "hub" / (
+        "models--Systran--faster-whisper-%s" % model)
+
+
+def _dir_size(path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def _human(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return ("%d %s" % (n, unit)) if unit == "B" else ("%.1f %s" % (n, unit))
+        n /= 1024.0
+    return "%d B" % n
+
+
+def model_status() -> list:
+    """五档模型的状态表：[{model, size, downloaded, bytes}]（tiny→large-v3）。"""
+    out = []
+    for name in MODEL_ORDER:
+        d = _hf_model_dir(name)
+        n = _dir_size(d) if d.is_dir() else 0
+        out.append({"model": name, "size": MODEL_SIZES.get(name, ""),
+                    "downloaded": n > 0, "bytes": n})
+    return out
+
+
+def _set_model_dl(**kw):
+    with _lock:
+        _snapshot.setdefault("model_dl", {}).update(kw)
+
+
+def model_download(model: str):
+    """后台线程预下载模型（走镜像）。返回 (ok, msg)。"""
+    global _model_dl_thread
+    model = (model or "").strip()
+    if model not in MODEL_ORDER:
+        return False, "未知模型：%s" % model
+    with _lock:
+        if is_running():
+            return False, "转写任务进行中，请稍后再下载模型"
+        if _model_dl_thread is not None and _model_dl_thread.is_alive():
+            return False, "模型下载已在进行中"
+        if _hf_model_dir(model).is_dir() and _dir_size(_hf_model_dir(model)) > 0:
+            return False, "模型 %s 已下载" % model
+        _snapshot["model_dl"] = {
+            "state": "running", "model": model,
+            "log": "开始下载 %s（%s）…" % (model, MODEL_SIZES.get(model, "?"))}
+    th = threading.Thread(target=_model_dl_worker, args=(model,), daemon=True)
+    _model_dl_thread = th
+    th.start()
+    return True, "模型 %s 开始下载" % model
+
+
+def _model_dl_worker(model: str):
+    ok, msg = False, ""
+    try:
+        apply_hf_env()
+        from huggingface_hub import snapshot_download
+        _set_model_dl(log="下载中（走 %s）…" % (hf_mirror() or "huggingface.co"))
+        snapshot_download(repo_id=_MODEL_REPO.format(name=model))
+        ok = True
+        msg = "模型 %s 下载完成" % model
+        _set_model_dl(state="done", log=msg)
+    except Exception as e:  # noqa: BLE001
+        msg = "模型 %s 下载失败：%s" % (model, e)
+        _set_model_dl(state="failed", log=str(msg)[-2000:])
+    _log.info("[srt_tool] model download %s ok=%s", model, ok)
+
+
+def model_delete(model: str):
+    """删除某档模型的本地缓存，释放磁盘。返回 (ok, msg)。"""
+    model = (model or "").strip()
+    if model not in MODEL_ORDER:
+        return False, "未知模型：%s" % model
+    d = _hf_model_dir(model)
+    if not d.is_dir() or _dir_size(d) == 0:
+        return False, "模型 %s 尚未下载" % model
+    if is_running():
+        return False, "转写任务进行中，模型可能正被使用，请稍后再删除"
+    n = _dir_size(d)
+    import shutil
+    try:
+        shutil.rmtree(d, ignore_errors=True)
+        if srt_core is not None:
+            srt_core._model_cache.clear()  # 已加载实例一并清掉，下次重新加载
+    except Exception as e:  # noqa: BLE001
+        return False, "删除失败：%s" % e
+    return True, "已删除模型 %s，释放 %s" % (model, _human(n))
+
+
+def save_hf_mirror(mirror: str):
+    """保存镜像地址到 CONF 并落盘 auto.py。返回 (ok, msg)。"""
+    from webserver import loader
+    conf = loader.get_settings()
+    mirror = str(mirror or "").strip().rstrip("/")
+    conf["SRT_HF_MIRROR"] = mirror
+    apply_hf_env()
+    try:
+        conf.dumpfile()
+        return True, "已保存镜像配置：%s" % (mirror or "官方源")
+    except Exception as e:  # noqa: BLE001
+        return False, "已对本次运行生效，但落盘失败：%s" % e
+
+
 def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = False,
           keep_txt: bool = True, preset: str = "standard", script: str = "original",
           write_ass: bool = False, hotwords: str = ""):
@@ -228,6 +372,7 @@ def _finish(state: str, message: str):
 
 def _worker(books, model, lang, overwrite, keep_txt,
             preset="standard", script="original", write_ass=False, hotwords=""):
+    apply_hf_env()  # 模型若未内置/未预下载，转写时自动补下载走镜像
     files = []
     for b in books:
         adir = b["audio_dir"]
@@ -252,6 +397,13 @@ def _worker(books, model, lang, overwrite, keep_txt,
         if os.path.exists(lp(spath)) and not overwrite:
             _set(files_done=_snapshot.get("files_done", 0) + 1, skipped=_snapshot.get("skipped", 0) + 1)
             continue
+        if overwrite and os.path.exists(lp(spath)):
+            # 重新生成前把旧字幕改名留档（借鉴外部「有声书字幕」：覆盖不丢旧版）。
+            # .srt.bak 不匹配字幕扩展名，播放器与后续扫描都不会误读。
+            try:
+                os.replace(lp(spath), lp(spath + ".bak"))
+            except OSError as err:
+                _log.warning("旧字幕备份失败 %s: %s", spath, err)
 
         def _prog(done, total, _b=b, _f=fn):
             _set(current_pct=int(done * 100 / total) if total else 0,

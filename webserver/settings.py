@@ -38,6 +38,10 @@ settings = {
     # 「目录指纹 + 连续两轮稳定」轮询。跟随 IMPORT_BY_INOTIFY 开关启用；
     # 置 False 可单独关掉有声书部分（电子书监控不受影响）。
     "AUDIO_AUTO_IMPORT_ENABLED": True,
+    # 音频转写文稿：whisper 模型下载用的 HuggingFace 镜像。国内 NAS 直连
+    # huggingface.co 常年超时，默认 hf-mirror.com；置空串走官方源。
+    # 运行时可在工具页「模型管理」里改（CONF 覆盖 + dumpfile 落盘 auto.py）。
+    "SRT_HF_MIRROR": "https://hf-mirror.com",
     # 轮询间隔（秒），最小 20；稳定两轮后才触发，故最长约 2 倍间隔生效。
     "AUDIO_AUTO_IMPORT_INTERVAL": 60,
     # 中文检索索引（SQLite FTS5）。关闭后搜索自动回退到 calibre 原生 search。

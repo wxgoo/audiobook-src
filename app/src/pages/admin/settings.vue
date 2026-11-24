@@ -1997,15 +1997,19 @@ export default {
                 key: "site_icon",
                 label: "settings.site_icon",
                 type: "select_image",
-                // rebuilt8 起 logo 目录只保留一张 favicon.ico（旧 favicon_0..8 已删除），
-                // 因此这里只保留「沿用当前图标」一项，避免下拉预览指向不存在的文件。
+                // 数据卷 logo/ 目录提供 favicon_0..8 九张备选图（缺图由镜像 /prebuilt 自动补齐），
+                // favicon_0 表示「沿用当前图标」：预览读取站点当前的 favicon.ico。
+                // 注意不要减回单项——曾因「rebuilt8 简化」丢掉多图可选导致站点图标设置页空了一片。
                 items: [
-                  {
-                    image_file: "favicon_0",
-                    value: "favicon_0",
-                    // favicon_0 表示「沿用当前图标」：预览读取站点当前的 favicon.ico
-                    is_current: true,
-                  },
+                  { image_file: "favicon_0", value: "favicon_0", is_current: true },
+                  { image_file: "favicon_1", value: "favicon_1" },
+                  { image_file: "favicon_2", value: "favicon_2" },
+                  { image_file: "favicon_3", value: "favicon_3" },
+                  { image_file: "favicon_4", value: "favicon_4" },
+                  { image_file: "favicon_5", value: "favicon_5" },
+                  { image_file: "favicon_6", value: "favicon_6" },
+                  { image_file: "favicon_7", value: "favicon_7" },
+                  { image_file: "favicon_8", value: "favicon_8" },
                 ],
               },
                 { icon: "mdi-copyright", key: "HEADER", label: "settings.site_header", type: "textarea" },
