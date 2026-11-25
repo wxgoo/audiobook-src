@@ -20,7 +20,7 @@ from jinja2 import Environment, FileSystemLoader
 from sqlalchemy import func as sql_func
 from sqlalchemy import inspect as sa_inspect
 from tornado import web
-from tornado.escape import utf8
+from tornado.escape import json_decode, utf8
 
 from webserver.i18n import _, choose_language, set_language
 from webserver import loader, perf, site_time, utils
@@ -405,6 +405,21 @@ class BaseHandler(web.RequestHandler):
         if value == "null":
             return default
         return value
+
+    def get_json_body(self):
+        """解析请求 JSON body；空 body 返回 {}，非法 JSON 抛 400，非 dict 一律按 {}。
+
+        调用方约定 `data = self.get_json_body() or {}` 后直接 .get() 取字段，
+        因此非 dict（list/标量）也统一返回 {} 防御。
+        """
+        body = self.request.body
+        if not body:
+            return {}
+        try:
+            data = json_decode(body)
+        except ValueError:
+            raise web.HTTPError(400, reason="invalid JSON body")
+        return data if isinstance(data, dict) else {}
 
     def get_secure_cookie(self, key):
         if not self.cookies_cache.get(key, ""):
