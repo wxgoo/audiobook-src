@@ -127,6 +127,7 @@ class ToolSet:
         from .audio_transcode_tool import AudioTranscodeTool
         from .book_dedup_tool import BookDedupTool
         from .srt_tool import SrtTool
+        from .ebook_tags_cleaner_tool import EbookTagsCleanerTool
 
         ToolSet.register(MergeFormatsTool.info())
         ToolSet.register(EpubBeautifyTool.info())
@@ -148,6 +149,7 @@ class ToolSet:
         ToolSet.register(AudioTranscodeTool.info())
         ToolSet.register(BookDedupTool.info())
         ToolSet.register(SrtTool.info())
+        ToolSet.register(EbookTagsCleanerTool.info())
 
         MinifyPdfTool.cleanup_old_files()
 

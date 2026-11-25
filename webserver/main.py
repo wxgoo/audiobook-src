@@ -494,12 +494,12 @@ def make_app():
     # WebDAV must come before files.routes() because files has a catch-all (r"/(.*)")
     # We need to get routes from handlers module without files, add webdav, then add files
     import importlib
-    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "book_dedup", "author_norm", "search_index", "version", "transcribe"]
+    names = ["assistant", "mcp", "admin", "barcode", "scan", "opds", "book", "mynexus", "book_review", "booklist", "share", "user", "meta", "audio", "toolbox", "sync", "tts", "folder", "reader_dict", "koreader", "book_dedup", "ebook_tags_cleaner", "author_norm", "search_index", "version", "transcribe"]
     mods = {}
     for name in names:
         with substep("import_handler:" + name):
             mods[name] = importlib.import_module("webserver.handlers." + name)
-    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, book_dedup, author_norm, search_index = (mods[n] for n in names[:-2])  # __TRANSCRIBE_ROUTE_FIX__
+    assistant, mcp, admin, barcode, scan, opds, book, mynexus, book_review, booklist, share, user, meta, audio, toolbox, sync, tts, folder, reader_dict, koreader, book_dedup, ebook_tags_cleaner, author_norm, search_index = (mods[n] for n in names[:-2])  # __TRANSCRIBE_ROUTE_FIX__
     # 单独取名，避免与 main() 里若干名为 version 的局部变量撞名
     version_handler = mods["version"]
     transcribe = mods["transcribe"]  # __TRANSCRIBE_ROUTE_FIX__
@@ -528,6 +528,8 @@ def make_app():
     app_routes += folder.routes()
     app_routes += reader_dict.routes()
     app_routes += book_dedup.routes()
+    # 电子书标签清理（内置化自外部 tool_tags_cleaner）
+    app_routes += ebook_tags_cleaner.routes()
     # 4.6.0-9 作者归一化管理接口（体检/别名表/预览/锁定）
     app_routes += author_norm.routes()
     # 中文检索索引：状态查询 + 手动重建（搜索接口本身保持不变）
