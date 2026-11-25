@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from webserver import loader
 from webserver.assistant.mcp_client import MCPStreamClient
+from webserver.assistant.ai_url import normalize_base_url
 from webserver.constants import DEEPSEEK_API_BASE
 
 CONF = loader.get_settings()
@@ -318,7 +319,9 @@ class AIAssistantMCPAgent:
             api_key.encode("ascii")
         except UnicodeEncodeError:
             api_key = ""
-        api_url = str(conf.get("AI_API_URL", "") or AI_BASE_URL)
+        # 与「刮削与AI」测试连接共用同一套规范化，避免地址栏多写
+        # /chat/completions 后 SDK 重复拼接导致 400，麦克风对话随之失败。
+        api_url = normalize_base_url(str(conf.get("AI_API_URL", "") or AI_BASE_URL))
         model = str(conf.get("AI_MODEL", "") or self.model)
 
         signature = (api_key, api_url, model)

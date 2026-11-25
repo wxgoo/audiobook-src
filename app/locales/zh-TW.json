@@ -1197,7 +1197,7 @@
         "ai_api_key_description": "前往 https://platform.deepseek.com 註冊帳號並取得 API 金鑰",
         "ai_usage_info": "AI 使用資訊",
         "ai_api_url": "AI接口鏈接",
-        "ai_api_url_description": "填寫模型服務商 OpenAPI 兼容接口地址",
+        "ai_api_url_description": "填寫到 /v1 為止（如 https://openrouter.ai/api/v1），不要加 /chat/completions，否則會報 Request path cannot be relayed",
         "ai_model_description": "選擇 AI 模型，部分功能可能需要特定模型支持",
         "mynexus_title": "MyNexus 書籍解析與 AI 伴讀",
         "mynexus_description": "設定 MyNexus 服務後，管理員可提交書籍解析，讀者可在解析完成後使用 AI 伴讀。",

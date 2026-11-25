@@ -888,7 +888,7 @@
         "ai_api_key_description": "Register an account and obtain an API key at https://platform.deepseek.com",
         "ai_usage_info": "AI Usage Info",
         "ai_api_url": "AI API URL",
-        "ai_api_url_description": "Enter the OpenAPI compatible interface URL of the model provider",
+        "ai_api_url_description": "Enter up to /v1 only (e.g. https://openrouter.ai/api/v1). Do NOT include /chat/completions, or it will fail with Request path cannot be relayed",
         "ai_model_description": "Select the AI model, some features may require specific model support",
         "mynexus_title": "MyNexus Book Analysis and AI Companion",
         "mynexus_description": "Configure MyNexus to let administrators submit books for analysis and readers use AI Companion when analysis is complete.",

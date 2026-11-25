@@ -7,6 +7,7 @@ from webserver import loader
 from webserver.constants import DEEPSEEK_API_BASE
 from webserver.services.book_search import BookSearch
 from webserver.i18n import _
+from webserver.assistant.ai_url import normalize_base_url, friendly_api_error
 
 CONF = loader.get_settings()
 
@@ -83,7 +84,9 @@ class BookAIClient:
         # 每次都从当前配置读取，避免设置页改了 key/模型后后台服务仍用旧值。
         conf = loader.get_settings()
         api_key = self._clean_key(key if key else conf.get("AI_DEEPSEEK_API_KEY", ""))
-        api_url = (url if url else conf.get("AI_API_URL", "")) or DEEPSEEK_API_BASE
+        # 统一规范化：用户常把完整 endpoint（含 /chat/completions）填进地址栏，
+        # SDK 会再补一遍导致 400 Request path cannot be relayed。
+        api_url = normalize_base_url((url if url else conf.get("AI_API_URL", "")) or DEEPSEEK_API_BASE)
         if not api_key or not api_url:
             raise ValueError(
                 "AI 密钥未配置或仍是占位符。请在「系统设置 → 刮削与AI」里填入真实的 "
@@ -174,7 +177,7 @@ class BookAIClient:
             return False, _("AI服务返回了意外的响应") + ": " + content
         except Exception as e:
             logging.error("[BookAI] Connection test failed: %s", e)
-            return False, str(e)
+            return False, friendly_api_error(e)
 
     def get_book_info(
         self,
