@@ -22,6 +22,7 @@ import types
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANUAL_PY = ROOT / "deploy" / "mybooks-mynexus-stack" / "settings" / "manual.py"
 INSTALL_SH = ROOT / "deploy" / "mybooks-mynexus-stack" / "install.sh"
+ENV_FILE = ROOT / "deploy" / "mybooks-mynexus-stack" / ".env"
 DOCKERFILE = ROOT / "Dockerfile"
 START_SH = ROOT / "docker" / "start.sh"
 
@@ -103,6 +104,32 @@ def test_install_sh_carries_user_ai_config_from_old_env():
     for key in ("AI_BASE_URL", "AI_MODEL", "LLM_BASE_URL", "LLM_MODEL", "LLM_PROVIDER"):
         assert f"carry_config_from_old {key}" in t, f"install.sh 未带回用户配置 {key}"
     assert "carry_config_from_old()" in t, "缺少 carry_config_from_old 函数定义"
+
+
+def test_env_template_defaults_to_deepseek():
+    """随包 .env 模板应以用户实际在用的 DeepSeek 为默认，不再写死 OpenRouter。"""
+    t = ENV_FILE.read_text(encoding="utf-8")
+    assert "LLM_BASE_URL=https://api.deepseek.com" in t
+    assert "LLM_MODEL=deepseek-flash" in t
+    assert "AI_BASE_URL=https://api.deepseek.com" in t
+    assert "AI_MODEL=deepseek-flash" in t
+    # key 仍是占位符（安全），且是 DeepSeek 的 sk- 前缀而非 OpenRouter 的 sk-or-v1-
+    assert "LLM_API_KEY=sk-你的DeepSeek密钥" in t
+    assert "AI_API_KEY=sk-你的DeepSeek密钥" in t
+    # 正文不应再把 openrouter 当作当前默认（仅允许出现在「备选」注释里）
+    active = [ln for ln in t.splitlines()
+              if ln and not ln.lstrip().startswith("#")]
+    assert not any("openrouter" in ln.lower() for ln in active), active
+
+
+def test_install_sh_skips_legacy_openrouter_defaults():
+    """重装时不能把旧包写死的 OpenRouter 默认带回，否则新模板的 DeepSeek 又被盖掉。"""
+    t = INSTALL_SH.read_text(encoding="utf-8")
+    assert "is_legacy_default()" in t
+    assert 'https://openrouter.ai/api/v1' in t
+    assert 'openrouter/free' in t
+    # carry_config_from_old 的守卫条件必须包含 legacy 判断
+    assert "is_placeholder_key \"$oldval\" || is_legacy_default \"$key\" \"$oldval\"" in t
 
 
 def test_dockerfile_cmd_uses_bin_sh():

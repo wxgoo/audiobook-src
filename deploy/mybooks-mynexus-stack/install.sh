@@ -218,6 +218,20 @@ is_placeholder_key() {
   return 1
 }
 
+# 旧包 .env 曾把地址/模型写死为 OpenRouter 默认。重装时若旧值仍是这些
+# 默认值（用户没手动改过），不要带回，否则会把新模板的 DeepSeek 默认覆盖回去，
+# 又出现「一重装就变回 openrouter」。用户真正改过的值照常带回。
+is_legacy_default() {
+  local key="$1" v="$2"
+  case "$key" in
+    AI_BASE_URL|LLM_BASE_URL)
+      [ "$v" = "https://openrouter.ai/api/v1" ] && return 0 ;;
+    AI_MODEL|LLM_MODEL)
+      [ "$v" = "openrouter/free" ] && return 0 ;;
+  esac
+  return 1
+}
+
 # 交互式询问并写回 .env 的某个 key
 ask_key() {
   local key="$1" label="$2" current="$3" newval=""
@@ -274,7 +288,7 @@ carry_config_from_old() {
   local key="$1" label="$2" oldval newval
   oldval="$(env_get_file "$OLD_STACK_ENV" "$key")"
   newval="$(env_get "$key")"
-  if [ -z "$oldval" ] || is_placeholder_key "$oldval"; then
+  if [ -z "$oldval" ] || is_placeholder_key "$oldval" || is_legacy_default "$key" "$oldval"; then
     return 1
   fi
   if [ "$oldval" = "$newval" ]; then
