@@ -58,11 +58,28 @@ def _prefill(key, env_value):
     return env_value
 
 
+def _mynexus_static_token(env_static):
+    """AI 伴读的 token 只能用 .env 的静态集成 token（MYNEXUS_API_TOKEN）。
+
+    MyNexus 的鉴权中间件对带 X-MyBooks-User-ID 的 chat 请求（/api/v1/chat/*）
+    只接受静态集成 token；在 MyNexus 后台「API Token」页生成的 mnx_ 开头
+    per-user token 会被它用 403
+      external user identity requires the MyNexus integration token
+    拒绝。用户若照着后台指引把 mnx_ token 填进设置页，以前会被 manual.py 的
+    「预填不覆盖」永久保留，导致 AI 伴读一直报上面这个错。这里忽略这类误填
+    值、回落到 .env 静态值，把坑堵死。
+    """
+    saved = _user_saved.get("MYNEXUS_TOKEN")
+    if isinstance(saved, str) and saved.strip().lower().startswith("mnx_"):
+        return env_static
+    return _prefill("MYNEXUS_TOKEN", env_static)
+
+
 settings = {
     # ---- MyNexus AI 伴读 ----
     "ENABLE_MYNEXUS": True,
     "MYNEXUS_URL": _prefill("MYNEXUS_URL", os.environ.get("MYNEXUS_AUTO_URL", "http://mynexus")),
-    "MYNEXUS_TOKEN": _prefill("MYNEXUS_TOKEN", os.environ.get("MYNEXUS_API_TOKEN", "")),
+    "MYNEXUS_TOKEN": _mynexus_static_token(os.environ.get("MYNEXUS_API_TOKEN", "")),
     # ---- 全局 AI 助手（顶部导航栏 AI 按钮）----
     # URL 统一为 OpenRouter base（不带 /chat/completions，客户端会自动拼）；
     # 模型 openrouter/free 自动路由可用免费模型，避开单模型限流。

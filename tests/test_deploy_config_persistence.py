@@ -98,6 +98,27 @@ def test_manual_respects_user_saved_deepseek():
     assert out["MYNEXUS_TOKEN"] == "user-saved-mynexus-token"
 
 
+def test_manual_ignores_misfilled_mnx_per_user_token():
+    """设置页若误填 mnx_ 开头的 per-user token，必须忽略、回落到 .env 静态集成 token。
+
+    MyNexus 对带 X-MyBooks-User-ID 的 chat 请求只认静态 MYNEXUS_API_TOKEN，
+    per-user token 会触发 403 external user identity requires integration token。
+    """
+    saved = {"MYNEXUS_TOKEN": "mnx_abc123savedPerUserToken"}
+    out = _load_manual(saved, BASE_ENV)
+    assert out["MYNEXUS_TOKEN"] == "env-token", out["MYNEXUS_TOKEN"]
+    # 大写前缀也应被识别（lower() 归一化）
+    out2 = _load_manual({"MYNEXUS_TOKEN": "MNX_upper"}, BASE_ENV)
+    assert out2["MYNEXUS_TOKEN"] == "env-token"
+
+
+def test_manual_keeps_plain_static_token_user_value():
+    """非 mnx_ 前缀的用户保存值（如 install.sh 生成的 hex 静态 token）仍被尊重。"""
+    saved = {"MYNEXUS_TOKEN": "a" * 48}
+    out = _load_manual(saved, BASE_ENV)
+    assert out["MYNEXUS_TOKEN"] == "a" * 48
+
+
 def test_install_sh_carries_user_ai_config_from_old_env():
     """安装器必须把用户改过的 URL/模型从旧 .env 带回，而不是只继承 3 个 key。"""
     t = INSTALL_SH.read_text(encoding="utf-8")
