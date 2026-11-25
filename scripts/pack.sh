@@ -609,8 +609,10 @@ DIST_FILES=$(grep -c "^${PFX}app/dist/" "$LIST.f" || true)
 [ "$DIST_FILES" = "773" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 773）"
 
 DIST_IDX=$(tar -xzOf "$OUT" "${PFX}app/dist/index.html" 2>/dev/null | sha256sum | cut -d' ' -f1)
-[ "$DIST_IDX" = "92e83c39c0081b51b6ffdde8b3e50b4df6cb1f677eb85bedd313ca7beb054528" ] \
-    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 92e83c39…，build.09 读者组文案清理+移动卡片重编后的哈希）"
+# 期望哈希随 dist 合法重建而更新：8ae4e53 修复 AI 接口地址提示文案（三语 locale）
+# 后重建 dist，index.html 与 _nuxt chunk 指纹同步变化。门禁仍用于拦截「改了前端却没重建 dist」。
+[ "$DIST_IDX" = "59eef9086262551afc6c721146ff3b836d75bb3834a6d57e6df8a29a1b508949" ] \
+    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 59eef908…，8ae4e53 修复 AI 接口地址文案后重建 dist 的哈希）"
 
 grep -qx "${PFX}app/dist/static/pdfjs/web/viewer.html" "$LIST" \
     || gate_bad "包内缺 app/dist/static/pdfjs/web/viewer.html"
