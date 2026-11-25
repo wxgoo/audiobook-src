@@ -6,6 +6,10 @@ services:
     image: ${MYBOOKS_IMAGE:-mybooks:4.7.0-build.09}
     container_name: mybooks
     restart: always
+    # 启动命令在编排层也钉死一次：用 /bin/sh 显式读脚本，不依赖 start.sh 的可执行位。
+    # 双保险——即便用了旧镜像（start.sh 是 644），容器也不会再报 permission denied
+    # 反复重启；新镜像本身 CMD 也已改成同样的写法（见 Dockerfile）。
+    command: ["/bin/sh", "/var/www/mybooks/docker/start.sh"]
     security_opt:
       - seccomp:unconfined
     ports:

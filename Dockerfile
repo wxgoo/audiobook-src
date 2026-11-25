@@ -436,7 +436,12 @@ EXPOSE 80 443
 
 VOLUME ["/data"]
 
-CMD ["/var/www/mybooks/docker/start.sh"]
+# 启动命令用 /bin/sh 显式调用，而不是直接 exec 脚本：
+# 交付镜像经过 docker export/import 展平时曾把 start.sh 的可执行位抹成 644，
+# 直接 exec 会报 "permission denied: unknown"、容器反复重启起不来。
+# 走 /bin/sh 读脚本内容不依赖可执行位，展平后也能稳起；Dockerfile 里仍保留
+# 上面的 chmod +x，双保险（正常 build 出来的镜像脚本本身也是 755）。
+CMD ["/bin/sh", "/var/www/mybooks/docker/start.sh"]
 
 # ----------------------------------------
 # 测试阶段 (--break-system-packages)

@@ -264,12 +264,44 @@ inherit_from_old() {
   return 0
 }
 
+# 从旧 .env 带回用户改过的 AI/LLM 配置项（URL / 模型 / provider 等）。
+# 与上面的 inherit_from_old 不同：这些字段在新 .env 里本来就有合法的包默认值
+# （openrouter），不算占位符，用「新值是占位符才继承」的规则会被跳过；
+# 这里只要旧值有效、且和包默认值不同，就认定为「用户自己改过的」，带回新 .env，
+# 避免每次 onekey 重装都退回 openrouter 默认——这正是「配置→重装→回默认」死循环的
+# 另一半根因（另一半是 manual.py 无条件覆盖 auto.py，已在该文件修复）。
+carry_config_from_old() {
+  local key="$1" label="$2" oldval newval
+  oldval="$(env_get_file "$OLD_STACK_ENV" "$key")"
+  newval="$(env_get "$key")"
+  if [ -z "$oldval" ] || is_placeholder_key "$oldval"; then
+    return 1
+  fi
+  if [ "$oldval" = "$newval" ]; then
+    return 0
+  fi
+  if [ "$DRY" = 1 ]; then
+    printf '  [DRY-RUN] 从旧 .env 带回用户配置 %s=%s\n' "$key" "$oldval"
+    return 0
+  fi
+  sed -i.bak "s|^[[:space:]]*${key}=.*|${key}=${oldval}|" "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+  ok "$label 已从 deploy-stack.old/.env 带回 ($oldval)"
+  return 0
+}
+
 if [ -f "$OLD_STACK_ENV" ]; then
   log ""
   ok "检测到旧配置: $OLD_STACK_ENV，尝试继承已填的 key/token（免得重新输入）"
   inherit_from_old LLM_API_KEY     "LLM_API_KEY"     || true
   inherit_from_old AI_API_KEY      "AI_API_KEY"      || true
   inherit_from_old MYNEXUS_API_TOKEN "MYNEXUS_API_TOKEN" || true
+  log "  同时带回用户改过的 AI/LLM 地址与模型（不再退回包默认）"
+  carry_config_from_old AI_BASE_URL   "AI_BASE_URL"   || true
+  carry_config_from_old AI_MODEL      "AI_MODEL"      || true
+  carry_config_from_old AI_MCP_TOKEN  "AI_MCP_TOKEN"  || true
+  carry_config_from_old LLM_PROVIDER  "LLM_PROVIDER"  || true
+  carry_config_from_old LLM_BASE_URL  "LLM_BASE_URL"  || true
+  carry_config_from_old LLM_MODEL     "LLM_MODEL"     || true
 else
   log "  未检测到 deploy-stack.old/.env（全新安装，或没留旧配置）"
 fi
