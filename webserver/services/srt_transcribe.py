@@ -309,7 +309,14 @@ def model_delete(model: str):
     if d.is_dir() and _dir_size(d) > 0:
         left = _human(_dir_size(d))
         detail = ("；原因：" + errs[0]) if errs else ""
-        return False, ("删除未完成，仍残留 %s%s。可能文件被占用或权限不足，"
+        # 权限不足多为 PUID 改动后模型缓存目录属主仍是构建期 uid（旧容器常见）。
+        # 给出可直接执行的自助命令，无需等新镜像。
+        if any("Permission" in e or "denied" in e or "13" in e for e in errs):
+            hint = ("。这是目录属主与运行用户不一致（改过 PUID 的旧容器常见）；"
+                    "请在 NAS 上执行：docker exec -u root <容器名> chown -R mybooks:mybooks "
+                    "/var/www/mybooks/.cache，然后重试；或导入新镜像重建容器自动修复")
+            return False, ("删除未完成，仍残留 %s%s%s" % (left, detail, hint))
+        return False, ("删除未完成，仍残留 %s%s。可能文件被占用，"
                        "请停止转写/确认无进程使用后重试" % (left, detail))
     return True, "已删除模型 %s，释放 %s" % (model, _human(n))
 

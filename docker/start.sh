@@ -88,10 +88,15 @@ if [ "x$permission" != "x$PUID:$PGID" ]; then
 fi
 
 # 设置系统文件的权限
+# 注意 .cache 必须在此列：镜像内置 small 模型是在构建期以 uid 990 下载的，
+# 而 start.sh 会把 mybooks 的 uid 改成 PUID（NAS 常为 1000）。若不 chown，
+# 运行时用户与模型文件属主 uid 不一致，「模型管理→删除」会 Permission denied。
+# 每次启动都 chown 该目录（文件数少，仅几个大 blob，开销可忽略），保证可删可写。
 chown -R mybooks:mybooks \
   /data/log/ \
   /root/.config/calibre \
   /root/.npm \
+  /var/www/mybooks/.cache \
   /var/www/mybooks/app/.env \
   /var/www/mybooks/app/dist \
   /var/www/mybooks/webserver \

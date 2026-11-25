@@ -54,6 +54,9 @@ def test_delete_reports_failure_when_files_remain(fake_model_dir, monkeypatch):
     ok, msg = st.model_delete("small")
     assert ok is False
     assert "删除未完成" in msg and "残留" in msg
+    # 权限错误应给出可自助的 chown 指引（PUID 改动后的旧容器常见）
+    assert "chown -R mybooks:mybooks" in msg
+    assert "属主" in msg
 
 
 def test_delete_unknown_model():
