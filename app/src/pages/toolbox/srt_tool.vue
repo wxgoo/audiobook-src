@@ -190,7 +190,7 @@
                       {{ $t('srtTool.download') }}
                     </v-btn>
                     <v-btn v-else x-small color="error" text
-                           :loading="dlBusy === m.model" :disabled="modelDlRunning || running"
+                           :loading="deleting === m.model" :disabled="running || !!deleting"
                            @click="deleteModel(m.model)">
                       {{ $t('srtTool.delete') }}
                     </v-btn>
@@ -247,6 +247,7 @@ export default {
     mirrorSaving: false,
     modelDl: null,
     dlBusy: '',
+    deleting: '',
     modelPollTimer: null,
     modelItems: ['tiny', 'base', 'small', 'medium', 'large-v3'],
     langItems: [
@@ -407,7 +408,12 @@ export default {
             this.models = rsp.data.models || [];
             if (rsp.data.current_model) this.model = rsp.data.current_model;
             if (this.mirror === '') this.mirror = rsp.data.mirror || '';
-            this.modelDl = rsp.data.model_dl || null;
+            const sdl = rsp.data.model_dl || null;
+            this.modelDl = sdl;
+            // 兜底：只要后端已不在下载中（done/failed/状态被重置），就解除
+            // dlBusy。轮询在状态切换的瞬间可能漏掉 done，导致 dlBusy 残留、
+            // 按钮长期处于 loading 灰态；这里以 /models 的权威状态为准纠正。
+            if (!sdl || sdl.state !== 'running') this.dlBusy = '';
           }
         })
         .catch(() => {})
@@ -458,18 +464,19 @@ export default {
         .then((rsp) => {
           if (rsp.err !== 'ok') return;
           const dl = rsp.data.task && rsp.data.task.model_dl;
-          if (!dl) return;
+          if (!dl) { this.loadModels(); return; }
           this.modelDl = dl;
           if (dl.state === 'done' || dl.state === 'failed') {
             this.stopModelPoll();
             this.dlBusy = '';
             this.loadModels();
           }
-        });
+        })
+        .catch(() => {});
     },
     deleteModel(name) {
       if (!window.confirm(this.$t('srtTool.confirmDelete', { name }))) return;
-      this.dlBusy = name;
+      this.deleting = name;
       this.$backend('/toolbox/srt_tool/model_delete', {
         method: 'POST',
         body: JSON.stringify({ model: name }),
@@ -486,7 +493,7 @@ export default {
           this.loadModels();
         })
         .catch(() => this.$alert('error', this.$t('srtTool.deleteFailed')))
-        .then(() => { this.dlBusy = ''; });
+        .then(() => { this.deleting = ''; });
     },
     saveMirror() {
       this.mirrorSaving = true;

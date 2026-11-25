@@ -210,11 +210,22 @@ def _hf_model_dir(model: str) -> Path:
 
 
 def _dir_size(path) -> int:
+    """统计目录真实磁盘占用。
+
+    HuggingFace 缓存布局：真正的文件在 blobs/<hash>，snapshots/<commit>/xxx.bin
+    只是指向 blob 的符号链接。os.path.getsize() 会跟随符号链接返回目标大小，
+    若把链接也算进去，同一份文件就被统计两遍——表现就是「标称 138 MB 的 base
+    下载后显示 282.1 MB」「删除残留误报成两倍体积」。用 lstat 跳过符号链接，
+    只累加真实文件（blob）的大小，得到的才是实际占用。
+    """
     total = 0
     for root, _dirs, files in os.walk(path):
         for f in files:
+            p = os.path.join(root, f)
             try:
-                total += os.path.getsize(os.path.join(root, f))
+                if os.path.islink(p):
+                    continue
+                total += os.path.getsize(p)
             except OSError:
                 pass
     return total
