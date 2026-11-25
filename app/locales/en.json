@@ -881,8 +881,6 @@
         "ai_allow_set_category": "Use AI-generated book category",
         "ai_capabilities_description": "Configure AI assistant features",
         "ai_model": "AI Model",
-        "voice_model": "Speech Recognition Model",
-        "voice_model_hint": "Shared by chat voice input and the transcription tool. Choose base for CPU (fast) or large-v3 for accuracy on powerful machines. Weights download on first use.",
         "ai_mcp_token": "MCP Access Token",
         "ai_mcp_token_generated": "MCP token has been generated",
         "ai_mcp_token_generate_failed": "Failed to generate MCP token",
@@ -977,7 +975,6 @@
         "reader_dict_test_not_mydict": "{msg}: this address has no MyDict query API (/api/v1/query). Make sure it is the MyDict server address (default port 8000), not MyBooks' own address. When MyBooks runs in Docker, localhost/127.0.0.1 is the MyBooks container itself — use http://host.docker.internal:8000, the host's LAN IP, or the container name on a shared Docker network (e.g. http://mydict:8000)",
         "reader_dict_test_unauthorized": "{msg}: the token is invalid or lacks query permission",
         "reader_dict_test_summary": "Dictionary test finished: {ok} succeeded, {failed} failed (hover the icon in front of each URL for details)",
-        "transcribe": "Audio transcription",
         "saved": "Saved",
         "update": "Update",
         "cancel": "Cancel",
@@ -1042,7 +1039,8 @@
         "scriptSimplified": "Simplified Chinese",
         "scriptTraditional": "Traditional Chinese",
         "writeAss": "Also output ASS (karaoke word sweep)",
-        "hotwords": "Hotwords (optional, comma-separated)"
+        "hotwords": "Hotwords (optional, comma-separated)",
+        "saveFailed": "Save failed"
     },
     "book": {
         "copyrightTitle": "Copyright Notice",

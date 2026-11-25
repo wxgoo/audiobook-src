@@ -142,10 +142,6 @@
   content: "\F005D";
 }
 
-.mdi-arrow-up-left::before {
-  content: "\F17BD";
-}
-
 .mdi-at::before {
   content: "\F0065";
 }
@@ -422,10 +418,6 @@
   content: "\F015A";
 }
 
-.mdi-closed-caption::before {
-  content: "\F015E";
-}
-
 .mdi-closed-caption-outline::before {
   content: "\F0DBD";
 }
@@ -680,10 +672,6 @@
 
 .mdi-folder-off-outline::before {
   content: "\F19F9";
-}
-
-.mdi-folder-open::before {
-  content: "\F0770";
 }
 
 .mdi-folder-outline::before {
@@ -1018,10 +1006,6 @@
   content: "\F040A";
 }
 
-.mdi-play-circle::before {
-  content: "\F040C";
-}
-
 .mdi-playlist-music::before {
   content: "\F0CB8";
 }
@@ -1202,10 +1186,6 @@
   content: "\F04DB";
 }
 
-.mdi-stop-circle::before {
-  content: "\F0666";
-}
-
 .mdi-stop-circle-outline::before {
   content: "\F0667";
 }
@@ -1252,6 +1232,10 @@
 
 .mdi-tag-outline::before {
   content: "\F04FC";
+}
+
+.mdi-tag-remove::before {
+  content: "\F0723";
 }
 
 .mdi-tag-remove-outline::before {

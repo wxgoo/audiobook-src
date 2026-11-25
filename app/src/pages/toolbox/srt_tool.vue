@@ -72,7 +72,8 @@
           <v-row dense>
             <v-col cols="6" sm="3">
               <v-select dense outlined hide-details :label="$t('srtTool.model')"
-                        v-model="model" :items="modelItems" :disabled="running"></v-select>
+                        v-model="model" :items="modelItems" :disabled="running"
+                        @change="saveModelSelect"></v-select>
             </v-col>
             <v-col cols="6" sm="3">
               <v-select dense outlined hide-details :label="$t('srtTool.lang')"
@@ -404,12 +405,25 @@ export default {
         .then((rsp) => {
           if (rsp.err === 'ok') {
             this.models = rsp.data.models || [];
+            if (rsp.data.current_model) this.model = rsp.data.current_model;
             if (this.mirror === '') this.mirror = rsp.data.mirror || '';
             this.modelDl = rsp.data.model_dl || null;
           }
         })
         .catch(() => {})
         .then(() => { this.loadingModels = false; });
+    },
+    saveModelSelect(v) {
+      // SrtMake 工具页下拉是 TRANSCRIBE_MODEL 的唯一选择点：与 AI 聊天
+      // 麦克风语音输入共用，选择后立即保存，AI 语音输入同步跟随。
+      this.$backend('/toolbox/srt_tool/model_select', {
+        method: 'POST',
+        body: JSON.stringify({ model: v }),
+      })
+        .then((rsp) => {
+          if (rsp.err !== 'ok') this.$alert('error', rsp.msg || this.$t('srtTool.saveFailed'));
+        })
+        .catch(() => {});
     },
     downloadModel(name) {
       this.dlBusy = name;

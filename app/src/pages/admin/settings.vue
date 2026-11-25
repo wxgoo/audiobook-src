@@ -838,17 +838,6 @@
                 :maxlength="128"
               ></v-text-field>
               </div>
-              <div id="f-TRANSCRIBE_MODEL">
-              <v-select
-                :prepend-icon="'mdi-microphone'"
-                v-model="settings['TRANSCRIBE_MODEL']"
-                :items="voiceModelItems"
-                :label="$t('settings.voice_model')"
-                :hint="$t('settings.voice_model_hint')"
-                persistent-hint
-                dense
-              ></v-select>
-              </div>
               <div id="f-AI_MCP_TOKEN">
               <v-text-field
                 :prepend-icon="'mdi-key'"
@@ -1343,7 +1332,6 @@ const SPECIAL_BLOCKS = [
   { key: "ENABLE_BOOKBARN", label: "settings.bookbarn_enable", icon: "mdi-key", gid: "services", sid: "svc-bookbarn" },
   { key: "BOOKBARN_TOKEN", label: "settings.bookbarn_token", icon: "mdi-key", gid: "services", sid: "svc-bookbarn" },
   { key: "AI_ENABLED", label: "settings.ai_enabled", icon: "mdi-scatter-plot-outline", gid: "services", sid: "svc-ai" },
-  { key: "TRANSCRIBE_MODEL", label: "settings.voice_model", icon: "mdi-microphone", gid: "services", sid: "svc-ai", al: ["语音", "語音", "语音输入", "語音輸入", "麦克风", "麥克風", "语音识别", "語音辨識", "transcribe", "whisper", "voice", "asr"] },
   { key: "AI_DEEPSEEK_API_KEY", label: "settings.ai_api_key", icon: "mdi-key", gid: "services", sid: "svc-ai" },
   { key: "AI_API_URL", label: "settings.ai_api_url", icon: "mdi-link", gid: "services", sid: "svc-ai" },
   { key: "AI_MODEL", label: "settings.ai_model", icon: "mdi-function", gid: "services", sid: "svc-ai" },
@@ -1525,8 +1513,7 @@ const SEARCH_ALIASES = {
     数量: ["douban_max_count", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"],
     // 外部服务 · 书栈 / AI
     书栈: ["ENABLE_BOOKBARN", "BOOKBARN_TOKEN"], barn: ["ENABLE_BOOKBARN"], token: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"], 令牌: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"], 授权: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"],
-    ai: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_API_URL", "AI_MODEL", "AI_MCP_TOKEN", "AI_ALLOW_SET_CATEGORY", "TRANSCRIBE_MODEL"],
-    语音: ["TRANSCRIBE_MODEL"], 语音输入: ["TRANSCRIBE_MODEL"], 麦克风: ["TRANSCRIBE_MODEL"], 语音识别: ["TRANSCRIBE_MODEL"], 转写: ["TRANSCRIBE_MODEL"], 音频转写: ["TRANSCRIBE_MODEL"],
+    ai: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_API_URL", "AI_MODEL", "AI_MCP_TOKEN", "AI_ALLOW_SET_CATEGORY"],
     人工智能: ["AI_ENABLED"], 助手: ["AI_ENABLED"], deepseek: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_MODEL"],
     模型: ["AI_MODEL"], 接口: ["AI_API_URL"], url: ["AI_API_URL"],
     mcp: ["AI_MCP_TOKEN"], 自动分类: ["AI_ALLOW_SET_CATEGORY"], 生成分类: ["AI_ALLOW_SET_CATEGORY"],
@@ -1676,9 +1663,7 @@ const SEARCH_ALIASES = {
     數量: ["douban_max_count", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"],
     // 外部服務 · 書棧 / AI
     書棧: ["ENABLE_BOOKBARN", "BOOKBARN_TOKEN"], barn: ["ENABLE_BOOKBARN"], token: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"], 權杖: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"], 授權: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"],
-    ai: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_API_URL", "AI_MODEL", "AI_MCP_TOKEN", "AI_ALLOW_SET_CATEGORY", "TRANSCRIBE_MODEL"],
-    语音: ["TRANSCRIBE_MODEL"], 语音输入: ["TRANSCRIBE_MODEL"], 麦克风: ["TRANSCRIBE_MODEL"], 语音识别: ["TRANSCRIBE_MODEL"], 转写: ["TRANSCRIBE_MODEL"], 音频转写: ["TRANSCRIBE_MODEL"],
-    語音: ["TRANSCRIBE_MODEL"], 語音輸入: ["TRANSCRIBE_MODEL"], 麥克風: ["TRANSCRIBE_MODEL"], 語音辨識: ["TRANSCRIBE_MODEL"], 轉寫: ["TRANSCRIBE_MODEL"], 音訊轉寫: ["TRANSCRIBE_MODEL"],
+    ai: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_API_URL", "AI_MODEL", "AI_MCP_TOKEN", "AI_ALLOW_SET_CATEGORY"],
     人工智慧: ["AI_ENABLED"], 助手: ["AI_ENABLED"], deepseek: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_MODEL"],
     模型: ["AI_MODEL"], 介面: ["AI_API_URL"], url: ["AI_API_URL"], 鏈接: ["AI_API_URL", "static_host", "FRIENDS"],
     mcp: ["AI_MCP_TOKEN"], 自動分類: ["AI_ALLOW_SET_CATEGORY"], 產生分類: ["AI_ALLOW_SET_CATEGORY"],
@@ -1810,8 +1795,8 @@ const SEARCH_ALIASES = {
     api: ["AI_API_URL", "AI_DEEPSEEK_API_KEY"], "api key": ["AI_DEEPSEEK_API_KEY", "AI_MCP_TOKEN", "BOOKBARN_TOKEN"], key: ["AI_DEEPSEEK_API_KEY", "cookie_secret", "AI_MCP_TOKEN", "BOOKBARN_TOKEN"], count: ["douban_max_count", "MAIN_PAGE_RANDOM_COUNT", "MAIN_PAGE_RECENT_COUNT"], results: ["douban_max_count"],
     // External Services · bookbarn & AI
     bookbarn: ["ENABLE_BOOKBARN", "BOOKBARN_TOKEN"], token: ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"], "auth token": ["BOOKBARN_TOKEN", "AI_MCP_TOKEN"],
-    ai: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_API_URL", "AI_MODEL", "AI_MCP_TOKEN", "AI_ALLOW_SET_CATEGORY", "TRANSCRIBE_MODEL"],
-    voice: ["TRANSCRIBE_MODEL"], "voice input": ["TRANSCRIBE_MODEL"], microphone: ["TRANSCRIBE_MODEL"], transcribe: ["TRANSCRIBE_MODEL"], transcription: ["TRANSCRIBE_MODEL"], whisper: ["TRANSCRIBE_MODEL"], asr: ["TRANSCRIBE_MODEL"], assistant: ["AI_ENABLED"], "artificial intelligence": ["AI_ENABLED"], deepseek: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_MODEL"], model: ["AI_MODEL"], mcp: ["AI_MCP_TOKEN"], "auto category": ["AI_ALLOW_SET_CATEGORY"], generate: ["AI_ALLOW_SET_CATEGORY"],
+    ai: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_API_URL", "AI_MODEL", "AI_MCP_TOKEN", "AI_ALLOW_SET_CATEGORY"],
+    assistant: ["AI_ENABLED"], "artificial intelligence": ["AI_ENABLED"], deepseek: ["AI_ENABLED", "AI_DEEPSEEK_API_KEY", "AI_MODEL"], model: ["AI_MODEL"], mcp: ["AI_MCP_TOKEN"], "auto category": ["AI_ALLOW_SET_CATEGORY"], generate: ["AI_ALLOW_SET_CATEGORY"],
     // Services & Protocols
     webdav: ["ENABLE_WEBDAV_SERVICE", "WEBDAV_SYNC_FOLDER"], mount: ["ENABLE_WEBDAV_SERVICE"], writable: ["WEBDAV_SYNC_FOLDER"], "read write": ["ENABLE_WEBDAV_SERVICE", "WEBDAV_SYNC_FOLDER"],
     opds: ["ENABLE_OPDS_SERVICE", "ENABLE_OPDS_AUTH"], auth: ["ENABLE_OPDS_AUTH"], authentication: ["ENABLE_OPDS_AUTH"], catalog: ["ENABLE_OPDS_SERVICE", "ENABLE_OPDS_AUTH"],
@@ -3322,10 +3307,6 @@ export default {
         const pattern = /^https?:\/\/.+/;
         return pattern.test(v) || this.$t('settings.url_rule_error');
       };
-    },
-    voiceModelItems() {
-      // 语音识别模型：与「音频转写文稿」共用 TRANSCRIBE_MODEL 配置。
-      return ["tiny", "base", "small", "medium", "large-v3"];
     },
     modelNameRule() {
       return (v) => {

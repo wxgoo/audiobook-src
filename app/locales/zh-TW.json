@@ -1190,8 +1190,6 @@
         "ai_capabilities_description": "設定 AI 助手相關功能",
         "ai_capability": "AI 助手",
         "ai_model": "AI 模型",
-        "voice_model": "語音辨識模型",
-        "voice_model_hint": "聊天語音輸入與音訊轉寫文稿共用此模型。CPU 建議 base（快），強機可選 large-v3（準）。首次使用會下載對應權重。",
         "ai_mcp_token": "MCP 存取權杖",
         "ai_mcp_token_generated": "MCP 存取權杖已生成",
         "ai_mcp_token_generate_failed": "生成 MCP 存取權杖失敗",
@@ -1275,7 +1273,6 @@
         "reader_dict_test_not_mydict": "{msg}，該網址沒有 MyDict 查詢介面（/api/v1/query），請確認填寫的是 MyDict 伺服器網址（預設連接埠 8000），而不是 MyBooks 自己的網址。MyBooks 在 Docker 中執行時，localhost/127.0.0.1 指向 MyBooks 容器本身，請改用 http://host.docker.internal:8000、主機區域網路 IP，或同一 Docker 網路中的容器名稱（如 http://mydict:8000）",
         "reader_dict_test_unauthorized": "{msg}，Token 無效或缺少查詢權限",
         "reader_dict_test_summary": "詞典測試完成：成功 {ok} 個，失敗 {failed} 個（滑鼠停留在網址欄前的圖示上可檢視詳情）",
-        "transcribe": "音频转写文稿",
         "saved": "已保存",
         "update": "更新",
         "cancel": "取消",
@@ -1344,7 +1341,7 @@
         "missingOnly": "只看缺字幕",
         "noMissing": "勾選的書都已有字幕；勾掉「只看缺字幕」可查看全部。",
         "modelsTitle": "模型管理",
-        "modelsHint": "識別模型按需下載到伺服器快取（體積與標稱一致，一次性）；映像已內建 small 模型可直接離線轉寫。「已有 .srt 也重做」時舊字幕會先備份成 .bak 再覆蓋。",
+        "modelsHint": "模型檔位與 AI 聊天語音輸入共用（上方下拉選擇後立即保存）。識別模型按需下載到伺服器快取（體積與標稱一致，一次性）；鏡像已內置 small 模型可直接離線轉寫。「已有 .srt 也重做」時舊字幕會先備份成 .bak 再覆蓋。",
         "mirror": "HuggingFace 鏡像（模型下載源）",
         "mirrorSave": "儲存為預設",
         "mirrorSaved": "鏡像位址已儲存",
@@ -1360,7 +1357,8 @@
         "deleteDone": "模型已刪除",
         "deleteFailed": "刪除失敗",
         "dlDone": "模型下載完成",
-        "dlFailed": "模型下載失敗"
+        "dlFailed": "模型下載失敗",
+        "saveFailed": "保存失敗"
     },
     "ebookTagsCleaner": {
         "title": "電子書標籤清理",

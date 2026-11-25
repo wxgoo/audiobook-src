@@ -161,8 +161,8 @@ class AssistantTranscribeHandler(BaseHandler):
             with os.fdopen(fd, "wb") as f:
                 f.write(body)
 
-            # 模型由系统设置 TRANSCRIBE_MODEL 决定（设置页「刮削与AI」可选），
-            # 前端写死的 model=small 参数被忽略；换硬件后改设置即可，无需重编译。
+            # 模型由系统设置 TRANSCRIBE_MODEL 决定（「音频转写文稿」SrtMake 工具页
+            # 下拉选择并保存，与此处共用同一配置），换硬件后改工具页下拉即可。
             _allowed = ("tiny", "base", "small", "medium", "large-v3", "large")
             model_size = str(CONF.get("TRANSCRIBE_MODEL", "base") or "base")
             if model_size not in _allowed:

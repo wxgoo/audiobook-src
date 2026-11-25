@@ -947,7 +947,7 @@ class AdminSrtToolStart(BaseHandler):
             return {"err": "task.running", "msg": _("已有转写任务在进行中"),
                     "data": {"task": srt_transcribe.task_snapshot()}}
 
-        model = (data.get("model") or "base").strip()
+        model = (data.get("model") or "").strip()
         lang = (data.get("lang") or "zh").strip()
         overwrite = bool(data.get("overwrite", False))
         keep_txt = bool(data.get("keep_txt", True))
@@ -1050,6 +1050,7 @@ class AdminSrtToolModels(BaseHandler):
     def get(self):
         return {"err": "ok", "data": {
             "models": srt_transcribe.model_status(),
+            "current_model": srt_transcribe.current_model(),
             "mirror": srt_transcribe.hf_mirror(),
             "model_dl": srt_transcribe.task_snapshot().get("model_dl"),
             "available": srt_transcribe.available(),
@@ -1077,6 +1078,19 @@ class AdminSrtToolModelDelete(BaseHandler):
         ok, msg = srt_transcribe.model_delete(data.get("model") or "")
         if not ok:
             return {"err": "model.delete.failed", "msg": msg}
+        return {"err": "ok", "msg": msg}
+
+
+class AdminSrtToolModelSelect(BaseHandler):
+    """保存转写档位到系统设置：SrtMake 工具页下拉是唯一选择点，
+    AI 聊天麦克风语音输入共用 TRANSCRIBE_MODEL，保存后立即跟随。"""
+    @js
+    @is_admin
+    def post(self):
+        data = self.get_json_body() or {}
+        ok, msg = srt_transcribe.model_select(data.get("model") or "")
+        if not ok:
+            return {"err": "model.select.failed", "msg": msg}
         return {"err": "ok", "msg": msg}
 
 
@@ -2038,6 +2052,7 @@ def routes():
         (r"/api/toolbox/srt_tool/install", AdminSrtToolInstall),
         (r"/api/toolbox/srt_tool/restart", AdminSrtToolRestart),
         (r"/api/toolbox/srt_tool/models", AdminSrtToolModels),
+        (r"/api/toolbox/srt_tool/model_select", AdminSrtToolModelSelect),
         (r"/api/toolbox/srt_tool/model_download", AdminSrtToolModelDownload),
         (r"/api/toolbox/srt_tool/model_delete", AdminSrtToolModelDelete),
         (r"/api/toolbox/srt_tool/hf_mirror", AdminSrtToolHfMirror),

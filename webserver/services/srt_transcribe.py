@@ -317,16 +317,60 @@ def save_hf_mirror(mirror: str):
         return False, "已对本次运行生效，但落盘失败：%s" % e
 
 
-def start(books: list, model: str = "base", lang: str = "zh", overwrite: bool = False,
+def current_model() -> str:
+    """当前生效的转写档位（CONF["TRANSCRIBE_MODEL"]，SrtMake 与 AI 聊天麦克风共用）。"""
+    from webserver import loader
+    return str(loader.get_settings().get("TRANSCRIBE_MODEL", "base") or "base").strip()
+
+
+def model_select(model: str):
+    """保存转写档位到系统设置（SrtMake 工具页下拉，设置页旧下拉已取消）。
+
+    TRANSCRIBE_MODEL 是 SrtMake 与 AI 聊天麦克风语音输入的共用配置，
+    这里保存后 AI 语音输入立即跟随。返回 (ok, msg)。
+    """
+    from webserver import loader
+    model = (model or "").strip()
+    if model == "large":
+        model = "large-v3"
+    if model not in MODEL_ORDER:
+        return False, "未知模型：%s" % model
+    conf = loader.get_settings()
+    conf["TRANSCRIBE_MODEL"] = model
+    try:
+        conf.dumpfile()
+        return True, "已保存模型档位：%s（AI 聊天语音输入同步生效）" % model
+    except Exception as e:  # noqa: BLE001
+        return False, "已对本次运行生效，但落盘失败：%s" % e
+
+
+def start(books: list, model=None, lang: str = "zh", overwrite: bool = False,
           keep_txt: bool = True, preset: str = "standard", script: str = "original",
           write_ass: bool = False, hotwords: str = ""):
     """books: [{book_id, title, audio_dir}]——audio_dir 由调用方在 calibre 池解析好。
 
+    model：转写档位。None/空 时跟随系统设置 TRANSCRIBE_MODEL；显式指定（网页端
+    下拉 / PC 版 make_srt_gui.py）则尊重传入值，并**同步写回** TRANSCRIBE_MODEL——
+    它与 AI 聊天麦克风语音输入共用，转写用哪档，语音输入就跟哪档。
     v1.3 选项：preset 断行预设（short/standard/loose）、script 字幕文字转换
     （original/simplified/traditional，opencc 未装时自动原样）、write_ass 额外输出
     卡拉 OK 扫光 .ass、hotwords 热词（人名/术语，逗号分隔）。
     """
     global _thread, _stop, _snapshot
+    model = (model or "").strip()
+    if model:
+        if model == "large":
+            model = "large-v3"
+        if model not in MODEL_ORDER:
+            model = "base"
+        if model != current_model():
+            model_select(model)  # 写回共用配置，落盘失败不影响本次转写
+    else:
+        model = current_model()
+        if model == "large":
+            model = "large-v3"
+        if model not in MODEL_ORDER:
+            model = "base"
     if preset not in PRESET_CHOICES:
         preset = "standard"
     if script not in SCRIPT_CHOICES:
