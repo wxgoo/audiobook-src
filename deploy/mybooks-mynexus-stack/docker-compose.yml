@@ -49,8 +49,12 @@ services:
       # MyNexus 管理后台宿主端口，默认 3000（官方默认，8083 在部分 NAS 上被占用）
       - "${MYNEXUS_PORT:-3000}:80"
     volumes:
-      - ./mynexus-data:/data
-      - ./mynexus-config:/config
+      # ★★ AI 解析的书籍数据（mynexus.db / vectorstore / uploads / logs）和配置（config.yaml）
+      #   用绝对路径挂到【deploy-stack 之外】。原先写 ./mynexus-data、./mynexus-config，
+      #   目录就在 deploy-stack 里；onekey 升级把 deploy-stack 改名 .old 后，新栈是空目录，
+      #   数据全被埋进旧目录、看起来「没了」。改成 .env 指定的绝对路径后，升级改名不再影响。
+      - ${MYNEXUS_DATA_DIR:-./mynexus-data}:/data
+      - ${MYNEXUS_CONFIG_DIR:-./mynexus-config}:/config
     environment:
       PUID: ${PUID:-1026}
       PGID: ${PGID:-100}
@@ -60,9 +64,21 @@ services:
       HF_HUB_DISABLE_XET: ${HF_HUB_DISABLE_XET:-1}
       # MyBooks 用它来连 MyNexus，必须和上面 MYNEXUS_API_TOKEN 一致
       MYNEXUS_API_TOKEN: ${MYNEXUS_API_TOKEN}
-      # —— LLM：默认 DeepSeek（OpenAI 兼容），改成你自己的即可 ——
+      # —— LLM：默认 DeepSeek（OpenAI 兼容）——
+      #   ★ 模型配置单一来源 = 本文件同目录的 .env。环境变量优先级高于设置页 config.yaml：
+      #     worker 读 MYNEXUS_LLM_* 时会覆盖 config.yaml，所以改模型只需改 .env 的 LLM_*，
+      #     不必进 MyNexus 设置页「LLM」标签页填写（填了也会被 env 覆盖，反而误导）。
+      #   ★ URL 只写到域名根：worker 自己拼 /chat/completions（见源码 openai_llm.py）。
+      #     填 https://api.deepseek.com/v1 → 请求 /v1/chat/completions（可用）；
+      #     填 .../chat/completions → 变成 .../chat/completions/chat/completions → 404。
       MYNEXUS_LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       MYNEXUS_LLM_OPENAI_API_KEY: ${LLM_API_KEY}
-      MYNEXUS_LLM_OPENAI_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
-      MYNEXUS_LLM_OPENAI_MODEL: ${LLM_MODEL:-deepseek-chat}
-      # —— Embedding：用镜像内置本地模型，无需配置 ——
+      MYNEXUS_LLM_OPENAI_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      MYNEXUS_LLM_OPENAI_MODEL: ${LLM_MODEL:-deepseek-flash}
+      MYNEXUS_LLM_OPENAI_TIMEOUT: ${LLM_TIMEOUT:-90}
+      # —— Embedding：镜像内置本地 ONNX 模型（fastembed，模型在 /usr/share/models）——
+      #   显式钉死为 local + 内置路径：即使旧 config.yaml 里残留云端/别的模型名，
+      #   也会被 env 覆盖回内置模型，彻底免下载、免在设置页「嵌入」标签页配置。
+      MYNEXUS_EMBEDDING_PROVIDER: ${MYNEXUS_EMBEDDING_PROVIDER:-local}
+      MYNEXUS_EMBEDDING_LOCAL_MODEL: ${MYNEXUS_EMBEDDING_LOCAL_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      MYNEXUS_EMBEDDING_LOCAL_MODEL_PATH: ${MYNEXUS_EMBEDDING_LOCAL_MODEL_PATH:-/usr/share/models}

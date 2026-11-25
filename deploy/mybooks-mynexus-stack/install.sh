@@ -9,6 +9,8 @@
 #               → 自动探测真实书库、停旧栈、旧目录改名 .old，再起新栈
 #
 # 已内置兜住的问题（不用你操心）：
+#   - MyNexus 数据/配置目录固定在 deploy-stack 之外，升级改名为 .old 不丢 AI 解析数据，
+#     且会把旧 deploy-stack(.old)/mynexus-data|config 里的数据自动迁过来
 #   - bind mount 目录（mynexus-data/config、DATA_DIR/books 骨架）自动预建 + 授权
 #   - 本机 Docker 没有该镜像就自动从旁边的离线包 docker load，不让你去 pull（绕开群晖 TLS 证书坑）
 #   - DATA_DIR 自动探测 + 体检，填错会明确警告
@@ -80,6 +82,63 @@ env_get_file() {
   [ -f "$f" ] || return 0
   grep -E "^[[:space:]]*$k=" "$f" | head -1 \
     | sed "s/^[^=]*=//; s/^[\"']//; s/[\"']$//" | tr -d '\r'
+}
+
+# 写回 .env 的某个 key（存在则整行替换，不存在则追加）
+env_set() {
+  local key="$1" val="$2"
+  if grep -qE "^[[:space:]]*${key}=" "$ENV_FILE"; then
+    sed -i.bak "s|^[[:space:]]*${key}=.*|${key}=${val}|" "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+  else
+    printf '\n%s=%s\n' "$key" "$val" >> "$ENV_FILE"
+  fi
+}
+
+# 判断路径是否落在部署程序目录（deploy-stack / deploy-stack.old）内部。
+# 这种路径会随升级改名被埋进 .old，绝不能作为 MyNexus 的数据/配置目录。
+is_inside_program_dir() {
+  local p="$1" old_abs
+  old_abs="$(cd "$OLD_STACK_DIR" 2>/dev/null && pwd || printf '%s' "$OLD_STACK_DIR")"
+  case "$p" in
+    "$SCRIPT_DIR"|"$SCRIPT_DIR"/*|"$OLD_STACK_DIR"|"$OLD_STACK_DIR"/*|"$old_abs"|"$old_abs"/*) return 0 ;;
+  esac
+  return 1
+}
+
+# 解析 MyNexus 数据/配置目录：优先 .env 里显式的绝对路径（且不在程序目录内），
+# 否则落到 DATA_DIR 下的固定子目录。DATA_DIR 已在上面校验为绝对路径且不在旧程序目录内，
+# 因此这两个目录天然在 deploy-stack 之外，升级改名 .old 不会再丢数据，且自带备份覆盖。
+resolve_mynx_dirs() {
+  local dd dc
+  dd="$(env_get MYNEXUS_DATA_DIR)"
+  dc="$(env_get MYNEXUS_CONFIG_DIR)"
+  case "$dd" in /*) ;; *) dd="" ;; esac
+  case "$dc" in /*) ;; *) dc="" ;; esac
+  if is_inside_program_dir "$dd"; then dd=""; fi
+  if is_inside_program_dir "$dc"; then dc=""; fi
+  [ -z "$dd" ] && dd="$DATA_DIR/mynexus-data"
+  [ -z "$dc" ] && dc="$DATA_DIR/mynexus-config"
+  MYNX_DATA_DIR="$dd"
+  MYNX_CONFIG_DIR="$dc"
+}
+
+# 把旧部署里被改名埋住的数据迁到新目录（幂等；目标已非空则两边都留、不覆盖）。
+migrate_mynx_dir() {
+  local src="$1" dst="$2" label="$3"
+  [ -d "$src" ] || return 0
+  [ "$src" = "$dst" ] && return 0
+  [ -z "$(ls -A "$src" 2>/dev/null)" ] && return 0
+  if [ -d "$dst" ] && [ -n "$(ls -A "$dst" 2>/dev/null)" ]; then
+    warn "$label 目标已有数据，跳过自动迁移（两边都保留、不覆盖）: $dst"
+    return 0
+  fi
+  if [ "$DRY" = 1 ]; then
+    printf '  [DRY-RUN] cp -a %s/. %s/\n' "$src" "$dst"
+    return 0
+  fi
+  mkdir -p "$dst"
+  cp -a "$src"/. "$dst"/ || die "$label 迁移失败: $src → $dst（请手动 cp -a 后重跑）"
+  ok "$label 已从 $src 迁移到 $dst"
 }
 
 # 升级时复用旧配置：解压新包前若把旧 deploy-stack 改名为 deploy-stack.old，
@@ -316,9 +375,18 @@ if [ -f "$OLD_STACK_ENV" ]; then
   carry_config_from_old LLM_PROVIDER  "LLM_PROVIDER"  || true
   carry_config_from_old LLM_BASE_URL  "LLM_BASE_URL"  || true
   carry_config_from_old LLM_MODEL     "LLM_MODEL"     || true
+  # 老部署若自定义过 MyNexus 数据/配置目录，也带回来（仍会在 resolve 里挡掉程序目录内的值）
+  carry_config_from_old MYNEXUS_DATA_DIR   "MYNEXUS_DATA_DIR"   || true
+  carry_config_from_old MYNEXUS_CONFIG_DIR "MYNEXUS_CONFIG_DIR" || true
 else
   log "  未检测到 deploy-stack.old/.env（全新安装，或没留旧配置）"
 fi
+
+# ============ 确定 MyNexus 数据/配置目录（★必须在 deploy-stack 之外）============
+# 这是「升级改名 .old 就丢 AI 解析数据」的根因修复：目录不跟着程序目录走。
+resolve_mynx_dirs
+ok "MyNexus 数据目录 = $MYNX_DATA_DIR"
+ok "MyNexus 配置目录 = $MYNX_CONFIG_DIR"
 
 LLM_KEY="$(env_get LLM_API_KEY)"
 AI_KEY="$(env_get AI_API_KEY)"
@@ -348,19 +416,21 @@ if printf '%s' "$TOKEN" | grep -q 'please-change-me\|^[[:space:]]*$'; then
 else
   ok "MYNEXUS_API_TOKEN 已配置"
 fi
-# 写回 DATA_DIR
+# 写回 DATA_DIR 与 MyNexus 外置目录（用 env_set：不存在就追加，兼容老 .env 没有这两个键）
 if [ "$DRY" = 0 ]; then
-  sed -i.bak "s|^[[:space:]]*DATA_DIR=.*|DATA_DIR=$DATA_DIR|" "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+  env_set DATA_DIR            "$DATA_DIR"
+  env_set MYNEXUS_DATA_DIR    "$MYNX_DATA_DIR"
+  env_set MYNEXUS_CONFIG_DIR  "$MYNX_CONFIG_DIR"
 fi
-ok "DATA_DIR 已写入 .env"
+ok "DATA_DIR / MYNEXUS_DATA_DIR / MYNEXUS_CONFIG_DIR 已写入 .env"
 
 # ============ 4. 预建所有 bind mount 目录（关键：群晖不会自动建）============
 step "4/7 预建挂载目录并授权"
 PUID_VAL="$(env_get PUID)"; [ -z "$PUID_VAL" ] && PUID_VAL=1026
 PGID_VAL="$(env_get PGID)"; [ -z "$PGID_VAL" ] && PGID_VAL=100
 
-# 需要存在的目录：数据目录骨架 + mynexus 两个挂载点
-DIRS_TO_MAKE="$DATA_DIR/books/settings $DATA_DIR/books/library $SCRIPT_DIR/mynexus-data $SCRIPT_DIR/mynexus-config"
+# 需要存在的目录：数据目录骨架 + MyNexus 两个【外置】挂载点（★不在 deploy-stack 内）
+DIRS_TO_MAKE="$DATA_DIR/books/settings $DATA_DIR/books/library $MYNX_DATA_DIR $MYNX_CONFIG_DIR"
 for d in $DIRS_TO_MAKE; do
   if [ ! -d "$d" ]; then run mkdir -p "$d"; ok "已创建 $d"
   else ok "已存在 $d"; fi
@@ -419,6 +489,16 @@ if [ "$MODE" = migrate ]; then
   else
     ok "旧容器 $OLD_CONTAINER 不存在"
   fi
+  # 旧 mynexus 容器也先停掉：一是避免它继续往旧目录写库导致拷贝不一致，
+  # 二是本栈 compose 会按新外置目录重建它。停掉不会丢数据，数据在 bind mount 目录里。
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx mynexus; then
+    run docker stop mynexus || true
+    run docker rm mynexus || true
+    ok "旧容器 mynexus 已移除（数据保留在挂载目录，下一步迁移）"
+  else
+    ok "旧容器 mynexus 不存在"
+  fi
+
   if [ -d "$OLD_DIR" ]; then
     if [ -e "${OLD_DIR}${BACKUP_SUFFIX}" ]; then
       warn "${OLD_DIR}${BACKUP_SUFFIX} 已存在，跳过改名"
@@ -431,6 +511,26 @@ if [ "$MODE" = migrate ]; then
   fi
 else
   ok "全新安装，跳过旧部署处理"
+fi
+
+# ============ 6b. MyNexus 数据迁移（★无论哪种场景都要跑，绝不跳过）============
+# 关键：即使上面判定为「全新安装」（比如旧容器已被手动删掉、只剩 deploy-stack.old），
+# 也必须尝试迁移。否则旧目录里埋住的 AI 解析数据仍会丢。此逻辑幂等、可反复运行。
+step "6b/7 迁移旧目录里的 MyNexus 数据（幂等）"
+# 先停旧 mynexus 容器（若有）：避免它继续往旧目录写库导致拷贝不一致。
+# 数据都在 bind mount 目录里，停容器不丢数据；compose up 会按新外置目录重建。
+if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx mynexus; then
+  run docker stop mynexus || true
+  run docker rm mynexus || true
+  ok "旧容器 mynexus 已移除（数据保留在挂载目录，随后迁移）"
+fi
+# 旧 deploy-stack.old 里被改名埋住的数据 → 外置目录
+migrate_mynx_dir "$OLD_STACK_DIR/mynexus-data"   "$MYNX_DATA_DIR"   "MyNexus 数据(/data)"
+migrate_mynx_dir "$OLD_STACK_DIR/mynexus-config" "$MYNX_CONFIG_DIR" "MyNexus 配置(/config)"
+# 旧目录还没改名（用户直接覆盖解压、没留 .old）时也尝试从旧栈目录迁
+if [ -d "$SCRIPT_DIR/mynexus-data" ] || [ -d "$SCRIPT_DIR/mynexus-config" ]; then
+  migrate_mynx_dir "$SCRIPT_DIR/mynexus-data"   "$MYNX_DATA_DIR"   "MyNexus 数据(/data，未改名旧栈)"
+  migrate_mynx_dir "$SCRIPT_DIR/mynexus-config" "$MYNX_CONFIG_DIR" "MyNexus 配置(/config，未改名旧栈)"
 fi
 
 # ============ 7. 启动 + 健康检查 ============

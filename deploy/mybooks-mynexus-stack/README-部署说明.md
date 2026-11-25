@@ -34,17 +34,30 @@ vi .env                                  # 只需确认/填这几项，见下方
 ## .env 需要确认的项
 
 ```ini
-MYBOOKS_IMAGE=mybooks:4.7.0-build.09-full   # 别改成其它 tag
+MYBOOKS_IMAGE=mybooks:4.7.0-build.09-full-autosplit  # 别改成其它 tag
 DATA_DIR=/volume1/docker/audiobook-data      # 绝对路径；新用户用默认即可，脚本会自动建
+# ★ MyNexus AI 解析数据/配置目录：绝对路径，默认在 DATA_DIR 下面、不在 deploy-stack 里。
+#   升级改名 deploy-stack.old 不再丢数据；一般不用改。
+MYNEXUS_DATA_DIR=/volume1/docker/audiobook-data/mynexus-data
+MYNEXUS_CONFIG_DIR=/volume1/docker/audiobook-data/mynexus-config
 PUID=1026          # 群晖：用你自己的（控制面板可查；填错会上传失败/设置存不下）
 PGID=100
-LLM_API_KEY=sk-or-v1-你的OpenRouter密钥      # ★必须填，AI 功能要用
-AI_API_KEY=sk-or-v1-你的OpenRouter密钥       # ★同一个 key 填两处
-LLM_BASE_URL=https://openrouter.ai/api/v1    # 不带 /chat/completions
-LLM_MODEL=openrouter/free                    # 自动路由，避开限流
+LLM_API_KEY=sk-你的DeepSeek密钥              # ★必须填，AI 功能要用
+AI_API_KEY=sk-你的DeepSeek密钥               # ★同一个 key 填两处
+LLM_BASE_URL=https://api.deepseek.com        # 只写到域名根，不带 /v1、更不带 /chat/completions
+LLM_MODEL=deepseek-flash                     # DeepSeek 默认；强推理可换 deepseek-v4-pro
+LLM_TIMEOUT=90                               # LLM 请求超时秒数，一般不用改
 ```
 
 其余（TOKEN、HF 镜像、端口 9800/8443/3000）都已配好，不用动。`MYNEXUS_API_TOKEN` 脚本会自动生成。
+
+### MyNexus 模型配置：全部在 .env，设置页不用填
+
+MyNexus 的模型配置**单一来源就是 `.env`**，通过 compose 的 `MYNEXUS_LLM_*` / `MYNEXUS_EMBEDDING_*` 环境变量注入并在运行时覆盖 `config.yaml`。所以：
+
+- **LLM**：改 `.env` 的 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`（+ 可选 `LLM_TIMEOUT`），重建容器即生效。**不要**去 MyNexus 设置页「LLM」标签页填——填了也会被 env 覆盖，白填还误导。
+- **Embedding（向量化）**：镜像已内置本地 ONNX 模型（`/usr/share/models`），compose 钉死为 `local` + 内置路径，免下载。设置页「嵌入」标签页不用动。
+- 只有「连接」标签页里的 MyBooks 地址/账号/密码如果没有自动填好时才需要手动填一次；它存在外置的 `mynexus-config/config.yaml` 里，升级改名也不会丢。
 
 ## 安装完成后
 
