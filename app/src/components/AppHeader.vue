@@ -613,6 +613,7 @@ export default {
         ai_thinking: false,
         ai_messages: [],
         ai_ws: null,
+        ai_use_http: false,
         ai_input: '',
         voiceTargetField: "ai_input",
         user: { is_login: false },
@@ -1112,17 +1113,20 @@ export default {
 
             this.ai_ws.onerror = (error) => {
                 console.error('WebSocket error:', error);
-                console.error('Failed to connect to:', wsUrl);
-                alert(this.$t('appHeader.aiConnectionError'));
+                console.error('Failed to connect to:', wsUrl, '-> falling back to HTTP chat');
+                // 群晖/多层反代下 WS 握手常被拦（403 origin / 400 upgrade）。
+                // 不粗暴弹窗关掉对话框，而是自动降级到 HTTP 对话通道。
                 this.ai_ws = null;
-                this.ai_enabled = false;
                 this.ai_thinking = false;
+                this.ai_use_http = true;
             };
 
             this.ai_ws.onclose = (event) => {
                 console.log('AI WebSocket closed', event.code, event.reason);
                 this.ai_ws = null;
                 this.ai_thinking = false;
+                // 握手失败时浏览器常先 onerror 再 onclose；不要因为 onclose
+                // 把已降级的 HTTP 模式改回去。
             };
         },
         closeAi() {
@@ -1134,18 +1138,50 @@ export default {
             this.ai_enabled = false;
         },
         sendAiMessage() {
-            if (!this.ai_input.trim() || this.ai_thinking || !this.ai_ws) return;
+            if (!this.ai_input.trim() || this.ai_thinking) return;
+            if (!this.ai_use_http && !this.ai_ws) return;
 
             const message = this.ai_input.trim();
             this.ai_input = '';
 
             this.ai_messages.push({ role: 'user', content: message });
+            this.ai_thinking = true;
 
             this.$nextTick(() => {
                 this.scrollAiBottom();
             });
 
+            if (this.ai_use_http) {
+                this.sendAiHttp(message);
+                return;
+            }
+
             this.ai_ws.send(JSON.stringify({ type: 'query', content: message }));
+        },
+        sendAiHttp(message) {
+            // 把历史对话（用户/助手）传给后端，保持与 WebSocket 一致的多轮上下文。
+            const history = this.ai_messages
+                .filter((m) => m.role === 'user' || m.role === 'assistant')
+                .filter((m) => typeof m.content === 'string' && m.content && !m.content.startsWith('ERROR:'))
+                .map((m) => ({ role: m.role, content: m.content }))
+                .slice(0, -1); // 去掉刚 push 的当前这条 user，后端会自行追加
+
+            this.$backend('/assistant/chat', {
+                method: 'POST',
+                body: JSON.stringify({ content: message, history: history }),
+            }).then((rsp) => {
+                this.ai_thinking = false;
+                if (rsp.err === 'ok') {
+                    this.ai_messages.push({ role: 'assistant', content: rsp.text || '', status: '' });
+                } else {
+                    this.ai_messages.push({ role: 'assistant', content: 'ERROR: ' + (rsp.msg || '请求失败'), status: 'error' });
+                }
+                this.scrollAiBottom();
+            }).catch(() => {
+                this.ai_thinking = false;
+                this.ai_messages.push({ role: 'assistant', content: 'ERROR: AI服务连接失败，请检查服务器配置', status: 'error' });
+                this.scrollAiBottom();
+            });
         },
         scrollAiBottom() {
             this.$nextTick(() => {

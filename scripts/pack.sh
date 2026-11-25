@@ -609,11 +609,11 @@ DIST_FILES=$(grep -c "^${PFX}app/dist/" "$LIST.f" || true)
 [ "$DIST_FILES" = "773" ] || gate_bad "包内 app/dist 文件数=$DIST_FILES（应为 773）"
 
 DIST_IDX=$(tar -xzOf "$OUT" "${PFX}app/dist/index.html" 2>/dev/null | sha256sum | cut -d' ' -f1)
-# 期望哈希随 dist 合法重建而更新：修复模型删除「假成功」后重建 dist，
-# 删除响应直接回传最新 models，index.html 与 _nuxt chunk 指纹同步变化。
+# 期望哈希随 dist 合法重建而更新：AI 助手新增 HTTP 对话降级通道（WS 握手在
+# 群晖反代下失败时自动改走 HTTP），index.html 与 _nuxt chunk 指纹同步变化。
 # 门禁仍用于拦截「改了前端却没重建 dist」。
-[ "$DIST_IDX" = "8e20418130914ae1c162ec762d29eb29b345711c833928a6a2eeb9db79768742" ] \
-    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 8e204181…，修复模型删除假成功后重建 dist 的哈希）"
+[ "$DIST_IDX" = "a8a15b649b225518d6f0984ff681c39b9c21eb8de7e0ad59b139db99792b4994" ] \
+    || gate_bad "包内 app/dist/index.html sha256=$DIST_IDX（应为 a8a15b64…，AI助手 HTTP 降级重建 dist 的哈希）"
 
 grep -qx "${PFX}app/dist/static/pdfjs/web/viewer.html" "$LIST" \
     || gate_bad "包内缺 app/dist/static/pdfjs/web/viewer.html"

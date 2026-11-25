@@ -179,6 +179,44 @@ def test_assistant_websocket_origin_must_match_host():
     assert not is_same_host_origin("file:///tmp/x", host)
 
 
+def test_assistant_origin_reverse_proxy_and_default_ports():
+    """群晖 :88 反代 / 默认端口归一化：Origin 与候选 host 任一匹配即同源。"""
+    from webserver.handlers.assistant import is_same_host_origin, _norm_host
+
+    # 默认端口归一化：:443 / :80 视为等价空端口
+    assert _norm_host("Books.Example.com:443") == "books.example.com"
+    assert _norm_host("books.example.com:80") == "books.example.com"
+    assert _norm_host("[::1]:443") == "[::1]"
+
+    # 群晖反代：Origin 带 :88，request.host 是内部地址，但 X-Forwarded-Host 带 :88
+    assert is_same_host_origin(
+        "https://annybook.synology.me:88",
+        "127.0.0.1:8000",
+        ["annybook.synology.me:88"],
+    )
+    # 反代丢了端口：X-Forwarded-Host 不带端口，Origin 带 :443 -> 归一化后同源
+    assert is_same_host_origin(
+        "https://annybook.synology.me",
+        "127.0.0.1:8000",
+        ["annybook.synology.me"],
+    )
+    # 跨站依然拒绝：即便有一个候选是本机，也不能放行 evil
+    assert not is_same_host_origin(
+        "https://evil.example.com",
+        "127.0.0.1:8000",
+        ["annybook.synology.me:88"],
+    )
+
+
+def test_assistant_http_chat_handler_registered():
+    """HTTP 降级通道必须注册在路由表中。"""
+    from webserver.handlers.assistant import routes
+
+    paths = [r[0] for r in routes()]
+    assert "/api/assistant/chat" in paths
+    assert "/api/assistant/ws" in paths
+
+
 def test_mcp_token_is_sent_as_bearer_header_not_in_url():
     client = MCPStreamClient("http://localhost/mcp", "secret-token")
 
@@ -392,3 +430,62 @@ def test_mcp_tool_listing_normalizes_snake_case_schema():
     tools = asyncio.run(client.list_tools())
 
     assert tools == [{"name": "search_books", "inputSchema": {"type": "object"}}]
+
+
+def test_assistant_http_chat_accumulates_text_and_injects_history():
+    """HTTP 降级接口应注入历史、累积 content 事件为纯文本返回。"""
+    import asyncio
+    from unittest import mock
+
+    from webserver.handlers.assistant import AssistantChatHandler
+
+    class FakeAgent:
+        def __init__(self, cookies=None):
+            self.conversation_history = []
+            self.injected = None
+
+        async def initialize(self):
+            pass
+
+        async def process_user_input(self, content):
+            yield {"type": "status", "content": "调用工具"}
+            yield {"type": "content", "content": "回答:" + content}
+
+        async def close(self):
+            pass
+
+    written = {}
+    instances = []
+
+    def factory(cookies=None):
+        a = FakeAgent(cookies)
+        instances.append(a)
+        return a
+
+    with mock.patch("webserver.assistant.ai_assistant_agent.AIAssistantMCPAgent", factory):
+        h = AssistantChatHandler.__new__(AssistantChatHandler)
+        h.current_user = b"1"
+        h.get_json_body = lambda: {
+            "content": "你好",
+            "history": [{"role": "user", "content": "旧Q"},
+                        {"role": "assistant", "content": "旧A"}],
+        }
+        h.request = mock.Mock()
+        h.request.cookies = {}
+        h._headers = {}
+        h.set_header = lambda k, v: h._headers.__setitem__(k, v)
+        h.write = lambda v: written.setdefault("rsp", v)
+        h.finish = lambda: None
+        h._is_same_site_origin = lambda o: False
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(AssistantChatHandler.post(h))
+        loop.close()
+
+    rsp = written["rsp"]
+    assert rsp["err"] == "ok"
+    assert rsp["text"] == "回答:你好"
+    assert rsp["statuses"] == ["调用工具"]
+    assert instances[0].conversation_history == [
+        {"role": "user", "content": "旧Q"},
+        {"role": "assistant", "content": "旧A"},
+    ]
