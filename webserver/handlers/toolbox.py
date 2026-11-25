@@ -1078,7 +1078,9 @@ class AdminSrtToolModelDelete(BaseHandler):
         ok, msg = srt_transcribe.model_delete(data.get("model") or "")
         if not ok:
             return {"err": "model.delete.failed", "msg": msg}
-        return {"err": "ok", "msg": msg}
+        # 直接回传最新状态：前端据此刷新，不再依赖随后可能失败/被缓存的 GET /models，
+        # 杜绝「提示释放成功但按钮仍是删除」的假象。
+        return {"err": "ok", "msg": msg, "data": {"models": srt_transcribe.model_status()}}
 
 
 class AdminSrtToolModelSelect(BaseHandler):

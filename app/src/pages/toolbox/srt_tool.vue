@@ -477,6 +477,9 @@ export default {
         .then((rsp) => {
           if (rsp.err === 'ok') {
             this.$alert('success', rsp.msg || this.$t('srtTool.deleteDone'));
+            // 用删除响应里带回的最新状态立即刷新，避免随后 GET 失败/缓存导致
+            // 「提示释放成功但按钮仍是删除、再点报尚未下载」。
+            if (rsp.data && rsp.data.models) this.models = rsp.data.models;
           } else {
             this.$alert('error', rsp.msg || this.$t('srtTool.deleteFailed'));
           }

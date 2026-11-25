@@ -294,12 +294,23 @@ def model_delete(model: str):
         return False, "转写任务进行中，模型可能正被使用，请稍后再删除"
     n = _dir_size(d)
     import shutil
+    # 不能用 ignore_errors=True：那样即使被占用/权限不足删不掉，也会回报"已删除释放"，
+    # 前端据假成功刷新后状态不变，用户再点就报"尚未下载"。这里收集残留并以真实结果为准。
+    errs = []
+    def _onerror(func, path, exc):  # shutil.rmtree 的 onerror 回调
+        errs.append("%s: %s" % (getattr(exc, "strerror", None) or exc, path))
     try:
-        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(d, onerror=_onerror)
         if srt_core is not None:
             srt_core._model_cache.clear()  # 已加载实例一并清掉，下次重新加载
     except Exception as e:  # noqa: BLE001
         return False, "删除失败：%s" % e
+    # 真实校验：目录仍在且仍有内容 => 判定为删除失败，把残留与原因如实回报
+    if d.is_dir() and _dir_size(d) > 0:
+        left = _human(_dir_size(d))
+        detail = ("；原因：" + errs[0]) if errs else ""
+        return False, ("删除未完成，仍残留 %s%s。可能文件被占用或权限不足，"
+                       "请停止转写/确认无进程使用后重试" % (left, detail))
     return True, "已删除模型 %s，释放 %s" % (model, _human(n))
 
 
